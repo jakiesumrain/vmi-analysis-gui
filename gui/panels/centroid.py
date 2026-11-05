@@ -48,6 +48,10 @@ FIELDS = [
     ("processing", "tuning_only", "bool", "Tuning mode only"),
     ("histogram", "resolution_factor", "int", "Histogram resolution factor"),
     ("histogram", "enable_abel", "bool", "Abel inversion"),
+    ("spectrum_plot", "x_min", "float", "Spectrum x min (-1 = auto)"),
+    ("spectrum_plot", "x_max", "float", "Spectrum x max (-1 = auto)"),
+    ("spectrum_plot", "y_min", "float", "Spectrum y min (-1 = auto)"),
+    ("spectrum_plot", "y_max", "float", "Spectrum y max (-1 = auto)"),
     ("gmd", "enable_gmd_weighting", "bool", "GMD weighting"),
     ("gmd", "gmd_weight_min", "float", "GMD weight min"),
     ("gmd", "gmd_weight_max", "float", "GMD weight max"),
@@ -57,6 +61,7 @@ GROUPS = {
     "vmi_picasso": "Paths, detection and fitting",
     "processing": "Processing",
     "histogram": "Histogram",
+    "spectrum_plot": "Summary spectrum plot axes",
     "gmd": "GMD normalization",
 }
 
@@ -67,7 +72,11 @@ def _load_doc():
 
 def _section(doc, name):
     sec = doc["vmi_picasso"]
-    return sec if name == "vmi_picasso" else sec[name]
+    if name == "vmi_picasso":
+        return sec
+    if name not in sec:
+        sec[name] = tomlkit.table()
+    return sec[name]
 
 
 def build(jobs: JobManager) -> None:
@@ -119,7 +128,8 @@ def _make_widget(kind: str, label: str, value):
         return ui.select(options, value=str(value) if value != "" else options[0],
                          label=label).props("outlined dense")
     if kind in ("int", "float"):
-        return ui.number(label, value=value).props("outlined dense")
+        return ui.number(label, value=value if value != "" else None) \
+            .props("outlined dense")
     if kind == "dir":
         return path_input(label, str(value), browse="dir")
     if kind.startswith("file:"):
@@ -135,10 +145,13 @@ def _save(widgets) -> None:
         v = wid.value
         if kind == "bool":
             sec[key] = bool(v)
-        elif kind == "int":
-            sec[key] = int(v or 0)
-        elif kind == "float":
-            sec[key] = float(v or 0.0)
+        elif kind in ("int", "float"):
+            if (v is None or v == "") and section == "spectrum_plot":
+                # empty spectrum axis field = leave the key out (auto scale)
+                sec.pop(key, None)
+            else:
+                sec[key] = (int(v or 0) if kind == "int"
+                            else float(v or 0.0))
         else:
             sec[key] = str(v)
     CONFIG_PATH.write_text(tomlkit.dumps(doc), encoding="utf-8")

@@ -209,6 +209,16 @@ resolution_factor = 1
 # Method: BASEX (fast and accurate for VMI)
 enable_abel = true
 
+# --- Summary Spectrum Plot Axes ---
+[vmi_picasso.spectrum_plot]
+# Axis limits for the "Photoelectron Spectrum" panel of 04_final_summary.png
+# (x = kinetic energy in arb. units / r^2, y = counts per energy bin).
+# Set any value < 0 for automatic scaling of that side.
+x_min = -1.0
+x_max = -1.0
+y_min = -1.0
+y_max = -1.0
+
 # --- GMD Normalization ---
 [vmi_picasso.gmd]
 # Enable GMD (Gas Monitor Detector) pulse energy normalization

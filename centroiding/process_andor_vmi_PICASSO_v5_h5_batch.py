@@ -190,6 +190,16 @@ MASK_RADIUS = proc_cfg.get("mask_radius", None)
 # --- HISTOGRAM PARAMETERS ---
 HISTOGRAM_RESOLUTION_FACTOR = hist_cfg["resolution_factor"]
 
+# --- SUMMARY SPECTRUM PLOT AXES ---
+# Optional [vmi_picasso.spectrum_plot] section: axis limits for the
+# Photoelectron Spectrum panel of 04_final_summary.png. A negative value
+# (or a missing key) means automatic scaling.
+spec_cfg = vmi_cfg.get("spectrum_plot", {})
+SPECTRUM_X_MIN = float(spec_cfg.get("x_min", -1.0))
+SPECTRUM_X_MAX = float(spec_cfg.get("x_max", -1.0))
+SPECTRUM_Y_MIN = float(spec_cfg.get("y_min", -1.0))
+SPECTRUM_Y_MAX = float(spec_cfg.get("y_max", -1.0))
+
 # --- PROCESSING MODE ---
 TUNING_ONLY = proc_cfg["tuning_only"]
 
@@ -960,8 +970,12 @@ def plot_final_summary(vmi_2d, vmi_3d, n_events, n_frames, energy=None, pes=None
         pos = pes > 0
         ax3.plot(energy[pos], pes[pos], 'r-', lw=0.8)
         #ax3.set_yscale('log')
-        ax3.set_ylim(0, 500)
-        ax3.set_xlim(0, energy.max())
+        x_lo = SPECTRUM_X_MIN if SPECTRUM_X_MIN >= 0 else 0.0
+        x_hi = SPECTRUM_X_MAX if SPECTRUM_X_MAX > 0 else float(energy.max())
+        ax3.set_xlim(x_lo, x_hi)
+        y_lo = SPECTRUM_Y_MIN if SPECTRUM_Y_MIN >= 0 else 0.0
+        y_hi = SPECTRUM_Y_MAX if SPECTRUM_Y_MAX > 0 else None
+        ax3.set_ylim(y_lo, y_hi)
     else:
         ax3.text(0.5, 0.5, "Energy spectrum\nnot available",
                 ha='center', va='center', transform=ax3.transAxes)

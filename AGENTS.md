@@ -55,7 +55,7 @@ Side tools (QC / helpers, not pipeline stages):
 | `build_gmd_map.py` | argparse CLI (`--h5-dir --gmd-path --output-path --n-files`; first two required) |
 | `h5_play_frames_movie.py` | argparse CLI (`--h5-dir` required, `--headless`, `--dump-frames`, ...) |
 | `h5_accumulate_fast_gmd.py` | argparse CLI (`--h5-dir` required, `--no-show`, `--live-path`, ...) |
-| `process_andor_vmi_PICASSO_v5_h5_batch.py` | `config.toml` `[vmi_picasso]` + `--config PATH` |
+| `process_andor_vmi_PICASSO_v5_h5_batch.py` | `config.toml` `[vmi_picasso]` + `--config PATH`; optional `[vmi_picasso.spectrum_plot]` x/y min/max control the Photoelectron Spectrum axes in `04_final_summary.png` (negative = auto) |
 | `compute_dark.py` | argparse CLI (`--dark-dir`, `--method mean\|median`, `--frames`, `--output-dir`; defaults from config.toml) |
 | `vmi_histogram_gmd_bins.py` | config.toml paths + argparse CLI (`--thresholds`, `--weight-mode`, `--weight-power`, `--no-show`) |
 | `process_gmd_bins.py` | argparse CLI (`--weight-suffix`, `--inversion-backend`, `--pyabel-method`, `--use-cache`, `--no-show`) |
