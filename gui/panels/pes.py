@@ -15,6 +15,8 @@ CIRC_DIR = REPO_ROOT / "circularization"
 SCRIPT = CIRC_DIR / "process_gmd_bins.py"
 CENTROID_DIR = REPO_ROOT / "centroiding"
 CONFIG_PATH = CENTROID_DIR / "config.toml"
+PBASEX_GDATA = (REPO_ROOT / "pbasex-matlab" / "examples"
+                / "G_r512_k512_l10.h5")
 CALIBRATION_FILES = [
     "extracted-FOC100eV-20260710.txt",
     "reassignment-FOC100eV-20260710.txt",
@@ -69,6 +71,18 @@ def build(jobs: JobManager) -> None:
             method = ui.select(PYABEL_METHODS, value="daun",
                                label="PyAbel method").props("outlined dense")
             use_cache = ui.checkbox("Use cached inversions", value=False)
+        gdata_warn = ui.label(
+            "⚠ MATLAB basis data missing — generate "
+            "pbasex-matlab/examples/G_r512_k512_l10.h5 first: in MATLAB, "
+            "cd to pbasex-matlab/examples and run save_gData.m "
+            "(time-consuming, tens of minutes).").classes("text-negative")
+
+        def _sync_backend():
+            gdata_warn.visible = (backend.value == "matlab"
+                                  and not PBASEX_GDATA.exists())
+
+        backend.on_value_change(lambda: _sync_backend())
+        _sync_backend()
 
         def run():
             cmd = [sys.executable, str(SCRIPT),

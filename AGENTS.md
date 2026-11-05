@@ -79,9 +79,12 @@ Side tools (QC / helpers, not pipeline stages):
 - **`vmi_histogram_gmd_bins.py` prefers the TkAgg backend** for its live plot
   window; override via `MPLBACKEND` (e.g. Agg) when running headless.
 - **GMD weighting is a per-frame scalar** — it corrects yield, never shape.
-- **MATLAB + CPBASEX are external** (not bundled). Only needed for the
-  `matlab` inversion backend; point the `CPBASEX_DIR` environment variable
-  at the checkout.
+- **MATLAB + CPBASEX**: the CPBASEX code is bundled at `pbasex-matlab/`
+  (MIT, Elio Gilbert Champenois). Only needed for the `matlab` inversion
+  backend; `CPBASEX_DIR` overrides the bundled location. The backend
+  requires the basis file `pbasex-matlab/examples/G_r512_k512_l10.h5`,
+  generated once in MATLAB with `examples/save_gData.m` (time-consuming) —
+  `run_matlab_cpbasex()` fails with an explicit error while it is missing.
 
 ## Environment
 
