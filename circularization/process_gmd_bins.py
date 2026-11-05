@@ -113,13 +113,19 @@ EXTRACTED_FILE = CIRCULARIZATION_DIR / "extracted-FOC100eV-20260710.txt"
 REASSIGN_FILE = CIRCULARIZATION_DIR / "reassignment-FOC100eV-20260710.txt"
 
 # --- MATLAB / CPBASEX ---
-# External dependency, not bundled with this repository. Only used by the
-# "matlab" inversion backend (the default "pyabel" backend is pure Python).
-# Point the CPBASEX_DIR environment variable at your CPBASEX checkout.
-MATLAB_CPBASEX = Path(os.environ.get("CPBASEX_DIR", "CPBASEX"))
+# Bundled with this repository at pbasex-matlab/ (third-party, MIT,
+# Elio Gilbert Champenois — see pbasex-matlab/LICENSE.txt). Only used by
+# the "matlab" inversion backend (the default "pyabel" backend is pure
+# Python). Set the CPBASEX_DIR environment variable to use a different
+# CPBASEX checkout with the same layout (examples/ + pbasex-MATLAB/).
+# NOTE: the backend needs the basis file examples/G_r512_k512_l10.h5,
+# generated once in MATLAB with examples/save_gData.m (time-consuming).
+MATLAB_CPBASEX = Path(os.environ.get(
+    "CPBASEX_DIR", str(HERE.parent / "pbasex-matlab")))
 MATLAB_EXAMPLES_DIR = MATLAB_CPBASEX / "examples"
 MATLAB_SCRIPT = MATLAB_EXAMPLES_DIR / "new_10.m"
 MATLAB_PBASE_PATH = MATLAB_CPBASEX / "pbasex-MATLAB"
+MATLAB_GDATA = MATLAB_EXAMPLES_DIR / "G_r512_k512_l10.h5"
 
 # --- Image / geometry parameters (80 eV notebook, this dataset) ---
 CENTER_OLD = np.array([473.47577550518895, 499.38892648532163])  # bright spot (row, col)
@@ -277,6 +283,12 @@ def run_circularization(input_path: Path, output_path: Path) -> None:
 
 def run_matlab_cpbasex() -> None:
     """Run the CPBASEX inversion in MATLAB (reads examples/image.txt)."""
+    if not MATLAB_GDATA.exists():
+        raise RuntimeError(
+            f"CPBASEX basis data missing: {MATLAB_GDATA}\n"
+            "Generate it once before using the MATLAB backend: in MATLAB, "
+            f"cd to {MATLAB_EXAMPLES_DIR} and run save_gData.m "
+            "(time-consuming — tens of minutes).")
     matlab_cmd = (
         f"matlab -batch \"addpath('{MATLAB_PBASE_PATH.as_posix()}'); "
         f"cd('{MATLAB_EXAMPLES_DIR.as_posix()}'); run('new_10.m');\""

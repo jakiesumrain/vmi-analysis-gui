@@ -54,12 +54,14 @@ def index() -> None:
                 with ui.tab_panel(tab):
                     module.build(MANAGER)
 
-    with ui.footer().classes("px-6 py-2") \
+    with ui.footer().classes("px-6 py-2 items-center justify-between") \
             .style("background: #181715"):
         ui.label("vmi-analysis-gui — jobs run sequentially; "
                  "close the browser tab to stop watching "
                  "(jobs continue on the server).") \
             .classes("vmi-subtitle").style("color: #a09d96")
+        ui.link("Tao (jakiesumrain@163.com)", "mailto:jakiesumrain@163.com") \
+            .classes("vmi-subtitle").style("color: #cc785c")
 
 
 def main() -> None:

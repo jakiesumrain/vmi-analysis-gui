@@ -14,10 +14,16 @@ runs the whole chain in order.
   manager used for everything below).
 - Optional: **ffmpeg** on PATH — for MP4 output in the Movie tool
   (without it the tool writes a GIF instead).
-- Optional: **MATLAB + a CPBASEX checkout** — only for the MATLAB inversion
-  backend in the PES stage. The default backend (PyAbel) is pure Python and
-  needs nothing extra. To use the MATLAB backend, set the environment
-  variable `CPBASEX_DIR` to your CPBASEX checkout.
+- Optional: **MATLAB** — only for the MATLAB inversion backend in the PES
+  stage. The default backend (PyAbel) is pure Python and needs nothing
+  extra. The CPBASEX code is bundled at `pbasex-matlab/` (MIT,
+  Elio Gilbert Champenois — see `pbasex-matlab/LICENSE.txt`), so no
+  separate checkout is needed. **Before the first MATLAB run you must
+  generate the basis data once**: in MATLAB, `cd` to
+  `pbasex-matlab/examples` and run `save_gData.m`. ⚠ **This is
+  time-consuming** (expect tens of minutes) and writes
+  `G_r512_k512_l10.h5` next to the script. Set the `CPBASEX_DIR`
+  environment variable only to use a different CPBASEX checkout.
 
 ## Quickstart (fresh clone)
 
@@ -122,6 +128,9 @@ centroiding/
 circularization/
 ├── circularization.py                # single-image distortion correction
 └── process_gmd_bins.py               # stage 4 (calls circularization.py)
+pbasex-matlab/                        # bundled CPBASEX (MATLAB backend, own license)
+├── pbasex-MATLAB/                    # the inversion library
+└── examples/                         # new_10.m (run by stage 4), save_gData.m
 gui/                                  # NiceGUI app (see PLAN.md)
 ├── app.py  theme.py  theme.css  jobs.py
 └── panels/                           # one module per tab + file picker
@@ -137,3 +146,9 @@ gitignored.
 - `DESIGN.md` — the UI design tokens the theme is built from.
 - `AGENTS.md` — contributor/agent guidance: pipeline details, constraints
   (sequential MATLAB step, cwd-relative config), git workflow.
+
+## License
+
+MIT — see `LICENSE`. The bundled CPBASEX code under `pbasex-matlab/` is
+third-party software, also MIT, copyright Elio Gilbert Champenois (2017);
+see `pbasex-matlab/LICENSE.txt`.
