@@ -16,3 +16,4 @@ accumulated_result.txt
 
 # Generated GUI artifacts
 gui/generated/
+.playwright-cli/

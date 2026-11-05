@@ -22,7 +22,8 @@ TABS = [
 ]
 
 
-def main() -> None:
+@ui.page("/")
+def index() -> None:
     theme.apply_theme()
 
     with ui.header().classes("items-center justify-between px-6 py-3") \
@@ -58,8 +59,10 @@ def main() -> None:
                  "(jobs continue on the server).") \
             .classes("vmi-subtitle").style("color: #a09d96")
 
+
+def main() -> None:
     ui.run(title="VMI Analysis", port=8080, reload=False, show=True)
 
 
-if __name__ == "__main__":
+if __name__ in {"__main__", "__mp_main__"}:
     main()
