@@ -28,6 +28,8 @@ def build(jobs: JobManager) -> None:
         theme.run_button(on_click=lambda: _run(jobs, view, h5_dir, gmd_path,
                                                output_path, n_files))
 
+    view.place_console()
+
 
 def _run(jobs, view, h5_dir, gmd_path, output_path, n_files):
     cmd = [sys.executable, str(REPO_ROOT / "build_gmd_map.py"),

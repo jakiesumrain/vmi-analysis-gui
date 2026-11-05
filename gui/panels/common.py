@@ -122,9 +122,15 @@ class JobView:
             self.progress.visible = False
             self.cancel_btn = theme.cancel_button(on_click=self.cancel)
             self.cancel_btn.visible = False
+        self.log = None
+        self.results = None
+        self._interval = interval
+
+    def place_console(self) -> None:
+        """Create the log console and results area; call at panel bottom."""
         self.log = theme.log_console()
         self.results = ui.column().classes("w-full gap-4")
-        ui.timer(interval, self.refresh)
+        ui.timer(self._interval, self.refresh)
 
     def attach(self, job: Job) -> None:
         self.job = job

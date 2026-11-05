@@ -105,6 +105,8 @@ def build(jobs: JobManager) -> None:
             ui.button("Save config only", on_click=lambda: _save(widgets)) \
                 .props("flat color=secondary")
 
+    view.place_console()
+
 
 def _make_widget(kind: str, label: str, value):
     if kind == "bool":

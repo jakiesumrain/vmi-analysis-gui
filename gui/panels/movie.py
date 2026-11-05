@@ -69,6 +69,8 @@ def build(jobs: JobManager) -> None:
 
         theme.run_button(on_click=run)
 
+    view.place_console()
+
 
 def _results(job: Job):
     if job.status != "done":

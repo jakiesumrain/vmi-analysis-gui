@@ -55,6 +55,8 @@ def build(jobs: JobManager) -> None:
 
         theme.run_button(on_click=run)
 
+    view.place_console()
+
 
 def _suffix(mode: str, power: float) -> str:
     if mode == "none":

@@ -124,3 +124,5 @@ def build(jobs: JobManager) -> None:
         theme.run_button("Run pipeline", on_click=run)
         ui.label("Watch each stage's detailed parameters on its own tab; "
                  "this panel uses the same defaults.").classes("vmi-subtitle")
+
+    view.place_console()
