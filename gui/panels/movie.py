@@ -1,5 +1,6 @@
 """Panel: h5_play_frames_movie.py — headless movie render + frame scrubber."""
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -12,6 +13,43 @@ from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
                      open_folder_button, path_input, persist, serve_dir,
                      zoomable_image)
 
+# In-page movie player: steps the dumped frame PNGs in place at the playback
+# interval, loops over the available frames (like the matplotlib pop-up did)
+# and preloads the next frame so stepping is flicker-free. The Python side
+# only tells it how many frames are available (vmiMovieAvail).
+_PLAYER_JS = """
+<script>
+window.vmiMovie = {timer: null, idx: 0, avail: 0, total: 0,
+                   base: '', bust: '', interval: 500, paused: false};
+
+function vmiMovieUrl(i) {
+  const p = window.vmiMovie;
+  return p.base + '/frame_' + String(i).padStart(4, '0') + '.png?t=' + p.bust;
+}
+function vmiMovieStart(base, bust, interval, total) {
+  const p = window.vmiMovie;
+  if (p.timer) clearInterval(p.timer);
+  p.base = base; p.bust = bust; p.total = total;
+  p.interval = Math.max(40, interval);
+  p.idx = 0; p.avail = 0; p.paused = false;
+  p.timer = setInterval(vmiMovieStep, p.interval);
+}
+function vmiMovieAvail(n) { window.vmiMovie.avail = n; }
+function vmiMovieStep() {
+  const p = window.vmiMovie;
+  if (p.paused || p.avail < 1) return;
+  if (p.idx >= p.avail) p.idx = 0;  // loop, like the pop-up window did
+  const img = document.getElementById('vmi-live-img');
+  if (img) img.src = vmiMovieUrl(p.idx);
+  const ctr = document.getElementById('vmi-live-counter');
+  if (ctr) ctr.textContent = 'frame ' + (p.idx + 1) + ' / ' + p.total;
+  p.idx = (p.idx + 1) % p.avail;
+  const pre = new Image();  // preload the next frame for smooth stepping
+  pre.src = vmiMovieUrl(p.idx);
+}
+</script>
+"""
+
 
 def build(jobs: JobManager) -> None:
     theme.section_title(
@@ -21,6 +59,7 @@ def build(jobs: JobManager) -> None:
         "movie play live in this page instead of writing a file.")
 
     view = JobView(jobs, results_builder=_results)
+    ui.add_body_html(_PLAYER_JS, shared=True)
 
     with theme.panel_card():
         h5_dir = persist(path_input(
@@ -66,8 +105,8 @@ def build(jobs: JobManager) -> None:
             frames_dir.mkdir(parents=True, exist_ok=True)
             for old in frames_dir.glob("frame_*.png"):
                 old.unlink()  # stale frames would confuse the live view
-            live_state["src"] = None
             live_label.visible = False
+            live_row.visible = False
             live_img.visible = False
             cmd = [sys.executable, str(REPO_ROOT / "h5_play_frames_movie.py"),
                    "--h5-dir", h5_dir.value,
@@ -97,6 +136,20 @@ def build(jobs: JobManager) -> None:
                        "movie_path": str(Path(movie_dir.value) / (name + movie_ext.value)),
                        "movie_path_gif": str(Path(movie_dir.value) / (name + ".gif"))}))
             live_state["job"] = None if save_movie.value else job
+            if save_movie.value:
+                ui.run_javascript(
+                    "if (window.vmiMovie.timer) "
+                    "clearInterval(window.vmiMovie.timer)")
+            else:
+                live_label.visible = True
+                live_row.visible = True
+                live_img.visible = True
+                pause_btn.text = "Pause"
+                ui.run_javascript(
+                    f"vmiMovieStart({json.dumps(serve_dir(frames_dir))}, "
+                    f"{json.dumps(job.id)}, "
+                    f"{int(interval_ms.value or 500)}, "
+                    f"{int(n_frames.value or 0)})")
             view.attach(job)
 
         with ui.row().classes("gap-2"):
@@ -109,32 +162,36 @@ def build(jobs: JobManager) -> None:
                  "live below as the frames stream in (at the Interval "
                  "pace).").classes("vmi-subtitle")
 
-        live_label = ui.label("").classes("vmi-caption")
+        live_label = ui.label("Live playback").classes("vmi-caption")
         live_label.visible = False
-        live_img = ui.image("").classes("w-full max-w-2xl")
+        with ui.row().classes("items-center gap-4") as live_row:
+            live_row.visible = False
+            pause_btn = ui.button("Pause", on_click=lambda: _toggle_pause()) \
+                .props("flat dense color=primary")
+            ui.label("").props("id=vmi-live-counter").classes("vmi-subtitle")
+        live_img = ui.image("").props("id=vmi-live-img") \
+            .classes("w-full max-w-2xl")
         live_img.visible = False
-        live_state = {"job": None, "src": None}
+        live_state = {"job": None}
+
+        def _toggle_pause():
+            ui.run_javascript(
+                "window.vmiMovie.paused = !window.vmiMovie.paused")
+            pause_btn.text = ("Resume" if pause_btn.text == "Pause"
+                              else "Pause")
 
         def _live_tick():
             job = live_state["job"]
             if job is None:
                 return
             frames_dir = Path(job.extra["frames_dir"])
-            pngs = sorted(frames_dir.glob("frame_*.png"))
+            n = sum(1 for _ in frames_dir.glob("frame_*.png"))
             if job.status in TERMINAL:
                 live_state["job"] = None
-            elif len(pngs) > 1:
+                ui.run_javascript(f"vmiMovieAvail({n})")
+            else:
                 # one behind the newest: that file may still be mid-write
-                pngs = pngs[:-1]
-            if pngs:
-                latest = pngs[-1]
-                if str(latest) != live_state["src"]:
-                    live_state["src"] = str(latest)
-                    live_img.set_source(file_url(latest))
-                    live_label.visible = True
-                    live_img.visible = True
-                live_label.text = (
-                    f"Live playback: frame {int(latest.stem.split('_')[1]) + 1}")
+                ui.run_javascript(f"vmiMovieAvail({max(0, n - 1)})")
 
         ui.timer(0.3, _live_tick)
 
