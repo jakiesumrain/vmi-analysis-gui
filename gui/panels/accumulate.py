@@ -43,9 +43,12 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, results_builder=_results, live_builder=_live)
 
     with theme.panel_card():
-        h5_dir = path_input("HDF5 directory", r"F:\1103\1103_12_ele")
+        h5_dir = path_input("HDF5 directory", r"F:\1103\1103_12_ele",
+                            browse="dir")
         output_path = path_input("Output image (.txt)",
-                                 r"F:\1103\1103_12_ele\accumulated_result.txt")
+                                 r"F:\1103\1103_12_ele\accumulated_result.txt",
+                                 browse="save", filters=[".txt"],
+                                 default_name="accumulated_result.txt")
         with ui.row().classes("gap-4 flex-wrap"):
             im_threshold = num_input("Threshold", 5, step=1)
             max_workers = num_input("Workers", 6, step=1)
@@ -54,10 +57,12 @@ def build(jobs: JobManager) -> None:
         with ui.row().classes("gap-4 flex-wrap"):
             enable_gmd = ui.checkbox("GMD weighting", value=False)
             gmd_map_path = path_input("GMD map file",
-                                      str(REPO_ROOT / "gmd_map_all.txt"))
+                                      str(REPO_ROOT / "gmd_map_all.txt"),
+                                      browse="file", filters=[".txt"])
             gmd_w_min = num_input("Weight min", 0.0, step=0.5)
             gmd_w_max = num_input("Weight max", 4.0, step=0.5)
-        dark_path = path_input("Dark frame .npy (optional)", "")
+        dark_path = path_input("Dark frame .npy (optional)", "",
+                               browse="file", filters=[".npy"])
 
         def run():
             job_id_hint = str(time.time_ns())[-8:]

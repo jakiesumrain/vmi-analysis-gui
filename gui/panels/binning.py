@@ -24,7 +24,8 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, results_builder=_results)
 
     with theme.panel_card():
-        config = path_input("Config file", str(CONFIG_PATH))
+        config = path_input("Config file", str(CONFIG_PATH),
+                            browse="file", filters=[".toml"])
         thresholds = ui.input("GMD thresholds (comma-separated)",
                               value="3.75e-8,5.5e-8,7.25e-8") \
             .classes("w-full").props("outlined dense")

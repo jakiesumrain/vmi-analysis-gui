@@ -8,7 +8,7 @@ from nicegui import ui
 
 from ..jobs import Job, JobManager
 from .. import theme
-from .common import JobView, REPO_ROOT, file_url
+from .common import JobView, REPO_ROOT, file_url, path_input
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
 CONFIG_PATH = CENTROID_DIR / "config.toml"
@@ -16,15 +16,15 @@ SCRIPT = CENTROID_DIR / "process_andor_vmi_PICASSO_v5_h5_batch.py"
 
 # (section path, key, kind, label) — kind: str/int/float/bool/select:opts
 FIELDS = [
-    ("vmi_picasso", "h5_dir", "str", "HDF5 directory"),
+    ("vmi_picasso", "h5_dir", "dir", "HDF5 directory"),
     ("vmi_picasso", "h5_pattern", "str", "HDF5 pattern"),
     ("vmi_picasso", "h5_dataset", "str", "Frame dataset"),
     ("vmi_picasso", "h5_meta", "str", "Metadata dataset"),
-    ("vmi_picasso", "gmd_map_path", "str", "GMD map file (empty = raw/meta)"),
-    ("vmi_picasso", "dark_data_dir", "str", "Dark HDF5 directory"),
+    ("vmi_picasso", "gmd_map_path", "file:.txt", "GMD map file (empty = raw/meta)"),
+    ("vmi_picasso", "dark_data_dir", "dir", "Dark HDF5 directory"),
     ("vmi_picasso", "dark_h5_pattern", "str", "Dark pattern"),
-    ("vmi_picasso", "dark_file", "str", "Pre-computed dark .npy"),
-    ("vmi_picasso", "output_dir", "str", "Output directory"),
+    ("vmi_picasso", "dark_file", "file:.npy", "Pre-computed dark .npy"),
+    ("vmi_picasso", "output_dir", "dir", "Output directory"),
     ("vmi_picasso", "checkpoint_file", "str", "Checkpoint filename"),
     ("vmi_picasso", "box_size", "int", "Box size (odd)"),
     ("vmi_picasso", "min_net_gradient", "float", "Min net gradient"),
@@ -43,7 +43,7 @@ FIELDS = [
     ("processing", "dark_method", "select:median,mean", "Dark method"),
     ("processing", "dark_frame_count", "int", "Dark frame count"),
     ("processing", "enable_flat_field", "bool", "Flat field"),
-    ("processing", "flat_field_file", "str", "Flat field file"),
+    ("processing", "flat_field_file", "file:.txt,.npy", "Flat field file"),
     ("processing", "tuning_only", "bool", "Tuning mode only"),
     ("histogram", "resolution_factor", "int", "Histogram resolution factor"),
     ("histogram", "enable_abel", "bool", "Abel inversion"),
@@ -117,6 +117,11 @@ def _make_widget(kind: str, label: str, value):
                          label=label).props("outlined dense")
     if kind in ("int", "float"):
         return ui.number(label, value=value).props("outlined dense")
+    if kind == "dir":
+        return path_input(label, str(value), browse="dir")
+    if kind.startswith("file:"):
+        filters = kind.split(":", 1)[1].split(",")
+        return path_input(label, str(value), browse="file", filters=filters)
     return ui.input(label, value=str(value)).props("outlined dense")
 
 

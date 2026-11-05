@@ -25,9 +25,12 @@ def build(jobs: JobManager) -> None:
 
     with theme.panel_card():
         inp = path_input("Input image (.txt)",
-                         str(CIRC_DIR / "image.txt"))
+                         str(CIRC_DIR / "image.txt"),
+                         browse="file", filters=[".txt"])
         out = path_input("Output image (.txt)",
-                         str(CIRC_DIR / "image_circularized.txt"))
+                         str(CIRC_DIR / "image_circularized.txt"),
+                         browse="save", filters=[".txt"],
+                         default_name="image_circularized.txt")
         with ui.row().classes("gap-4 flex-wrap"):
             shape_y = num_input("Shape NY", 1023, step=1)
             shape_x = num_input("Shape NX", 1023, step=1)
@@ -35,10 +38,12 @@ def build(jobs: JobManager) -> None:
             center_y = num_input("Center Y", 511.0, step=1)
         extracted = path_input(
             "Extracted trig-fit file",
-            str(CIRC_DIR / "extracted-FOC100eV-20260710.txt"))
+            str(CIRC_DIR / "extracted-FOC100eV-20260710.txt"),
+            browse="file", filters=[".txt"])
         reassign = path_input(
             "Reassignment file (optional)",
-            str(CIRC_DIR / "reassignment-FOC100eV-20260710.txt"))
+            str(CIRC_DIR / "reassignment-FOC100eV-20260710.txt"),
+            browse="file", filters=[".txt"])
         with ui.row().classes("gap-4 flex-wrap"):
             radial_model = ui.select(["interp", "poly"], value="interp",
                                      label="Radial model").props("outlined dense")
@@ -50,7 +55,8 @@ def build(jobs: JobManager) -> None:
             no_jacobian = ui.checkbox("No Jacobian", value=True)
             no_plots = ui.checkbox("No diagnostic plots", value=False)
             summary_only = ui.checkbox("Summary only", value=False)
-        plot_dir = path_input("Plot output dir", str(CIRC_DIR / "trig_fit_plots"))
+        plot_dir = path_input("Plot output dir", str(CIRC_DIR / "trig_fit_plots"),
+                              browse="dir")
 
         def run():
             cmd = [sys.executable, str(SCRIPT),

@@ -47,9 +47,10 @@ def build(jobs: JobManager) -> None:
             placeholder="'' = unweighted").classes("w-64").props("outlined dense")
         bin_dir = path_input(
             "Bin image directory",
-            str(REPO_ROOT / "centroiding" / "1103_9_Aele"))
+            str(REPO_ROOT / "centroiding" / "1103_9_Aele"), browse="dir")
         output_dir = path_input(
-            "Output directory (empty = automatic from suffix/backend)", "")
+            "Output directory (empty = automatic from suffix/backend)", "",
+            browse="dir")
         with ui.row().classes("gap-4 flex-wrap"):
             backend = ui.select(["pyabel", "matlab"], value="pyabel",
                                 label="Inversion backend").props("outlined dense")

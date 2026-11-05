@@ -50,11 +50,14 @@ def build(jobs: JobManager) -> None:
 
     with theme.panel_card():
         h5_dir = path_input("HDF5 directory (dataset)",
-                            r"F:\1103\1103_9_Aele")
+                            r"F:\1103\1103_9_Aele", browse="dir")
         gmd_path = path_input("GMD timestamp file",
-                              r"F:\1103\current-time-both.txt")
+                              r"F:\1103\current-time-both.txt",
+                              browse="file", filters=[".txt"])
         map_out = path_input("GMD map output",
-                             str(REPO_ROOT / "gmd_map_all.txt"))
+                             str(REPO_ROOT / "gmd_map_all.txt"),
+                             browse="save", filters=[".txt"],
+                             default_name="gmd_map_all.txt")
         with ui.row().classes("gap-4 flex-wrap"):
             weight_mode = ui.select(["none", "gmd", "gmd_norm"],
                                     value="gmd_norm", label="Weight mode") \

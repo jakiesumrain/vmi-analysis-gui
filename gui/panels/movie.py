@@ -21,9 +21,11 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, results_builder=_results)
 
     with theme.panel_card():
-        h5_dir = path_input("HDF5 directory", r"F:\1103\1103_8_Aele")
+        h5_dir = path_input("HDF5 directory", r"F:\1103\1103_8_Aele",
+                            browse="dir")
         h5_dataset = path_input("Frame dataset", "raw/data")
-        dark_path = path_input("Dark frame .npy (optional)", "")
+        dark_path = path_input("Dark frame .npy (optional)", "",
+                               browse="file", filters=[".npy"])
         with ui.row().classes("gap-4 flex-wrap"):
             n_frames = num_input("Frames", 20, step=1)
             interval_ms = num_input("Interval (ms)", 500, step=50)
@@ -35,7 +37,7 @@ def build(jobs: JobManager) -> None:
             vmax_pct = num_input("vmax percentile", 99.9, step=0.1)
         with ui.row().classes("gap-4 flex-wrap"):
             movie_dir = path_input("Movie output folder",
-                                   str(REPO_ROOT / "movies"))
+                                   str(REPO_ROOT / "movies"), browse="dir")
             movie_ext = ui.select([".mp4", ".gif"], value=".mp4",
                                   label="Format").props("outlined dense")
             movie_fps = num_input("Saved fps (0 = playback)", 0, step=1)

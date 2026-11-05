@@ -18,11 +18,15 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, results_builder=_results)
 
     with theme.panel_card():
-        h5_dir = path_input("HDF5 directory", r"F:\1103\1103_9_Aele")
+        h5_dir = path_input("HDF5 directory", r"F:\1103\1103_9_Aele",
+                            browse="dir")
         gmd_path = path_input("GMD timestamp file (current-time-both.txt)",
-                              r"F:\1103\current-time-both.txt")
+                              r"F:\1103\current-time-both.txt",
+                              browse="file", filters=[".txt"])
         output_path = path_input("Output map file",
-                                 str(REPO_ROOT / "gmd_map_all.txt"))
+                                 str(REPO_ROOT / "gmd_map_all.txt"),
+                                 browse="save", filters=[".txt"],
+                                 default_name="gmd_map_all.txt")
         with ui.row().classes("gap-4"):
             n_files = num_input("First N files (0 = all)", 0, step=1)
         theme.run_button(on_click=lambda: _run(jobs, view, h5_dir, gmd_path,

@@ -76,8 +76,27 @@ def render_txt_image(txt_path, out_path: Path, **kw) -> Path:
 # Form helpers
 # --------------------------------------------------------------------------
 
-def path_input(label: str, value: str = "", **kw) -> ui.input:
-    return ui.input(label, value=value, **kw).classes("w-full").props("outlined dense")
+def path_input(label: str, value: str = "", browse: str | None = None,
+               filters: list[str] | None = None, default_name: str = "",
+               **kw) -> ui.input:
+    """Path text field; browse adds a folder button opening LocalFilePicker.
+
+    browse: None | "dir" | "file" | "save".
+    """
+    with ui.row().classes("w-full items-center no-wrap gap-1"):
+        inp = ui.input(label, value=value, **kw).classes("grow") \
+            .props("outlined dense")
+        if browse:
+            async def pick():
+                from .picker import LocalFilePicker
+                result = await LocalFilePicker(start=inp.value, mode=browse,
+                                               filters=filters,
+                                               default_name=default_name)
+                if result:
+                    inp.value = result
+            ui.button(icon="folder_open", on_click=pick) \
+                .props("flat dense round color=primary")
+    return inp
 
 
 def num_input(label: str, value, fmt: str | None = None, **kw) -> ui.number:
