@@ -233,9 +233,13 @@ def main():
             print("\nEnd of movie.")
         return [im, title]
 
-    anim = FuncAnimation(fig, update, frames=range(n_total),
-                         interval=interval_ms, blit=False,
-                         cache_frame_data=False)
+    # only build the animation if it will actually be rendered (playback
+    # window or movie file) — otherwise matplotlib warns that it was
+    # deleted without rendering anything
+    anim = (FuncAnimation(fig, update, frames=range(n_total),
+                          interval=interval_ms, blit=False,
+                          cache_frame_data=False)
+            if not headless or save_movie else None)
 
     # play the movie first (skipped in headless mode) ...
     if not headless:
