@@ -24,12 +24,17 @@ sequentially, and each bin's MATLAB outputs are copied out immediately after
 its run. Do not parallelise this script.
 """
 
+import argparse
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import numpy as np
+import matplotlib
+if os.environ.get("MPLBACKEND"):
+    matplotlib.use(os.environ["MPLBACKEND"])
 import matplotlib.pyplot as plt
 import scienceplots  # noqa: F401  (registers the 'science' matplotlib style)
 from scipy import ndimage
@@ -48,35 +53,60 @@ HERE = Path(__file__).parent
 CIRCULARIZATION_DIR = HERE  # circularization.py lives alongside this script
 
 # =============================================================================
-# Configuration
+# Configuration (defaults — override via CLI)
 # =============================================================================
 
-# --- Abel inversion (configured here; no config.toml dependency) ---
-INVERSION_BACKEND = "pyabel"  # "matlab" or "pyabel"
-PYABEL_METHOD = "daun"       # PyAbel only; e.g. "daun", "hansenlaw", "three_point"
-# PyAbel uses the method's defaults (daun: reg=0, no regularization).
-if INVERSION_BACKEND not in ("matlab", "pyabel"):
-    raise ValueError("INVERSION_BACKEND must be 'matlab' or 'pyabel'")
+
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="Process GMD-binned VMI images through the PES / "
+                    "Abel-inversion pipeline.")
+    p.add_argument("--weight-suffix", default="_w-gmd_norm",
+                   help="Bin-set suffix written by vmi_histogram_gmd_bins.py "
+                        "('' = unweighted, '_w-gmd', '_w-gmd_norm', ...).")
+    p.add_argument("--bin-dir", type=Path,
+                   default=HERE.parent / "centroiding" / "vmi_analysis_output_xe_j_100_sig",
+                   help="Directory holding the vmi_2d_gmd_bin*.npy images.")
+    p.add_argument("--output-dir", type=Path, default=None,
+                   help="Output directory (default: gmd_bins_results<suffix>"
+                        "[_pyabel_<method>] next to this script).")
+    p.add_argument("--inversion-backend", default="pyabel",
+                   choices=["matlab", "pyabel"])
+    p.add_argument("--pyabel-method", default="daun",
+                   help="PyAbel inversion method (pyabel backend only).")
+    p.add_argument("--use-cache", action="store_true", default=False,
+                   help="Reuse existing per-bin inversion outputs if present.")
+    p.add_argument("--no-show", action="store_true", default=False,
+                   help="Skip the interactive plot window at the end.")
+    return p.parse_args()
+
+
+CLI = parse_args()
+
+# --- Abel inversion ---
+INVERSION_BACKEND = CLI.inversion_backend
+PYABEL_METHOD = CLI.pyabel_method
 if not PYABEL_METHOD.isidentifier():
     raise ValueError("PYABEL_METHOD must be a PyAbel method name")
 
 # --- Inputs: the four GMD bins ---
-BIN_DIR = HERE.parent / "centroiding" / "vmi_analysis_output_xe_j_100_sig"
-
-# Which bin set to process (vmi_histogram_gmd_bins.py WEIGHT_MODE suffix):
-#   ""            -> unweighted bins (default)
-#   "_w-gmd"      -> raw GMD scaling
-#   "_w-gmd_norm" -> linear pulse-energy normalisation
-WEIGHT_SUFFIX = "_w-gmd_norm"
+BIN_DIR = CLI.bin_dir
+WEIGHT_SUFFIX = CLI.weight_suffix
 
 # --- Output ---
 # Weighted runs go to their own directory so their cached inversion outputs can
 # never collide with (and silently be reused in place of) the unweighted ones.
-OUTPUT_DIR = HERE / (f"gmd_bins_results{WEIGHT_SUFFIX}" if WEIGHT_SUFFIX
-                     else "gmd_bins_results")
-if INVERSION_BACKEND == "pyabel":
-    OUTPUT_DIR = OUTPUT_DIR.with_name(OUTPUT_DIR.name + f"_pyabel_{PYABEL_METHOD}")
+if CLI.output_dir is not None:
+    OUTPUT_DIR = CLI.output_dir
+else:
+    OUTPUT_DIR = HERE / (f"gmd_bins_results{WEIGHT_SUFFIX}" if WEIGHT_SUFFIX
+                         else "gmd_bins_results")
+    if INVERSION_BACKEND == "pyabel":
+        OUTPUT_DIR = OUTPUT_DIR.with_name(OUTPUT_DIR.name + f"_pyabel_{PYABEL_METHOD}")
 OUTPUT_DIR.mkdir(exist_ok=True)
+
+USE_CACHE = CLI.use_cache
+NO_SHOW = CLI.no_show
 
 # --- Circularization calibration (confirmed for this dataset) ---
 EXTRACTED_FILE = CIRCULARIZATION_DIR / "extracted-FOC100eV-20260710.txt"
@@ -214,7 +244,7 @@ def run_circularization(input_path: Path, output_path: Path) -> None:
     bare filename would not resolve against the output subdirectory.
     """
     cmd = [
-        "uv", "run", "circularization.py",
+        sys.executable, str(CIRCULARIZATION_DIR / "circularization.py"),
         "--input", str(input_path.resolve()),
         "--output", str(output_path.resolve()),
         "--center", "511", "511",
@@ -447,7 +477,7 @@ def main():
     for i, (bin_path, label) in enumerate(zip(bins, labels)):
         print(f"\n[{i+1}/{len(bins)}] GMD bin '{label}'")
         try:
-            results[label] = process_bin(bin_path, label)
+            results[label] = process_bin(bin_path, label, use_cache=USE_CACHE)
         except Exception as e:
             print(f"  [ERROR] {label} failed: {e}")
             results[label] = None
@@ -561,7 +591,10 @@ def main():
         print(f"  {label:<34s}  E points={len(r['energy']):>4d}  "
               f"beta range=[{np.nanmin(b):+.3f}, {bmax:+.3f}]")
 
-    plt.show()
+    if not NO_SHOW:
+        plt.show()
+    else:
+        plt.close("all")
 
 
 if __name__ == "__main__":

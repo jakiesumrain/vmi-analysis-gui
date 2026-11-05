@@ -20,19 +20,21 @@ Usage:
 """
 
 from __future__ import annotations
+import argparse
 import os
 import sys
 import numpy as np
 import pandas as pd
 import matplotlib
-matplotlib.use("TkAgg")  # interactive backend — pops up a live plot window
+# Headless runs set MPLBACKEND (e.g. Agg); default stays the interactive TkAgg.
+matplotlib.use(os.environ.get("MPLBACKEND", "TkAgg"))
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 
 pd.options.mode.chained_assignment = None
 
 # ─────────────────────────────────────────────────────────────────────────────
-# USER CONFIGURATION
+# USER CONFIGURATION (defaults — override via CLI)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # GMD thresholds (3 values → 4 bins). Adjust to your needs.
@@ -65,6 +67,35 @@ WEIGHT_POWER = 1.0
 # Floor for non-positive GMD values (same value the V5 pipeline uses).
 GMD_FLOOR = 1e-12
 
+NO_SHOW = False  # skip the interactive plot window (for web/GUI use)
+
+
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="Build 2D VMI histograms partitioned into GMD bins.")
+    p.add_argument("--config",
+                   default=os.path.join(os.path.dirname(__file__), "config.toml"),
+                   help="Path to the TOML configuration file.")
+    p.add_argument("--thresholds", default=",".join(f"{t:g}" for t in GMD_THRESHOLDS),
+                   help="Comma-separated GMD thresholds (N values -> N+1 bins).")
+    p.add_argument("--gmd-col", type=int, default=GMD_COL,
+                   help="GMD column in the map file: 4 = method 1, 5 = method 2.")
+    p.add_argument("--weight-mode", default=WEIGHT_MODE,
+                   choices=["none", "gmd", "gmd_norm"])
+    p.add_argument("--weight-power", type=float, default=WEIGHT_POWER)
+    p.add_argument("--gmd-floor", type=float, default=GMD_FLOOR)
+    p.add_argument("--no-show", action="store_true", default=NO_SHOW)
+    return p.parse_args()
+
+
+CLI = parse_args()
+GMD_THRESHOLDS = [float(x) for x in CLI.thresholds.split(",")]
+GMD_COL = CLI.gmd_col
+WEIGHT_MODE = CLI.weight_mode
+WEIGHT_POWER = CLI.weight_power
+GMD_FLOOR = CLI.gmd_floor
+NO_SHOW = CLI.no_show
+
 # ─────────────────────────────────────────────────────────────────────────────
 # LOAD CONFIG FROM config.toml
 # ─────────────────────────────────────────────────────────────────────────────
@@ -77,7 +108,7 @@ except ImportError:
         print("[ERROR] TOML parser not available — install tomli")
         sys.exit(1)
 
-config_path = os.path.join(os.path.dirname(__file__), "config.toml")
+config_path = CLI.config
 if not os.path.exists(config_path):
     print(f"[ERROR] Config not found: {config_path}")
     sys.exit(1)
@@ -317,8 +348,11 @@ def main():
     out_png = os.path.join(OUTPUT_DIR, f"vmi_gmd_bins{suffix}.png")
     plt.savefig(out_png, dpi=150, bbox_inches="tight")
     print(f"[Plot] Saved: {out_png}")
-    print("[Plot] Showing live window — close it to finish...")
-    plt.show()
+    if NO_SHOW:
+        print("[Plot] --no-show: skipping live window.")
+    else:
+        print("[Plot] Showing live window — close it to finish...")
+        plt.show()
     plt.close()
 
     print("\nDONE")

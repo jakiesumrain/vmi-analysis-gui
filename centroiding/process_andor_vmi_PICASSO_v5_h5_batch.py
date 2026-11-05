@@ -77,6 +77,18 @@ except ImportError:
 # LOAD CONFIGURATION FROM TOML
 # ==============================================================================
 
+def _parse_cli():
+    """CLI entry: only --config for now; all real knobs live in the TOML."""
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="VMI Photoelectron Analysis - PICASSO V5 (Batch HDF5, LQ/MLE)")
+    parser.add_argument(
+        "--config", default="config.toml",
+        help="Path to the TOML configuration file (default: config.toml "
+             "in the current working directory).")
+    return parser.parse_args()
+
+
 def load_config(config_path="config.toml"):
     """Load configuration from TOML file"""
     if not os.path.exists(config_path):
@@ -94,7 +106,8 @@ def load_config(config_path="config.toml"):
     return config
 
 # Load configuration
-CONFIG = load_config()
+CLI_ARGS = _parse_cli()
+CONFIG = load_config(CLI_ARGS.config)
 vmi_cfg = CONFIG["vmi_picasso"]
 proc_cfg = CONFIG["vmi_picasso"]["processing"]
 hist_cfg = CONFIG["vmi_picasso"]["histogram"]
@@ -1106,7 +1119,7 @@ def main():
     print("=" * 80)
     print("VMI PHOTOELECTRON ANALYSIS - PICASSO V4 BATCH (HDF5 Input)")
     print("=" * 80)
-    print(f"[Config] Loaded from: config.toml")
+    print(f"[Config] Loaded from: {CLI_ARGS.config}")
     print(f"[Config] HDF5 dir: {H5_DIR}")
     print(f"[Config] HDF5 dataset: {H5_DATASET}")
     print(f"[Config] GMD map: {GMD_MAP_PATH}")

@@ -17,18 +17,22 @@ The color scale is FIXED for the whole movie (estimated from the first few
 frames) so that frame-to-frame intensity changes are directly comparable.
 """
 
+import argparse
+import sys
 import h5py
 import numpy as np
 import inspect
 import os
 
 import matplotlib
+if "--headless" in sys.argv or os.environ.get("MPLBACKEND"):
+    matplotlib.use(os.environ.get("MPLBACKEND", "Agg"))
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from matplotlib.animation import FuncAnimation, FFMpegWriter, PillowWriter
 from matplotlib.widgets import Button
 
-# --- config ---
+# --- default config (override via CLI) ---
 h5_dir      = r"F:\1103\1103_8_Aele"     # directory containing the RAW-*.h5 files
 h5_dataset  = "raw/data"      # frame stack dataset path
 n_frames    = 20            # total number of frames to play (across files)
@@ -44,7 +48,35 @@ movie_dir   = r""             # output folder; empty -> current working director
 movie_ext   = ".mp4"          # ".mp4" (needs ffmpeg) or ".gif" (Pillow only)
 movie_dpi   = 100             # resolution of the saved movie
 movie_fps   = 0               # saved-movie frame rate; 0 -> same speed as playback
-# --------------
+headless    = False           # skip the playback window (for web/GUI use)
+dump_frames = r""             # optional dir for per-frame PNGs; empty to skip
+# ------------------------------------------
+
+
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="Play/save the first N frames of H5 raw data as a movie.")
+    p.add_argument("--h5-dir", default=h5_dir)
+    p.add_argument("--h5-dataset", default=h5_dataset)
+    p.add_argument("--n-frames", type=int, default=n_frames)
+    p.add_argument("--interval-ms", type=int, default=interval_ms)
+    p.add_argument("--cmap", default=cmap)
+    p.add_argument("--log-scale", action="store_true", default=log_scale)
+    p.add_argument("--vmin-frac", type=float, default=vmin_frac)
+    p.add_argument("--vmax-pct", type=float, default=vmax_pct)
+    p.add_argument("--scale-frames", type=int, default=scale_frames)
+    p.add_argument("--dark-path", default=dark_path)
+    p.add_argument("--save-movie", action=argparse.BooleanOptionalAction,
+                   default=save_movie)
+    p.add_argument("--movie-dir", default=movie_dir)
+    p.add_argument("--movie-ext", default=movie_ext, choices=[".mp4", ".gif"])
+    p.add_argument("--movie-dpi", type=int, default=movie_dpi)
+    p.add_argument("--movie-fps", type=float, default=movie_fps)
+    p.add_argument("--headless", action="store_true", default=headless,
+                   help="Skip the playback window; only write outputs.")
+    p.add_argument("--dump-frames", default=dump_frames,
+                   help="Directory for per-frame PNGs (empty = skip).")
+    return p.parse_args()
 
 
 def saved_fps():
@@ -153,6 +185,15 @@ def main():
     norm = (LogNorm(vmin=vmax * vmin_frac, vmax=vmax) if log_scale
             else matplotlib.colors.Normalize(vmin=vmax * vmin_frac, vmax=vmax))
 
+    # optional per-frame PNG dump (for the GUI scrub slider)
+    if dump_frames:
+        os.makedirs(dump_frames, exist_ok=True)
+        for rec in frames:
+            img = preprocess(load_frame(rec), dark)
+            plt.imsave(os.path.join(dump_frames, f"frame_{rec[3]:04d}.png"),
+                       img, cmap=cmap, norm=norm)
+        print(f"Dumped {n_total} frame PNGs to {dump_frames}")
+
     fig, ax = plt.subplots(figsize=(7, 7.8))
     fig.subplots_adjust(bottom=0.12)   # room for the pause/resume button
     fig.patch.set_facecolor('white')
@@ -192,8 +233,9 @@ def main():
                          interval=interval_ms, blit=False,
                          cache_frame_data=False)
 
-    # play the movie first ...
-    plt.show()
+    # play the movie first (skipped in headless mode) ...
+    if not headless:
+        plt.show()
 
     # ... then write it to a file
     out_path = movie_output_path()
@@ -209,4 +251,22 @@ def main():
 
 
 if __name__ == '__main__':
+    _args = parse_args()
+    h5_dir = _args.h5_dir
+    h5_dataset = _args.h5_dataset
+    n_frames = _args.n_frames
+    interval_ms = _args.interval_ms
+    cmap = _args.cmap
+    log_scale = _args.log_scale
+    vmin_frac = _args.vmin_frac
+    vmax_pct = _args.vmax_pct
+    scale_frames = _args.scale_frames
+    dark_path = _args.dark_path
+    save_movie = _args.save_movie
+    movie_dir = _args.movie_dir
+    movie_ext = _args.movie_ext
+    movie_dpi = _args.movie_dpi
+    movie_fps = _args.movie_fps
+    headless = _args.headless
+    dump_frames = _args.dump_frames
     main()

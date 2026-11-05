@@ -8,6 +8,7 @@ so frames from weaker FEL pulses get proportionally higher weight.
 This uses the pre-computed gmd_map_all.txt (frame_idx → GMD value).
 """
 
+import argparse
 import h5py
 import numpy as np
 import cv2
@@ -16,7 +17,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 
-# --- config ---
+# --- default config (override via CLI) ---
 h5_dir       = r"F:\1103\1103_12_ele"
 output_path  = r"F:\1103\1103_12_ele\accumulated_result.txt"
 im_threshold = 5
@@ -41,16 +42,46 @@ gmd_w_max = 4.0
 # Dark frame (.npy file from centroiding/compute_dark.py)
 # Set to empty string to skip dark subtraction
 dark_path    = r""
-# --------------
+
+# Headless / live-preview options (for web/GUI use)
+no_show      = False   # skip the interactive plot window
+live_path    = r""     # optional .npy path for partial images; empty to skip
+live_every   = 25      # write the partial image every N completed files
+# ------------------------------------------
+
+
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="Accumulate all frames with threshold + denoise + optional GMD scaling.")
+    p.add_argument("--h5-dir", default=h5_dir)
+    p.add_argument("--output-path", default=output_path)
+    p.add_argument("--im-threshold", type=float, default=im_threshold)
+    p.add_argument("--do-denoise", action=argparse.BooleanOptionalAction,
+                   default=do_denoise)
+    p.add_argument("--max-workers", type=int, default=max_workers)
+    p.add_argument("--simple-sum", action="store_true", default=simple_sum)
+    p.add_argument("--gmd-map-path", default=gmd_map_path)
+    p.add_argument("--enable-gmd", action="store_true", default=enable_gmd)
+    p.add_argument("--gmd-w-min", type=float, default=gmd_w_min)
+    p.add_argument("--gmd-w-max", type=float, default=gmd_w_max)
+    p.add_argument("--dark-path", default=dark_path)
+    p.add_argument("--no-show", action="store_true", default=no_show)
+    p.add_argument("--live-path", default=live_path,
+                   help="Write the partial accumulated image (.npy) here during the run.")
+    p.add_argument("--live-every", type=int, default=live_every)
+    return p.parse_args()
+
 
 # worker-process globals — set once via initializer, never pickled per-task
 _dark_frame  = None
 _gmd_weights = None
+_params      = None
 
-def _worker_init(dark_frame, gmd_weights):
-    global _dark_frame, _gmd_weights
+def _worker_init(dark_frame, gmd_weights, params):
+    global _dark_frame, _gmd_weights, _params
     _dark_frame  = dark_frame
     _gmd_weights = gmd_weights
+    _params      = params
 
 
 def load_gmd_weights(path, n_total_frames):
@@ -106,15 +137,16 @@ def process_h5(args):
         data = data.astype(np.float64)
 
     # --- threshold + denoise (skipped in simple_sum mode) ---
-    if not simple_sum:
+    if not _params["simple_sum"]:
         # threshold (vectorized) — works on float64, negatives are < 1
-        mask = data >= im_threshold                    # (N, H, W) bool
+        mask = data >= _params["im_threshold"]           # (N, H, W) bool
 
         # morphological denoise
-        if do_denoise:
+        if _params["do_denoise"]:
             mask_u8 = np.ascontiguousarray(mask, dtype=np.uint8)
             for i in range(n):
-                mask_u8[i] = cv2.morphologyEx(mask_u8[i], cv2.MORPH_OPEN, kernel, iterations=1)
+                mask_u8[i] = cv2.morphologyEx(mask_u8[i], cv2.MORPH_OPEN,
+                                              _params["kernel"], iterations=1)
             mask = mask_u8.astype(bool)
 
         # zero below-threshold pixels in place (no large temporary array)
@@ -127,7 +159,7 @@ def process_h5(args):
     return acc, n
 
 
-def plot_accumulated(total_acc, title_suffix=""):
+def plot_accumulated(total_acc, title_suffix="", show=True):
     """Plot the accumulated image with a log color scale."""
     import matplotlib.pyplot as plt
     from matplotlib.colors import LogNorm
@@ -142,7 +174,13 @@ def plot_accumulated(total_acc, title_suffix=""):
     plt.colorbar(label='weighted counts (log)')
     plt.title(f'Accumulated{title_suffix} (log scale)')
     plt.tight_layout()
-    plt.show()
+    if show:
+        plt.show()
+    else:
+        out = os.path.splitext(output_path)[0] + ".png"
+        plt.savefig(out, dpi=150, bbox_inches="tight")
+        print(f"[Plot] Saved: {out}")
+    plt.close()
 
 
 def main():
@@ -150,7 +188,7 @@ def main():
     if os.path.exists(output_path):
         print(f"[Resume] {output_path} exists — skipping accumulation, plotting directly")
         total_acc = np.loadtxt(output_path)
-        plot_accumulated(total_acc, " (loaded from file)")
+        plot_accumulated(total_acc, " (loaded from file)", show=not no_show)
         return
 
     files = sorted([
@@ -195,10 +233,18 @@ def main():
     t_start = time.time()
     total_frames = 0
     total_acc = None
+    n_done = 0
+
+    params = {
+        "im_threshold": im_threshold,
+        "do_denoise": do_denoise,
+        "kernel": kernel,
+        "simple_sum": simple_sum,
+    }
 
     with ProcessPoolExecutor(max_workers=workers,
                              initializer=_worker_init,
-                             initargs=(dark_frame, gmd_weights)) as executor:
+                             initargs=(dark_frame, gmd_weights, params)) as executor:
         futures = {executor.submit(process_h5, args): args[0] for args in batch_args}
         with tqdm(total=n_files, desc="Processing H5 files") as pbar:
             for fut in as_completed(futures):
@@ -211,6 +257,9 @@ def main():
                         total_acc += acc
                 except Exception as e:
                     print(f"\n[Error] {e}")
+                n_done += 1
+                if live_path and total_acc is not None and n_done % live_every == 0:
+                    np.save(live_path, total_acc)
                 pbar.update(1)
 
     t_end = time.time()
@@ -224,8 +273,24 @@ def main():
     print(f"Saved to {output_path}")
 
     gmd_label = "ON" if gmd_weights is not None else "OFF"
-    plot_accumulated(total_acc, f" ({total_frames} frames, GMD={gmd_label})")
+    plot_accumulated(total_acc, f" ({total_frames} frames, GMD={gmd_label})",
+                     show=not no_show)
 
 
 if __name__ == '__main__':
+    _args = parse_args()
+    h5_dir = _args.h5_dir
+    output_path = _args.output_path
+    im_threshold = _args.im_threshold
+    do_denoise = _args.do_denoise
+    max_workers = _args.max_workers
+    simple_sum = _args.simple_sum
+    gmd_map_path = _args.gmd_map_path
+    enable_gmd = _args.enable_gmd
+    gmd_w_min = _args.gmd_w_min
+    gmd_w_max = _args.gmd_w_max
+    dark_path = _args.dark_path
+    no_show = _args.no_show
+    live_path = _args.live_path
+    live_every = _args.live_every
     main()

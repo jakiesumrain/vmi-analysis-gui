@@ -8,20 +8,37 @@ GMD timestamp    = current-time-both.txt column 2 (machine-B timestamp)
 Output: gmd_map_first100.txt  (frame_idx, h5_file, frame_in_file, gmd_idx, gmd_val1, gmd_val2, time_diff_ms)
 """
 
+import argparse
 import h5py
 import numpy as np
 import glob
 import os
 import time
 
-# --- config ---
-h5_dir = r"H:\Xe_sig"
-gmd_path = r"H:\Xe_sig\Xe_sigcurrent-time-both.txt"
-output_path = r"E:\work\projects\VMI-FEL\cpvmi\data_20260703\gmd_map_all.txt"
-n_files = 0  # 0 = all files
-# --------------
+# --- default config (override via CLI) ---
+DEFAULT_H5_DIR = r"H:\Xe_sig"
+DEFAULT_GMD_PATH = r"H:\Xe_sig\Xe_sigcurrent-time-both.txt"
+DEFAULT_OUTPUT_PATH = r"E:\work\projects\VMI-FEL\cpvmi\data_20260703\gmd_map_all.txt"
+DEFAULT_N_FILES = 0  # 0 = all files
+# -----------------------------------------
 
-def main():
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Build frame-to-GMD correspondence map via timestamp matching."
+    )
+    parser.add_argument("--h5-dir", default=DEFAULT_H5_DIR,
+                        help="Directory containing RAW-*.h5 files.")
+    parser.add_argument("--gmd-path", default=DEFAULT_GMD_PATH,
+                        help="GMD timestamp file (current-time-both.txt).")
+    parser.add_argument("--output-path", default=DEFAULT_OUTPUT_PATH,
+                        help="Output map file path.")
+    parser.add_argument("--n-files", type=int, default=DEFAULT_N_FILES,
+                        help="Process only the first N files (0 = all).")
+    return parser.parse_args()
+
+
+def main(h5_dir, gmd_path, output_path, n_files):
     t0 = time.time()
 
     # --- Load GMD data ---
@@ -123,4 +140,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(args.h5_dir, args.gmd_path, args.output_path, args.n_files)
