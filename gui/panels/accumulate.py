@@ -10,7 +10,7 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     path_input, render_npy)
+                     path_input, render_npy, zoomable_image)
 
 
 def build(jobs: JobManager) -> None:
@@ -20,7 +20,7 @@ def build(jobs: JobManager) -> None:
         "optional GMD weighting (h5_accumulate_fast_gmd.py). "
         "Quick-look tool — the Picasso path is the precise one.")
 
-    live_img = ui.image().classes("w-full max-w-2xl")
+    live_img = zoomable_image().classes("w-full max-w-2xl")
     live_img.visible = False
     live_state = {"stamp": 0.0}
 
@@ -153,4 +153,4 @@ def _results(job: Job):
     png = os.path.splitext(out)[0] + ".png"
     if job.status == "done" and Path(png).exists():
         ui.label(f"Result: {out}").classes("vmi-subtitle")
-        ui.image(file_url(png)).classes("w-full max-w-2xl")
+        zoomable_image(file_url(png)).classes("w-full max-w-2xl")

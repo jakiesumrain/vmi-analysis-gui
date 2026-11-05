@@ -8,7 +8,7 @@ from nicegui import ui
 
 from ..jobs import Job, JobManager
 from .. import theme
-from .common import JobView, REPO_ROOT, file_url, path_input
+from .common import JobView, REPO_ROOT, file_url, path_input, zoomable_image
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
 CONFIG_PATH = CENTROID_DIR / "config.toml"
@@ -151,7 +151,7 @@ def _results(job: Job):
     summary = out_dir / "04_final_summary.png"
     if tuning.exists():
         ui.label("Tuning check:").classes("vmi-caption")
-        ui.image(file_url(tuning)).classes("w-full max-w-4xl")
+        zoomable_image(file_url(tuning)).classes("w-full max-w-4xl")
     if summary.exists():
         ui.label("Final summary:").classes("vmi-caption")
-        ui.image(file_url(summary)).classes("w-full max-w-4xl")
+        zoomable_image(file_url(summary)).classes("w-full max-w-4xl")
