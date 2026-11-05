@@ -72,13 +72,12 @@ class SpectrumCalibrationTests(unittest.TestCase):
             with self.subTest(lo=lo, hi=hi), self.assertRaises(ValueError):
                 fit_xe_4d(x, z, lo, hi)
 
-    def test_scaling_changes_density_and_preserves_integral(self):
+    def test_calibration_changes_only_x_and_preserves_intensity(self):
         q, y, alpha, *_ = synthetic_spectrum()
         original_q, original_y = q.copy(), y.copy()
         energy, density = scale_spectrum(q, y, alpha)
         np.testing.assert_allclose(energy, q * alpha)
-        np.testing.assert_allclose(density, y / alpha)
-        self.assertAlmostEqual(np.trapezoid(density, energy), np.trapezoid(y, q), places=6)
+        np.testing.assert_array_equal(density, y)
         np.testing.assert_array_equal(q, original_q)
         np.testing.assert_array_equal(y, original_y)
         x, z = scale_spectrum(q, y)
@@ -147,11 +146,13 @@ class CentroidScriptCalibrationTests(unittest.TestCase):
                     _, energy, density = self.env["perform_abel_transform"](np.ones((32, 32)))
                 factor = manual_alpha or 1
                 np.testing.assert_allclose(energy, q * factor)
-                np.testing.assert_allclose(density, y / factor)
+                np.testing.assert_array_equal(density, y)
                 saved = np.loadtxt(Path(folder) / "energy_spectrum.csv", delimiter=",", skiprows=1)
                 np.testing.assert_allclose(saved[:, 1], q)
                 np.testing.assert_allclose(saved[:, 2], energy)
                 np.testing.assert_allclose(saved[:, 4], density)
+                self.assertEqual((Path(folder) / "energy_spectrum.csv").read_text().splitlines()[0],
+                                 "r_px,r2_px2,energy,dN_per_dr,intensity")
                 self.assertIn("hv = 82.000000", output.getvalue())
                 self.assertIn("alpha = 0.0004", output.getvalue())
 
@@ -167,6 +168,8 @@ class CentroidScriptCalibrationTests(unittest.TestCase):
                     self.env["plot_final_summary"](np.ones((32, 32)), None, 100, 1, energy, density)
                     axes = [a for a in plt.gcf().axes if a.get_title() == "Photoelectron Spectrum"]
                     self.assertEqual(axes[0].get_xlabel(), label)
+                    self.assertEqual(axes[0].get_ylabel(), "Intensity (arb. units)")
+                    np.testing.assert_array_equal(axes[0].lines[0].get_ydata(), y)
                     self.assertTrue((Path(folder) / "04_final_summary.png").exists())
                 plt.close("all")
 

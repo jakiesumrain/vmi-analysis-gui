@@ -226,8 +226,8 @@ fit_xe_4d = false
 # --- Summary Spectrum Plot Axes ---
 [vmi_picasso.spectrum_plot]
 # Axis limits for the "Photoelectron Spectrum" panel of 04_final_summary.png
-# (x = eV and y = counts/eV when alpha is set; otherwise pixel^2 and counts/pixel^2).
-# When changing alpha, reset limits to auto or supply limits in the new units.
+# (x = eV when alpha is set, otherwise pixel^2; y = original intensity, unchanged).
+# When changing alpha, reset x limits to auto or supply limits in the new units.
 # Set any value < 0 for automatic scaling of that side.
 x_min = -1.0
 x_max = -1.0
