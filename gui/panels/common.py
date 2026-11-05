@@ -162,7 +162,8 @@ def zoomable_image(src: str = "", **kwargs) -> ui.image:
 # --------------------------------------------------------------------------
 
 def render_image(data: np.ndarray, out_path: Path, cmap: str = "viridis",
-                 log: bool = True, vmax_pct: float = 99.999) -> Path:
+                 log: bool = True, vmax_pct: float = 99.999,
+                 vmin_pct: float | None = None) -> Path:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -173,7 +174,8 @@ def render_image(data: np.ndarray, out_path: Path, cmap: str = "viridis",
     if log:
         norm = LogNorm(vmin=max(vmax * 1e-4, 1e-12), vmax=vmax)
     else:
-        norm = Normalize(vmin=0, vmax=vmax)
+        vmin = np.percentile(data, vmin_pct) if vmin_pct is not None else 0
+        norm = Normalize(vmin=vmin, vmax=vmax)
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.imshow(data, origin="lower", cmap=cmap, norm=norm, interpolation="nearest")
     ax.axis("off")

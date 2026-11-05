@@ -40,12 +40,15 @@ circularization/process_gmd_bins.py       # 4. per bin: hole patch → rotate �
                                           #    circularization.py → apodize → Abel inversion → E, IE, betas
 ```
 
-Side tools (QC, not pipeline stages):
+Side tools (QC / helpers, not pipeline stages):
 
 - `h5_play_frames_movie.py` — play the first N frames as a movie; save mp4/gif.
 - `h5_accumulate_fast_gmd.py` — fast pixel accumulation (threshold + morphology,
   optional GMD weighting); no sub-pixel localization. Superseded by the Picasso
   path for analysis, kept for quick looks.
+- `centroiding/compute_dark.py` — precompute a mean/median dark frame
+  (`dark_{method}.npy`); point `dark_file` in `config.toml` at the result to
+  skip per-run dark computation in the centroiding script.
 
 | script | configuration |
 |---|---|
@@ -53,6 +56,7 @@ Side tools (QC, not pipeline stages):
 | `h5_play_frames_movie.py` | argparse CLI (`--h5-dir` required, `--headless`, `--dump-frames`, ...) |
 | `h5_accumulate_fast_gmd.py` | argparse CLI (`--h5-dir` required, `--no-show`, `--live-path`, ...) |
 | `process_andor_vmi_PICASSO_v5_h5_batch.py` | `config.toml` `[vmi_picasso]` + `--config PATH` |
+| `compute_dark.py` | argparse CLI (`--dark-dir`, `--method mean\|median`, `--frames`, `--output-dir`; defaults from config.toml) |
 | `vmi_histogram_gmd_bins.py` | config.toml paths + argparse CLI (`--thresholds`, `--weight-mode`, `--weight-power`, `--no-show`) |
 | `process_gmd_bins.py` | argparse CLI (`--weight-suffix`, `--inversion-backend`, `--pyabel-method`, `--use-cache`, `--no-show`) |
 | `circularization/circularization.py` | full argparse CLI — no changes needed |

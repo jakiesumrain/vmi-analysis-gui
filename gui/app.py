@@ -7,14 +7,15 @@ from nicegui import ui
 
 from . import theme
 from .jobs import MANAGER
-from .panels import (accumulate, binning, centroid, circularize, gmd_map,
-                     movie, pes, pipeline)
+from .panels import (accumulate, binning, centroid, circularize, dark,
+                     gmd_map, movie, pes, pipeline)
 from .panels.common import init_zoom_overlay
 
 TABS = [
     ("GMD Map", gmd_map),
     ("Movie", movie),
     ("Accumulate", accumulate),
+    ("Dark Frame", dark),
     ("Centroiding", centroid),
     ("Binning", binning),
     ("Circularize", circularize),

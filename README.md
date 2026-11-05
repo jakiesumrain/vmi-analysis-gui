@@ -35,6 +35,7 @@ That is the whole setup. The app starts with one tab per script:
 | GMD Map | `build_gmd_map.py` | match each camera frame to its GMD pulse-energy record by timestamp |
 | Movie | `h5_play_frames_movie.py` | render the first N frames as a movie + frame scrubber (QC) |
 | Accumulate | `h5_accumulate_fast_gmd.py` | fast threshold+denoise accumulation with live preview (QC) |
+| Dark Frame | `centroiding/compute_dark.py` | mean/median dark frame from dark HDF5 files → `dark_{method}.npy` |
 | Centroiding | `centroiding/process_andor_vmi_PICASSO_v5_h5_batch.py` | Picasso localization → checkpoint + 2D VMI histogram |
 | Binning | `centroiding/vmi_histogram_gmd_bins.py` | split events into GMD bins, one 2D histogram per bin |
 | Circularize | `circularization/circularization.py` | correct radial distortion of a single image |
