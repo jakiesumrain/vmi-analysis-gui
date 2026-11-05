@@ -6,7 +6,7 @@ from pathlib import Path
 
 from nicegui import ui
 
-from ..jobs import Job, JobManager
+from ..jobs import Job, JobManager, TERMINAL
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
                      open_folder_button, path_input, persist, serve_dir,
@@ -18,7 +18,7 @@ def build(jobs: JobManager) -> None:
         "Frame Movie",
         "Render the first N frames as a movie and scrub them frame by frame "
         "(h5_play_frames_movie.py). Uncheck 'Save movie file' to watch the "
-        "movie live in a separate window instead of writing a file.")
+        "movie play live in this page instead of writing a file.")
 
     view = JobView(jobs, results_builder=_results)
 
@@ -63,6 +63,12 @@ def build(jobs: JobManager) -> None:
 
         def run():
             frames_dir = GENERATED / "movie_frames"
+            frames_dir.mkdir(parents=True, exist_ok=True)
+            for old in frames_dir.glob("frame_*.png"):
+                old.unlink()  # stale frames would confuse the live view
+            live_state["src"] = None
+            live_label.visible = False
+            live_img.visible = False
             cmd = [sys.executable, str(REPO_ROOT / "h5_play_frames_movie.py"),
                    "--h5-dir", h5_dir.value,
                    "--h5-dataset", h5_dataset.value,
@@ -76,24 +82,21 @@ def build(jobs: JobManager) -> None:
                    "--movie-dir", movie_dir.value,
                    "--movie-ext", movie_ext.value,
                    "--movie-fps", str(movie_fps.value or 0),
+                   "--headless",
                    "--save-movie" if save_movie.value else "--no-save-movie",
                    "--dump-frames", str(frames_dir)]
             if log_scale.value:
                 cmd.append("--log-scale")
-            if save_movie.value:
-                cmd.append("--headless")
-                env = None
-            else:
-                # live playback: no --headless and no forced Agg backend, so
-                # the script opens its interactive movie window. The job stays
-                # "running" until the user closes that window.
-                env = {"MPLBACKEND": ""}
+            if not save_movie.value:
+                # embedded live playback: frames stream in at playback pace
+                cmd.append("--stream-pace")
             name = os.path.basename(os.path.normpath(h5_dir.value))
             job = jobs.submit(Job(
-                name="Frame movie", cmd=cmd, cwd=str(REPO_ROOT), env=env,
+                name="Frame movie", cmd=cmd, cwd=str(REPO_ROOT),
                 extra={"frames_dir": str(frames_dir),
                        "movie_path": str(Path(movie_dir.value) / (name + movie_ext.value)),
                        "movie_path_gif": str(Path(movie_dir.value) / (name + ".gif"))}))
+            live_state["job"] = None if save_movie.value else job
             view.attach(job)
 
         with ui.row().classes("gap-2"):
@@ -102,9 +105,38 @@ def build(jobs: JobManager) -> None:
                       on_click=lambda: _clear_outputs(
                           movie_dir, h5_dir)) \
                 .props("flat color=negative")
-        ui.label("Tip: with 'Save movie file' unchecked the movie plays live "
-                 "in a separate window — close that window to finish the "
-                 "run.").classes("vmi-subtitle")
+        ui.label("Tip: with 'Save movie file' unchecked the movie plays "
+                 "live below as the frames stream in (at the Interval "
+                 "pace).").classes("vmi-subtitle")
+
+        live_label = ui.label("").classes("vmi-caption")
+        live_label.visible = False
+        live_img = ui.image("").classes("w-full max-w-2xl")
+        live_img.visible = False
+        live_state = {"job": None, "src": None}
+
+        def _live_tick():
+            job = live_state["job"]
+            if job is None:
+                return
+            frames_dir = Path(job.extra["frames_dir"])
+            pngs = sorted(frames_dir.glob("frame_*.png"))
+            if job.status in TERMINAL:
+                live_state["job"] = None
+            elif len(pngs) > 1:
+                # one behind the newest: that file may still be mid-write
+                pngs = pngs[:-1]
+            if pngs:
+                latest = pngs[-1]
+                if str(latest) != live_state["src"]:
+                    live_state["src"] = str(latest)
+                    live_img.set_source(file_url(latest))
+                    live_label.visible = True
+                    live_img.visible = True
+                live_label.text = (
+                    f"Live playback: frame {int(latest.stem.split('_')[1]) + 1}")
+
+        ui.timer(0.3, _live_tick)
 
     view.place_console()
 
