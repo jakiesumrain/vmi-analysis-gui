@@ -209,10 +209,25 @@ resolution_factor = 1
 # Method: BASEX (fast and accurate for VMI)
 enable_abel = true
 
+# --- Energy Calibration / Xe 4d Doublet ---
+[vmi_picasso.energy_calibration]
+# Optional alpha in eV per histogram pixel^2: E = alpha * r^2.
+# Omit alpha to keep the spectrum in pixel^2. Must be finite and positive.
+# alpha = 0.0004
+# Fit two Gaussian peaks + linear background in pixel^2, then use
+# alpha*q_3/2 = hv - 69.537 eV, alpha*q_5/2 = hv - 67.548 eV.
+# Reports fitted alpha and hv in the console; does not replace input alpha.
+fit_xe_4d = false
+# Optional search limits in pixel^2, independent of the displayed axis units.
+# Set these around the Xe doublet to exclude unrelated lines/background.
+# fit_min_px2 = 25000.0
+# fit_max_px2 = 45000.0
+
 # --- Summary Spectrum Plot Axes ---
 [vmi_picasso.spectrum_plot]
 # Axis limits for the "Photoelectron Spectrum" panel of 04_final_summary.png
-# (x = kinetic energy in arb. units / r^2, y = counts per energy bin).
+# (x = eV and y = counts/eV when alpha is set; otherwise pixel^2 and counts/pixel^2).
+# When changing alpha, reset limits to auto or supply limits in the new units.
 # Set any value < 0 for automatic scaling of that side.
 x_min = -1.0
 x_max = -1.0

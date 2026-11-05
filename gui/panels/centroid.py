@@ -5,6 +5,7 @@ from pathlib import Path
 
 import tomlkit
 from nicegui import ui
+from centroiding.spectrum_calibration import CalibrationSettings
 
 from ..jobs import Job, JobManager
 from .. import theme
@@ -48,6 +49,10 @@ FIELDS = [
     ("processing", "tuning_only", "bool", "Tuning mode only"),
     ("histogram", "resolution_factor", "int", "Histogram resolution factor"),
     ("histogram", "enable_abel", "bool", "Abel inversion"),
+    ("energy_calibration", "alpha", "float", "α (eV/pixel²; empty = uncalibrated)"),
+    ("energy_calibration", "fit_xe_4d", "bool", "Fit Xe 4d doublet → hν and α in console"),
+    ("energy_calibration", "fit_min_px2", "float", "Xe fit min (pixel²; empty = auto)"),
+    ("energy_calibration", "fit_max_px2", "float", "Xe fit max (pixel²; empty = auto)"),
     ("spectrum_plot", "x_min", "float", "Spectrum x min (-1 = auto)"),
     ("spectrum_plot", "x_max", "float", "Spectrum x max (-1 = auto)"),
     ("spectrum_plot", "y_min", "float", "Spectrum y min (-1 = auto)"),
@@ -61,6 +66,7 @@ GROUPS = {
     "vmi_picasso": "Paths, detection and fitting",
     "processing": "Processing",
     "histogram": "Histogram",
+    "energy_calibration": "Energy calibration / Xe 4d fit",
     "spectrum_plot": "Summary spectrum plot axes",
     "gmd": "GMD normalization",
 }
@@ -94,6 +100,11 @@ def build(jobs: JobManager) -> None:
     with theme.panel_card():
         for group, caption in GROUPS.items():
             ui.label(caption).classes("vmi-caption")
+            if group == "energy_calibration":
+                ui.label("E = α × r². Leave α empty for pixel². Xe fitting reports "
+                         "a suggested α without changing your input. Fit limits "
+                         "always use pixel²; spectrum axis limits use the displayed units.") \
+                    .classes("vmi-subtitle")
             fields = [f for f in FIELDS if f[0] == group]
             with ui.grid(columns=2).classes("w-full gap-x-4"):
                 for section, key, kind, label in fields:
@@ -103,7 +114,8 @@ def build(jobs: JobManager) -> None:
                     widgets[(section, key, kind)] = wid
 
         def run():
-            _save(widgets)
+            if not _save(widgets):
+                return
             cmd = [sys.executable, str(SCRIPT),
                    "--config", str(CONFIG_PATH)]
             job = jobs.submit(Job(name="Centroiding", cmd=cmd,
@@ -138,7 +150,7 @@ def _make_widget(kind: str, label: str, value):
     return ui.input(label, value=str(value)).props("outlined dense")
 
 
-def _save(widgets) -> None:
+def _save(widgets) -> bool:
     doc = _load_doc()
     for (section, key, kind), wid in widgets.items():
         sec = _section(doc, section)
@@ -146,16 +158,22 @@ def _save(widgets) -> None:
         if kind == "bool":
             sec[key] = bool(v)
         elif kind in ("int", "float"):
-            if (v is None or v == "") and section == "spectrum_plot":
-                # empty spectrum axis field = leave the key out (auto scale)
+            if (v is None or v == "") and section in ("spectrum_plot", "energy_calibration"):
+                # Empty optional values are omitted so the script uses defaults.
                 sec.pop(key, None)
             else:
                 sec[key] = (int(v or 0) if kind == "int"
                             else float(v or 0.0))
         else:
             sec[key] = str(v)
+    try:
+        CalibrationSettings.from_config(doc["vmi_picasso"].get("energy_calibration", {}))
+    except ValueError as exc:
+        ui.notify(str(exc), type="negative")
+        return False
     CONFIG_PATH.write_text(tomlkit.dumps(doc), encoding="utf-8")
     ui.notify(f"Saved {CONFIG_PATH}", type="positive")
+    return True
 
 
 def _output_dir(doc) -> Path:

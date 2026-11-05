@@ -98,6 +98,38 @@ stages 1–4 and skips stages whose outputs already exist.
 
 ## Command-line use
 
+In the Centroiding tab, **Energy calibration / Xe 4d fit** provides an optional
+**α** in eV/pixel². A positive value displays `E = α r²` in eV and scales the
+density to counts/eV; leaving it empty keeps the squared-radius axis in pixel².
+The CSV keeps its `r_px,r2_px2,energy,dN_per_dr,dN_per_dE` columns, with `energy`
+and the final density column in the displayed units. Alpha refers to histogram
+pixels, so it must be recalibrated if the histogram resolution factor changes.
+Reset the spectrum axis limits to auto when switching units, or enter limits
+in the new displayed units.
+
+Enable **Fit Xe 4d doublet** to fit the two most prominent peaks in pixel²
+using two independent Gaussians plus a linear background. Optional fit min/max
+limits always use pixel² and should isolate the doublet from other lines. The
+console prints the fitted centers and derives alpha and photon energy from
+`α q_3/2 = hν − 69.537 eV` and `α q_5/2 = hν − 67.548 eV`, using the gas-phase
+Xe reference energies from [Elettra's PES reference table](https://www.elettra.eu/lightsources/elettra/elettra-beamlines/gas-phase/useful-reference-datafor-pes.html).
+The higher-pixel² peak is assigned to 4d₅/₂. Fitting assumes these are the Xe
+4d lines; unresolved or poor fits produce a console message without a calibration.
+Reported uncertainties are formal fit errors and exclude systematic errors.
+The fit does not change your alpha: copy the fitted value into the alpha field
+and run again to apply it. Existing localization checkpoints are reused.
+
+For standalone runs, these controls live in the optional
+`[vmi_picasso.energy_calibration]` section of `centroiding/config.toml`:
+
+```toml
+[vmi_picasso.energy_calibration]
+# alpha = 0.0004          # omit for an uncalibrated pixel² axis
+fit_xe_4d = true
+fit_min_px2 = 25000.0     # optional: search window around the two Xe peaks
+fit_max_px2 = 45000.0
+```
+
 Every script is standalone; `--help` lists all options. Examples:
 
 ```bash

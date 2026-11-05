@@ -29,6 +29,11 @@ import glob
 import pandas as pd
 import numpy as np
 
+if __package__:
+    from .spectrum_calibration import CalibrationSettings, fit_xe_4d, scale_spectrum
+else:
+    from spectrum_calibration import CalibrationSettings, fit_xe_4d, scale_spectrum
+
 # Load configuration from TOML file
 try:
     import tomllib  # Python 3.11+
@@ -199,6 +204,7 @@ SPECTRUM_X_MIN = float(spec_cfg.get("x_min", -1.0))
 SPECTRUM_X_MAX = float(spec_cfg.get("x_max", -1.0))
 SPECTRUM_Y_MIN = float(spec_cfg.get("y_min", -1.0))
 SPECTRUM_Y_MAX = float(spec_cfg.get("y_max", -1.0))
+ENERGY_CALIBRATION = CalibrationSettings.from_config(vmi_cfg.get("energy_calibration", {}))
 
 # --- PROCESSING MODE ---
 TUNING_ONLY = proc_cfg["tuning_only"]
@@ -824,6 +830,27 @@ def center_and_rotate(vmi_2d, verbose=True):
         print("[Abel] Centered on brightest spot, rotated 90 deg (polarization vertical)")
     return vmi_2d
 
+def fit_xe_energy_calibration(q, pes_px2):
+    """Fit peak positions in pixel² and infer alpha/hv using Ek = hv - IP."""
+    if not ENERGY_CALIBRATION.fit_xe_4d:
+        return
+    try:
+        fit = fit_xe_4d(q, pes_px2, ENERGY_CALIBRATION.fit_min_px2,
+                       ENERGY_CALIBRATION.fit_max_px2)
+    except ValueError as exc:
+        print(f"[Xe 4d fit] No calibration reported: {exc}")
+        return
+    print(f"[Xe 4d fit] Fitted centers: 4d3/2 = {fit.q_3_2:.3f} pixel^2; "
+          f"4d5/2 = {fit.q_5_2:.3f} pixel^2")
+    print("[Xe 4d fit] Ek = alpha*r^2 = hv - IP; "
+          "IP(4d3/2) = 69.537 eV, IP(4d5/2) = 67.548 eV")
+    print(f"[Xe 4d fit] alpha = {fit.alpha:.8g} +/- {fit.alpha_std:.2g} eV/pixel^2")
+    print(f"[Xe 4d fit] hv = {fit.photon_energy_ev:.6f} +/- "
+          f"{fit.photon_energy_std_ev:.2g} eV (formal fit errors only)")
+    print("[Xe 4d fit] Assumes the selected two peaks are the Xe 4d doublet. "
+          "The fitted alpha is advisory; the spectrum uses your input alpha.")
+
+
 def perform_abel_transform(vmi_2d):
     """Perform inverse Abel transform to get 3D distribution, then the
     photoelectron energy spectrum with PyAbel's angular_integration_3D + toPES.
@@ -835,7 +862,8 @@ def perform_abel_transform(vmi_2d):
     the rotation nor the transform needs an explicit origin. Inversion method:
     Hansen–Law.
     Energy calibration:
-    E = 1.0 * r^2 (pixel^2, uncalibrated). Outputs energy_spectrum.csv and
+    E = alpha * r^2 (eV if alpha is supplied, otherwise pixel^2).
+    Optionally fit the Xe 4d peaks before scaling. Outputs energy_spectrum.csv and
     returns (vmi_3d, energy, pes) for plot_final_summary.
     """
 
@@ -876,8 +904,14 @@ def perform_abel_transform(vmi_2d):
 
         # 2) toPES converts radius -> kinetic energy (E = a * r^2) and applies
         #    the Jacobian, yielding the spectrum dN/dE directly
-        ENERGY_PER_PIXEL2 = 1.0   # eV per pixel^2 — set real calibration for eV axis
-        energy, pes = abel.tools.vmi.toPES(r_t, speed[mask], ENERGY_PER_PIXEL2)
+        q, pes_px2 = abel.tools.vmi.toPES(r_t, speed_dr.copy(), 1.0)
+        fit_xe_energy_calibration(q, pes_px2)
+        energy, pes = scale_spectrum(q, pes_px2, ENERGY_CALIBRATION.alpha)
+        if ENERGY_CALIBRATION.alpha is None:
+            print("[Spectrum] Uncalibrated: x = r^2 (pixel^2)")
+        else:
+            print(f"[Spectrum] E = alpha*r^2; input alpha = "
+                  f"{ENERGY_CALIBRATION.alpha:.8g} eV/pixel^2; x in eV, y in counts/eV")
 
         spectrum_path = os.path.join(OUTPUT_DIR, "energy_spectrum.csv")
         np.savetxt(spectrum_path,
@@ -980,8 +1014,9 @@ def plot_final_summary(vmi_2d, vmi_3d, n_events, n_frames, energy=None, pes=None
         ax3.text(0.5, 0.5, "Energy spectrum\nnot available",
                 ha='center', va='center', transform=ax3.transAxes)
     ax3.set_title("Photoelectron Spectrum", fontsize=12, fontweight='bold')
-    ax3.set_xlabel("Kinetic energy (arb. units)")
-    ax3.set_ylabel("Counts / energy (dN/dE)")
+    calibrated = ENERGY_CALIBRATION.alpha is not None
+    ax3.set_xlabel("Kinetic energy (eV)" if calibrated else "Squared radius (pixel²)")
+    ax3.set_ylabel("Counts / eV (dN/dE)" if calibrated else "Counts / pixel² (dN/d(r²))")
 
     ax4 = plt.subplot(2, 2, 4)
     ax4.axis('off')
