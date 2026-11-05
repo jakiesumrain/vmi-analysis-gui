@@ -94,9 +94,58 @@ def build(jobs: JobManager) -> None:
                                          "output_path": output_path.value}))
             view.attach(job)
 
-        theme.run_button(on_click=run)
+        with ui.row().classes("gap-2 items-center"):
+            theme.run_button(on_click=run)
+            ui.button("Clear output", icon="delete",
+                      on_click=lambda: _clear_output(output_path)) \
+                .props("flat color=negative")
 
     view.place_console()
+
+
+def _clear_output(output_path) -> None:
+    """Delete the accumulated .txt (and its .png) so the next run recomputes.
+
+    The script skips accumulation whenever the output file exists
+    ("[Resume] ... plotting directly"), so a stale result must be removed
+    explicitly.
+    """
+    txt = (output_path.value or "").strip()
+    if not txt:
+        ui.notify("Set an output path first.", type="warning")
+        return
+    targets = [Path(txt), Path(os.path.splitext(txt)[0] + ".png")]
+    existing = [p for p in targets if p.exists()]
+    if not existing:
+        ui.notify(f"Nothing to delete at {txt}", type="info")
+        return
+
+    def do_delete():
+        failed = []
+        for p in existing:
+            try:
+                p.unlink()
+            except OSError as e:
+                failed.append(f"{p}: {e}")
+        dlg.close()
+        if failed:
+            ui.notify("Could not delete: " + "; ".join(failed),
+                      type="negative")
+        else:
+            ui.notify(f"Deleted {len(existing)} file(s) — "
+                      "next run recomputes from scratch.", type="positive")
+
+    with ui.dialog() as dlg, ui.card().classes("gap-2"):
+        ui.label("Delete the existing accumulated output?") \
+            .classes("vmi-caption")
+        for p in existing:
+            ui.label(str(p)).classes("text-sm") \
+                .style("word-break: break-all")
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancel", on_click=dlg.close).props("flat")
+            ui.button("Delete", on_click=do_delete) \
+                .props("unelevated color=negative")
+    dlg.open()
 
 
 def _results(job: Job):
