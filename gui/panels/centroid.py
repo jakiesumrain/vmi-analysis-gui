@@ -104,6 +104,8 @@ def build(jobs: JobManager) -> None:
             theme.run_button(on_click=run)
             ui.button("Save config only", on_click=lambda: _save(widgets)) \
                 .props("flat color=secondary")
+            ui.button("Clear outputs", icon="delete",
+                      on_click=_clear_outputs).props("flat color=negative")
 
     view.place_console()
 
@@ -142,11 +144,76 @@ def _save(widgets) -> None:
     ui.notify(f"Saved {CONFIG_PATH}", type="positive")
 
 
+def _output_dir(doc) -> Path:
+    out = Path(str(doc["vmi_picasso"].get("output_dir", "")))
+    return out if out.is_absolute() else CENTROID_DIR / out
+
+
+def _clear_outputs() -> None:
+    """Delete centroiding outputs so the next Run starts fresh.
+
+    The script skips the whole batch when the checkpoint exists
+    ("[Resume] Found checkpoint"), so a stale checkpoint must be removed
+    explicitly to force re-localization.
+    """
+    doc = _load_doc()
+    out_dir = _output_dir(doc)
+    checkpoint = out_dir / str(doc["vmi_picasso"].get("checkpoint_file", ""))
+    targets = [out_dir / name for name in (
+        "01_tuning_check_picasso.png", "04_final_summary.png",
+        "vmi_2d_raw.npy", "vmi_3d_abel.npy", "energy_spectrum.csv")]
+    existing = [p for p in targets if p.exists()]
+    has_checkpoint = checkpoint.exists()
+    if not existing and not has_checkpoint:
+        ui.notify(f"Nothing to delete in {out_dir}", type="info")
+        return
+
+    def _size(p: Path) -> str:
+        n = p.stat().st_size
+        return (f"{n / 2**30:.2f} GiB" if n >= 2**30 else
+                f"{n / 2**20:.1f} MiB" if n >= 2**20 else f"{n / 2**10:.1f} KiB")
+
+    with ui.dialog() as dlg, ui.card():
+        ui.label("Delete centroiding outputs?").classes("vmi-caption")
+        for p in existing:
+            ui.label(f"{p.name}  ({_size(p)})").style("font-family: monospace")
+        with ui.row().classes("items-center gap-2"):
+            chk = ui.checkbox(value=has_checkpoint)
+            warn = (" — regenerating it takes a full batch run"
+                    if has_checkpoint else "")
+            ui.label(f"Also delete checkpoint {checkpoint.name} "
+                     f"({_size(checkpoint) if has_checkpoint else 'missing'})"
+                     f"{warn}").style("font-family: monospace")
+        with ui.row().classes("gap-2"):
+            ui.button("Delete", color="negative",
+                      on_click=lambda: do_delete(chk.value))
+            ui.button("Cancel", on_click=dlg.close).props("flat")
+    dlg.open()
+
+    def do_delete(with_checkpoint: bool) -> None:
+        doomed = list(existing)
+        if with_checkpoint and has_checkpoint:
+            doomed.append(checkpoint)
+        failed = []
+        for p in doomed:
+            try:
+                p.unlink()
+            except OSError as e:
+                failed.append(f"{p.name}: {e}")
+        dlg.close()
+        if failed:
+            ui.notify("Could not delete: " + "; ".join(failed),
+                      type="negative")
+        else:
+            ui.notify(f"Deleted {len(doomed)} file(s) from {out_dir}",
+                      type="positive")
+
+
 def _results(job: Job):
     if job.status != "done":
         return
     doc = _load_doc()
-    out_dir = CENTROID_DIR / doc["vmi_picasso"].get("output_dir", "")
+    out_dir = _output_dir(doc)
     tuning = out_dir / "01_tuning_check_picasso.png"
     summary = out_dir / "04_final_summary.png"
     if tuning.exists():
