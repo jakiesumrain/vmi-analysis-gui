@@ -471,6 +471,9 @@ def _run_picasso_batch(movie, box_size, min_net_gradient):
     # 1. Identify spots across ALL frames simultaneously
     try:
         ids = localize.identify(movie, min_net_gradient, box_size, threaded=False)
+        # picassosr >= 0.11 returns (locs, info) by default (return_info=True)
+        if isinstance(ids, tuple):
+            ids = ids[0]
     except Exception:
         return None
     if len(ids) == 0:
