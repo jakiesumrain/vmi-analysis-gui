@@ -191,7 +191,7 @@ def main():
         for rec in frames:
             img = preprocess(load_frame(rec), dark)
             plt.imsave(os.path.join(dump_frames, f"frame_{rec[3]:04d}.png"),
-                       img, cmap=cmap, norm=norm)
+                       norm(img), cmap=cmap, vmin=0.0, vmax=1.0)
         print(f"Dumped {n_total} frame PNGs to {dump_frames}")
 
     fig, ax = plt.subplots(figsize=(7, 7.8))
