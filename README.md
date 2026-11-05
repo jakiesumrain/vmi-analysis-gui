@@ -33,7 +33,13 @@ cd vmi-analysis-gui
 uv sync                          # creates .venv and installs everything
 uv run python -m gui.app         # → http://localhost:8090 (opens a browser)
                                  # override port: VMI_GUI_PORT=8080 uv run python -m gui.app
+                                 # don't open a browser: VMI_GUI_NO_SHOW=1 uv run python -m gui.app
 ```
+
+The server stops automatically a few seconds after the last browser tab
+showing the app is closed (page reloads are fine — the tab reconnects within
+a grace period). `Ctrl+C` in the terminal works too. A running job is
+cancelled on shutdown so no script subprocess is left behind.
 
 That is the whole setup. The app starts with one tab per script:
 

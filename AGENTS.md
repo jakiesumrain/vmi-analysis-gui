@@ -113,7 +113,11 @@ no-direct-push rule is enforced by convention.
 `DESIGN.md`. See `PLAN.md` for the architecture. Launch:
 `uv run python -m gui.app` → http://localhost:8090
 (8080 was avoided: it falls in a Windows reserved port range on some
-machines, causing WinError 10013 on bind; `VMI_GUI_PORT` overrides).
+machines, causing WinError 10013 on bind; `VMI_GUI_PORT` overrides,
+`VMI_GUI_NO_SHOW=1` suppresses the browser auto-open). The server shuts
+itself down once the last browser client is gone (checked after NiceGUI's
+reconnect grace period, so reloads survive; a running job is cancelled
+first).
 
 Rules for GUI-related changes:
 

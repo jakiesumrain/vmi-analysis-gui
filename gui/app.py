@@ -3,13 +3,37 @@
 Launch from the repository root:  uv run python -m gui.app
 """
 
-from nicegui import ui
+import asyncio
+
+from nicegui import app, background_tasks, ui
 
 from . import theme
 from .jobs import MANAGER
 from .panels import (accumulate, binning, centroid, circularize, dark,
                      gmd_map, movie, pes, pipeline)
 from .panels.common import init_zoom_overlay
+
+
+@app.on_disconnect
+def _shutdown_after_last_client(client) -> None:
+    """Stop the server once the last browser client is gone for good.
+
+    on_disconnect fires on the socket drop, before NiceGUI's reconnect grace
+    period ends — so re-check after that timeout: a page reload reconnects
+    within it and survives. A running job is cancelled so its subprocess
+    does not outlive the server.
+    """
+    async def check() -> None:
+        await asyncio.sleep(client.page.resolve_reconnect_timeout() + 1.0)
+        if app.is_stopping or any(c.has_socket_connection for c in app.clients()):
+            return
+        cur = MANAGER.current()
+        if cur is not None:
+            MANAGER.cancel(cur.id)
+        print("[gui] last client disconnected — shutting down", flush=True)
+        app.shutdown()
+
+    background_tasks.create(check(), name="auto-shutdown-check")
 
 TABS = [
     ("GMD Map", gmd_map),
@@ -57,8 +81,7 @@ def index() -> None:
     with ui.footer().classes("px-6 py-2 items-center justify-between") \
             .style("background: #181715"):
         ui.label("vmi-analysis-gui — jobs run sequentially; "
-                 "close the browser tab to stop watching "
-                 "(jobs continue on the server).") \
+                 "closing the browser tab stops the server.") \
             .classes("vmi-subtitle").style("color: #a09d96")
         ui.link("Tao (jakiesumrain@163.com)", "mailto:jakiesumrain@163.com") \
             .classes("vmi-subtitle").style("color: #cc785c")
@@ -69,7 +92,8 @@ def main() -> None:
     init_zoom_overlay()
     ui.run(title="VMI Analysis",
            port=int(os.environ.get("VMI_GUI_PORT", 8090)),
-           reload=False, show=True)
+           reload=False,
+           show=os.environ.get("VMI_GUI_NO_SHOW", "") != "1")
 
 
 if __name__ in {"__main__", "__mp_main__"}:
