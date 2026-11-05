@@ -61,7 +61,10 @@ def index() -> None:
 
 
 def main() -> None:
-    ui.run(title="VMI Analysis", port=8080, reload=False, show=True)
+    import os
+    ui.run(title="VMI Analysis",
+           port=int(os.environ.get("VMI_GUI_PORT", 8080)),
+           reload=False, show=True)
 
 
 if __name__ in {"__main__", "__mp_main__"}:

@@ -35,7 +35,7 @@ def build(jobs: JobManager) -> None:
         png = GENERATED / f"accum_live_{job.id}.png"
         try:
             render_npy(npy, png)
-            live_img.set_source(f"{file_url(png)}?t={time.time()}")
+            live_img.set_source(file_url(png))
             live_img.visible = True
         except Exception:
             pass  # file may be mid-write; next refresh picks it up
