@@ -16,9 +16,9 @@ import os
 import time
 
 # --- default config (override via CLI) ---
-DEFAULT_H5_DIR = r"H:\Xe_sig"
-DEFAULT_GMD_PATH = r"H:\Xe_sig\Xe_sigcurrent-time-both.txt"
-DEFAULT_OUTPUT_PATH = r"E:\work\projects\VMI-FEL\cpvmi\data_20260703\gmd_map_all.txt"
+DEFAULT_H5_DIR = ""                  # required: folder of RAW-*.h5 files
+DEFAULT_GMD_PATH = ""                # required: current-time-both.txt
+DEFAULT_OUTPUT_PATH = "gmd_map_all.txt"
 DEFAULT_N_FILES = 0  # 0 = all files
 # -----------------------------------------
 
@@ -35,7 +35,11 @@ def parse_args():
                         help="Output map file path.")
     parser.add_argument("--n-files", type=int, default=DEFAULT_N_FILES,
                         help="Process only the first N files (0 = all).")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.h5_dir or not args.gmd_path:
+        parser.error("--h5-dir and --gmd-path are required "
+                     "(no dataset is bundled with this repository).")
+    return args
 
 
 def main(h5_dir, gmd_path, output_path, n_files):

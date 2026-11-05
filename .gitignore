@@ -4,7 +4,7 @@ __pycache__/
 .venv/
 
 # Analysis outputs (per-dataset results, checkpoints, movies)
-centroiding/1103_*/
+centroiding/*/
 circularization/gmd_bins_results*/
 *.h5
 *.npy

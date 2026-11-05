@@ -1,6 +1,7 @@
 """Panel: process_gmd_bins.py — GMD bins → PES + betas."""
 
 import sys
+import tomllib
 from pathlib import Path
 
 from nicegui import ui
@@ -11,6 +12,8 @@ from .common import JobView, REPO_ROOT, file_url, path_input
 
 CIRC_DIR = REPO_ROOT / "circularization"
 SCRIPT = CIRC_DIR / "process_gmd_bins.py"
+CENTROID_DIR = REPO_ROOT / "centroiding"
+CONFIG_PATH = CENTROID_DIR / "config.toml"
 CALIBRATION_FILES = [
     "extracted-FOC100eV-20260710.txt",
     "reassignment-FOC100eV-20260710.txt",
@@ -24,6 +27,15 @@ def default_output_dir(suffix: str, backend: str, method: str) -> Path:
     if backend == "pyabel":
         name += f"_pyabel_{method}"
     return CIRC_DIR / name
+
+
+def _default_bin_dir() -> str:
+    """Centroiding output dir from config.toml (falls back to centroiding/)."""
+    try:
+        cfg = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        return str(CENTROID_DIR / cfg["vmi_picasso"]["output_dir"])
+    except Exception:
+        return str(CENTROID_DIR)
 
 
 def build(jobs: JobManager) -> None:
@@ -46,8 +58,7 @@ def build(jobs: JobManager) -> None:
             "Weight suffix", value="_w-gmd_norm",
             placeholder="'' = unweighted").classes("w-64").props("outlined dense")
         bin_dir = path_input(
-            "Bin image directory",
-            str(REPO_ROOT / "centroiding" / "1103_9_Aele"), browse="dir")
+            "Bin image directory", _default_bin_dir(), browse="dir")
         output_dir = path_input(
             "Output directory (empty = automatic from suffix/backend)", "",
             browse="dir")

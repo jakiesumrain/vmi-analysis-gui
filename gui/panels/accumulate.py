@@ -43,12 +43,12 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, results_builder=_results, live_builder=_live)
 
     with theme.panel_card():
-        h5_dir = path_input("HDF5 directory", r"F:\1103\1103_12_ele",
-                            browse="dir")
-        output_path = path_input("Output image (.txt)",
-                                 r"F:\1103\1103_12_ele\accumulated_result.txt",
+        h5_dir = path_input("HDF5 directory", "", browse="dir",
+                            placeholder="folder containing RAW-*.h5 files")
+        output_path = path_input("Output image (.txt)", "",
                                  browse="save", filters=[".txt"],
-                                 default_name="accumulated_result.txt")
+                                 default_name="accumulated_result.txt",
+                                 placeholder="accumulated_result.txt")
         with ui.row().classes("gap-4 flex-wrap"):
             im_threshold = num_input("Threshold", 5, step=1)
             max_workers = num_input("Workers", 6, step=1)

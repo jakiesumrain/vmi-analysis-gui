@@ -20,8 +20,10 @@
 # ==============================================================================
 
 # --- Input/Output Directories (HDF5) ---
-# Directory containing HDF5 files with raw/data and raw/meta datasets
-h5_dir = "F:/1103/1103_9_Aele"
+# Directory containing HDF5 files with raw/data and raw/meta datasets.
+# Set this to your own dataset folder (via the GUI Centroiding tab or here);
+# no dataset is bundled with this repository.
+h5_dir = ""
 
 # Glob pattern for HDF5 files
 h5_pattern = "RAW-*.h5"
@@ -53,8 +55,8 @@ dark_h5_pattern = "RAW-*.h5"
 # Leave empty to compute from dark_data_dir on each run.
 dark_file = ""
 
-# Output directory for analysis results
-output_dir = "1103_9_Aele"
+# Output directory for analysis results (relative to centroiding/)
+output_dir = "vmi_output"
 
 # Checkpoint filename (HDF5 table written during batch processing, read by
 # chunked histogram builder). Stored inside output_dir.
