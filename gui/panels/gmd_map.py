@@ -18,11 +18,11 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, results_builder=_results)
 
     with theme.panel_card():
-        h5_dir = path_input("HDF5 directory", r"F:\1103\1103_9_Aele",
-                            browse="dir")
+        h5_dir = path_input("HDF5 directory", "", browse="dir",
+                            placeholder="folder containing RAW-*.h5 files")
         gmd_path = path_input("GMD timestamp file (current-time-both.txt)",
-                              r"F:\1103\current-time-both.txt",
-                              browse="file", filters=[".txt"])
+                              "", browse="file", filters=[".txt"],
+                              placeholder="current-time-both.txt")
         output_path = path_input("Output map file",
                                  str(REPO_ROOT / "gmd_map_all.txt"),
                                  browse="save", filters=[".txt"],

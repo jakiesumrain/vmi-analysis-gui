@@ -18,8 +18,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 
 # --- default config (override via CLI) ---
-h5_dir       = r"F:\1103\1103_12_ele"
-output_path  = r"F:\1103\1103_12_ele\accumulated_result.txt"
+h5_dir       = ""    # required: folder containing the RAW-*.h5 files
+output_path  = "accumulated_result.txt"
 im_threshold = 5
 do_denoise   = True
 kernel       = np.ones((2, 2), dtype=np.uint8)
@@ -30,7 +30,7 @@ max_workers  = 6
 simple_sum   = False
 
 # GMD scaling (set to False to skip)
-gmd_map_path = r"E:\work\projects\VMI-FEL\cpvmi\data_20260703\gmd_map_all.txt"
+gmd_map_path = ""
 enable_gmd   = False
 
 # GMD weight range: only include frames with weight in [gmd_w_min, gmd_w_max]
@@ -69,7 +69,13 @@ def parse_args():
     p.add_argument("--live-path", default=live_path,
                    help="Write the partial accumulated image (.npy) here during the run.")
     p.add_argument("--live-every", type=int, default=live_every)
-    return p.parse_args()
+    args = p.parse_args()
+    if not args.h5_dir:
+        p.error("--h5-dir is required "
+                "(no dataset is bundled with this repository).")
+    if args.enable_gmd and not args.gmd_map_path:
+        p.error("--enable-gmd requires --gmd-map-path.")
+    return args
 
 
 # worker-process globals — set once via initializer, never pickled per-task

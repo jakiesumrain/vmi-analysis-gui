@@ -113,7 +113,10 @@ EXTRACTED_FILE = CIRCULARIZATION_DIR / "extracted-FOC100eV-20260710.txt"
 REASSIGN_FILE = CIRCULARIZATION_DIR / "reassignment-FOC100eV-20260710.txt"
 
 # --- MATLAB / CPBASEX ---
-MATLAB_CPBASEX = Path("E:/work/projects/cVMI-exp/dat/2025-02-17/CPBASEX")
+# External dependency, not bundled with this repository. Only used by the
+# "matlab" inversion backend (the default "pyabel" backend is pure Python).
+# Point the CPBASEX_DIR environment variable at your CPBASEX checkout.
+MATLAB_CPBASEX = Path(os.environ.get("CPBASEX_DIR", "CPBASEX"))
 MATLAB_EXAMPLES_DIR = MATLAB_CPBASEX / "examples"
 MATLAB_SCRIPT = MATLAB_EXAMPLES_DIR / "new_10.m"
 MATLAB_PBASE_PATH = MATLAB_CPBASEX / "pbasex-MATLAB"

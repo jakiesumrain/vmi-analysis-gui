@@ -21,8 +21,8 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, results_builder=_results)
 
     with theme.panel_card():
-        h5_dir = path_input("HDF5 directory", r"F:\1103\1103_8_Aele",
-                            browse="dir")
+        h5_dir = path_input("HDF5 directory", "", browse="dir",
+                            placeholder="folder containing RAW-*.h5 files")
         h5_dataset = path_input("Frame dataset", "raw/data")
         dark_path = path_input("Dark frame .npy (optional)", "",
                                browse="file", filters=[".npy"])

@@ -49,11 +49,11 @@ def build(jobs: JobManager) -> None:
     ui.timer(0.7, refresh_badges)
 
     with theme.panel_card():
-        h5_dir = path_input("HDF5 directory (dataset)",
-                            r"F:\1103\1103_9_Aele", browse="dir")
-        gmd_path = path_input("GMD timestamp file",
-                              r"F:\1103\current-time-both.txt",
-                              browse="file", filters=[".txt"])
+        h5_dir = path_input("HDF5 directory (dataset)", "", browse="dir",
+                            placeholder="folder containing RAW-*.h5 files")
+        gmd_path = path_input("GMD timestamp file", "",
+                              browse="file", filters=[".txt"],
+                              placeholder="current-time-both.txt")
         map_out = path_input("GMD map output",
                              str(REPO_ROOT / "gmd_map_all.txt"),
                              browse="save", filters=[".txt"],

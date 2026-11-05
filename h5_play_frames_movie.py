@@ -9,7 +9,7 @@ detector artifacts, etc.).
 
 The movie is played first and written to disk afterwards, once the playback
 window is closed.  Its filename is derived from the h5 data directory name
-(e.g. F:/1103/1103_9_Aele -> 1103_9_Aele.mp4) and it goes to `movie_dir`
+(e.g. /data/run_9 -> run_9.mp4) and it goes to `movie_dir`
 (default: the current working directory).  MP4 writing needs ffmpeg on
 PATH; if it is missing, the movie is written as a GIF instead.
 
@@ -33,7 +33,7 @@ from matplotlib.animation import FuncAnimation, FFMpegWriter, PillowWriter
 from matplotlib.widgets import Button
 
 # --- default config (override via CLI) ---
-h5_dir      = r"F:\1103\1103_8_Aele"     # directory containing the RAW-*.h5 files
+h5_dir      = ""                # required: directory containing the RAW-*.h5 files
 h5_dataset  = "raw/data"      # frame stack dataset path
 n_frames    = 20            # total number of frames to play (across files)
 interval_ms = 500              # delay between frames in ms (50 -> 20 FPS)
@@ -76,7 +76,11 @@ def parse_args():
                    help="Skip the playback window; only write outputs.")
     p.add_argument("--dump-frames", default=dump_frames,
                    help="Directory for per-frame PNGs (empty = skip).")
-    return p.parse_args()
+    args = p.parse_args()
+    if not args.h5_dir:
+        p.error("--h5-dir is required "
+                "(no dataset is bundled with this repository).")
+    return args
 
 
 def saved_fps():
