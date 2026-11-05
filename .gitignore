@@ -17,3 +17,6 @@ accumulated_result.txt
 # Generated GUI artifacts
 gui/generated/
 .playwright-cli/
+
+# NiceGUI persisted form state
+.nicegui/

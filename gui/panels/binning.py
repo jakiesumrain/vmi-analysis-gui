@@ -9,7 +9,7 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (JobView, REPO_ROOT, file_url, num_input,
-                     open_folder_button, path_input, zoomable_image)
+                     open_folder_button, path_input, persist, zoomable_image)
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
 SCRIPT = CENTROID_DIR / "vmi_histogram_gmd_bins.py"
@@ -25,20 +25,26 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, results_builder=_results)
 
     with theme.panel_card():
-        config = path_input("Config file", str(CONFIG_PATH),
-                            browse="file", filters=[".toml"])
-        thresholds = ui.input("GMD thresholds (comma-separated)",
-                              value="3.75e-8,5.5e-8,7.25e-8") \
-            .classes("w-full").props("outlined dense")
+        config = persist(path_input("Config file", str(CONFIG_PATH),
+                                    browse="file", filters=[".toml"]),
+                         "binning.config")
+        thresholds = persist(ui.input("GMD thresholds (comma-separated)",
+                                      value="3.75e-8,5.5e-8,7.25e-8")
+                             .classes("w-full").props("outlined dense"),
+                             "binning.thresholds")
         with ui.row().classes("gap-4 flex-wrap"):
-            gmd_col = ui.select([4, 5], value=4,
-                                label="GMD column (4=m1, 5=m2)") \
-                .props("outlined dense")
-            weight_mode = ui.select(["none", "gmd", "gmd_norm"],
-                                    value="gmd_norm", label="Weight mode") \
-                .props("outlined dense")
-            weight_power = num_input("Weight power", 1.0, step=0.1)
-            gmd_floor = num_input("GMD floor", 1e-12, format="%.1e")
+            gmd_col = persist(ui.select([4, 5], value=4,
+                                        label="GMD column (4=m1, 5=m2)")
+                              .props("outlined dense"), "binning.gmd_col")
+            weight_mode = persist(ui.select(["none", "gmd", "gmd_norm"],
+                                            value="gmd_norm",
+                                            label="Weight mode")
+                                  .props("outlined dense"),
+                                  "binning.weight_mode")
+            weight_power = persist(num_input("Weight power", 1.0, step=0.1),
+                                   "binning.weight_power")
+            gmd_floor = persist(num_input("GMD floor", 1e-12, format="%.1e"),
+                                "binning.gmd_floor")
 
         def run():
             cmd = [sys.executable, str(SCRIPT),

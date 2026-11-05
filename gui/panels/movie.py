@@ -9,7 +9,7 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     open_folder_button, path_input, serve_dir,
+                     open_folder_button, path_input, persist, serve_dir,
                      zoomable_image)
 
 
@@ -22,26 +22,39 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, results_builder=_results)
 
     with theme.panel_card():
-        h5_dir = path_input("HDF5 directory", "", browse="dir",
-                            placeholder="folder containing RAW-*.h5 files")
-        h5_dataset = path_input("Frame dataset", "raw/data")
-        dark_path = path_input("Dark frame .npy (optional)", "",
-                               browse="file", filters=[".npy"])
+        h5_dir = persist(path_input(
+            "HDF5 directory", "", browse="dir",
+            placeholder="folder containing RAW-*.h5 files"), "movie.h5_dir")
+        h5_dataset = persist(path_input("Frame dataset", "raw/data"),
+                             "movie.h5_dataset")
+        dark_path = persist(path_input("Dark frame .npy (optional)", "",
+                                       browse="file", filters=[".npy"]),
+                            "movie.dark_path")
         with ui.row().classes("gap-4 flex-wrap"):
-            n_frames = num_input("Frames", 20, step=1)
-            interval_ms = num_input("Interval (ms)", 500, step=50)
-            scale_frames = num_input("Scale frames", 10, step=1)
+            n_frames = persist(num_input("Frames", 20, step=1),
+                               "movie.n_frames")
+            interval_ms = persist(num_input("Interval (ms)", 500, step=50),
+                                  "movie.interval_ms")
+            scale_frames = persist(num_input("Scale frames", 10, step=1),
+                                   "movie.scale_frames")
         with ui.row().classes("gap-4 flex-wrap"):
-            cmap = ui.input("Colormap", value="gray").props("outlined dense")
-            log_scale = ui.checkbox("Log scale", value=False)
-            vmin_frac = num_input("vmin fraction", 0.5, step=0.1)
-            vmax_pct = num_input("vmax percentile", 99.9, step=0.1)
+            cmap = persist(ui.input("Colormap", value="gray")
+                           .props("outlined dense"), "movie.cmap")
+            log_scale = persist(ui.checkbox("Log scale", value=False),
+                                "movie.log_scale")
+            vmin_frac = persist(num_input("vmin fraction", 0.5, step=0.1),
+                                "movie.vmin_frac")
+            vmax_pct = persist(num_input("vmax percentile", 99.9, step=0.1),
+                               "movie.vmax_pct")
         with ui.row().classes("gap-4 flex-wrap"):
-            movie_dir = path_input("Movie output folder",
-                                   str(REPO_ROOT / "movies"), browse="dir")
-            movie_ext = ui.select([".mp4", ".gif"], value=".mp4",
-                                  label="Format").props("outlined dense")
-            movie_fps = num_input("Saved fps (0 = playback)", 0, step=1)
+            movie_dir = persist(path_input("Movie output folder",
+                                           str(REPO_ROOT / "movies"),
+                                           browse="dir"), "movie.movie_dir")
+            movie_ext = persist(ui.select([".mp4", ".gif"], value=".mp4",
+                                          label="Format")
+                                .props("outlined dense"), "movie.movie_ext")
+            movie_fps = persist(num_input("Saved fps (0 = playback)", 0,
+                                          step=1), "movie.movie_fps")
 
         def run():
             frames_dir = GENERATED / "movie_frames"

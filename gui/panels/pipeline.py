@@ -8,7 +8,7 @@ from nicegui import ui
 
 from ..jobs import Job, JobManager, Stage
 from .. import theme
-from .common import JobView, REPO_ROOT, num_input, path_input
+from .common import JobView, REPO_ROOT, num_input, path_input, persist
 from .pes import default_output_dir
 from .binning import _suffix
 
@@ -49,22 +49,26 @@ def build(jobs: JobManager) -> None:
     ui.timer(0.7, refresh_badges)
 
     with theme.panel_card():
-        h5_dir = path_input("HDF5 directory (dataset)", "", browse="dir",
-                            placeholder="folder containing RAW-*.h5 files")
-        gmd_path = path_input("GMD timestamp file", "",
-                              browse="file", filters=[".txt"],
-                              placeholder="current-time-both.txt")
-        map_out = path_input("GMD map output",
-                             str(REPO_ROOT / "gmd_map_all.txt"),
-                             browse="save", filters=[".txt"],
-                             default_name="gmd_map_all.txt")
+        h5_dir = persist(path_input(
+            "HDF5 directory (dataset)", "", browse="dir",
+            placeholder="folder containing RAW-*.h5 files"), "pipeline.h5_dir")
+        gmd_path = persist(path_input(
+            "GMD timestamp file", "", browse="file", filters=[".txt"],
+            placeholder="current-time-both.txt"), "pipeline.gmd_path")
+        map_out = persist(path_input(
+            "GMD map output", str(REPO_ROOT / "gmd_map_all.txt"),
+            browse="save", filters=[".txt"],
+            default_name="gmd_map_all.txt"), "pipeline.map_out")
         with ui.row().classes("gap-4 flex-wrap"):
-            weight_mode = ui.select(["none", "gmd", "gmd_norm"],
-                                    value="gmd_norm", label="Weight mode") \
-                .props("outlined dense")
-            weight_power = num_input("Weight power", 1.0, step=0.1)
-            skip_existing = ui.checkbox(
-                "Skip stages whose outputs exist", value=True)
+            weight_mode = persist(ui.select(
+                ["none", "gmd", "gmd_norm"], value="gmd_norm",
+                label="Weight mode").props("outlined dense"),
+                "pipeline.weight_mode")
+            weight_power = persist(num_input("Weight power", 1.0, step=0.1),
+                                   "pipeline.weight_power")
+            skip_existing = persist(ui.checkbox(
+                "Skip stages whose outputs exist", value=True),
+                "pipeline.skip_existing")
 
         def run():
             suffix = _suffix(weight_mode.value, weight_power.value)

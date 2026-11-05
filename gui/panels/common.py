@@ -253,6 +253,19 @@ def num_input(label: str, value, fmt: str | None = None, **kw) -> ui.number:
     return ui.number(**kwargs).props("outlined dense")
 
 
+def persist(widget, key: str):
+    """Restore the widget's value from server-side storage and save every
+    later change. Values live in app.storage.general
+    (.nicegui/storage-general.json), so they survive server restarts and
+    are shared across browsers. Keys are '<panel>.<field>'.
+    """
+    store = app.storage.general
+    if key in store:
+        widget.value = store[key]
+    widget.on_value_change(lambda e: store.__setitem__(key, e.value))
+    return widget
+
+
 def text_area(label: str, value: str = "") -> ui.input:
     return ui.input(label, value=value).classes("w-full").props("outlined dense")
 
