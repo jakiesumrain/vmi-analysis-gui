@@ -17,7 +17,8 @@ def build(jobs: JobManager) -> None:
     theme.section_title(
         "Frame Movie",
         "Render the first N frames as a movie and scrub them frame by frame "
-        "(h5_play_frames_movie.py, headless mode).")
+        "(h5_play_frames_movie.py). Uncheck 'Save movie file' to watch the "
+        "movie live in a separate window instead of writing a file.")
 
     view = JobView(jobs, results_builder=_results)
 
@@ -75,22 +76,87 @@ def build(jobs: JobManager) -> None:
                    "--movie-dir", movie_dir.value,
                    "--movie-ext", movie_ext.value,
                    "--movie-fps", str(movie_fps.value or 0),
-                   "--headless",
                    "--save-movie" if save_movie.value else "--no-save-movie",
                    "--dump-frames", str(frames_dir)]
             if log_scale.value:
                 cmd.append("--log-scale")
+            if save_movie.value:
+                cmd.append("--headless")
+                env = None
+            else:
+                # live playback: no --headless and no forced Agg backend, so
+                # the script opens its interactive movie window. The job stays
+                # "running" until the user closes that window.
+                env = {"MPLBACKEND": ""}
             name = os.path.basename(os.path.normpath(h5_dir.value))
             job = jobs.submit(Job(
-                name="Frame movie", cmd=cmd, cwd=str(REPO_ROOT),
+                name="Frame movie", cmd=cmd, cwd=str(REPO_ROOT), env=env,
                 extra={"frames_dir": str(frames_dir),
                        "movie_path": str(Path(movie_dir.value) / (name + movie_ext.value)),
                        "movie_path_gif": str(Path(movie_dir.value) / (name + ".gif"))}))
             view.attach(job)
 
-        theme.run_button(on_click=run)
+        with ui.row().classes("gap-2"):
+            theme.run_button(on_click=run)
+            ui.button("Clear outputs", icon="delete",
+                      on_click=lambda: _clear_outputs(
+                          movie_dir, h5_dir)) \
+                .props("flat color=negative")
+        ui.label("Tip: with 'Save movie file' unchecked the movie plays live "
+                 "in a separate window — close that window to finish the "
+                 "run.").classes("vmi-subtitle")
 
     view.place_console()
+
+
+def _clear_outputs(movie_dir, h5_dir) -> None:
+    """Delete the saved movie file(s) and the dumped scrubber frames."""
+    name = (os.path.basename(os.path.normpath(h5_dir.value))
+            if h5_dir.value else "")
+    targets = []
+    if name and movie_dir.value:
+        for ext in (".mp4", ".gif"):
+            p = Path(movie_dir.value) / (name + ext)
+            if p.exists():
+                targets.append(p)
+    frames_dir = GENERATED / "movie_frames"
+    frame_pngs = (sorted(frames_dir.glob("frame_*.png"))
+                  if frames_dir.exists() else [])
+    if not targets and not frame_pngs:
+        ui.notify("Nothing to delete.", type="info")
+        return
+
+    with ui.dialog() as dlg, ui.card():
+        ui.label("Delete movie outputs?").classes("vmi-caption")
+        for p in targets:
+            ui.label(str(p)).style("font-family: monospace")
+        if frame_pngs:
+            ui.label(f"{len(frame_pngs)} dumped frame PNGs in {frames_dir}") \
+                .style("font-family: monospace")
+        with ui.row().classes("gap-2"):
+            ui.button("Delete", color="negative", on_click=lambda: do_delete())
+            ui.button("Cancel", on_click=dlg.close).props("flat")
+    dlg.open()
+
+    def do_delete():
+        failed = []
+        for p in targets + frame_pngs:
+            try:
+                p.unlink()
+            except OSError as e:
+                failed.append(f"{p.name}: {e}")
+        if frame_pngs:
+            try:
+                frames_dir.rmdir()
+            except OSError:
+                pass
+        dlg.close()
+        if failed:
+            ui.notify("Could not delete: " + "; ".join(failed),
+                      type="negative")
+        else:
+            ui.notify(f"Deleted {len(targets) + len(frame_pngs)} file(s)",
+                      type="positive")
 
 
 def _results(job: Job):

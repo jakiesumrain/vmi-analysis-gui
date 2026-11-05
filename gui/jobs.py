@@ -39,6 +39,7 @@ class Job:
     cwd: str | None = None
     stages: list[Stage] | None = None
     skip_existing: bool = False
+    env: dict | None = None  # extra env overrides ("" clears a variable)
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     status: str = "queued"
     created: float = field(default_factory=time.time)
@@ -183,6 +184,8 @@ class JobManager:
                  prefix: str = "") -> int:
         env = dict(os.environ)
         env.setdefault("MPLBACKEND", "Agg")
+        if job.env:
+            env.update(job.env)
         env["PYTHONUNBUFFERED"] = "1"
         # The pipe is decoded as UTF-8 below; without this the child (Windows
         # locale) writes GBK and tqdm bars / em-dashes arrive as U+FFFD.
