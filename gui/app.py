@@ -13,6 +13,23 @@ from .panels import (accumulate, binning, centroid, circularize, dark,
                      gmd_map, movie, pes, pipeline)
 from .panels.common import init_zoom_overlay
 
+_shutdown_task: asyncio.Task | None = None
+
+
+def _cancel_shutdown_check() -> None:
+    global _shutdown_task
+    if _shutdown_task is not None:
+        _shutdown_task.cancel()
+        _shutdown_task = None
+
+
+app.on_connect(_cancel_shutdown_check)
+
+
+@app.on_shutdown
+async def _cleanup_jobs() -> None:
+    await asyncio.to_thread(MANAGER.shutdown)
+
 
 @app.on_disconnect
 def _shutdown_after_last_client(client) -> None:
@@ -20,20 +37,23 @@ def _shutdown_after_last_client(client) -> None:
 
     on_disconnect fires on the socket drop, before NiceGUI's reconnect grace
     period ends — so re-check after that timeout: a page reload reconnects
-    within it and survives. A running job is cancelled so its subprocess
-    does not outlive the server.
+    within it and survives. Each new connection cancels the pending check;
+    each last-client disconnect starts a fresh grace period.
     """
+    global _shutdown_task
+    _cancel_shutdown_check()
+    if app.is_stopping or any(c.has_socket_connection for c in app.clients()):
+        return
+
     async def check() -> None:
-        await asyncio.sleep(client.page.resolve_reconnect_timeout() + 1.0)
+        await asyncio.sleep(client.page.resolve_reconnect_timeout() + 0.1)
         if app.is_stopping or any(c.has_socket_connection for c in app.clients()):
             return
-        cur = MANAGER.current()
-        if cur is not None:
-            MANAGER.cancel(cur.id)
+        MANAGER.begin_shutdown()
         print("[gui] last client disconnected — shutting down", flush=True)
         app.shutdown()
 
-    background_tasks.create(check(), name="auto-shutdown-check")
+    _shutdown_task = background_tasks.create(check(), name="auto-shutdown-check")
 
 TABS = [
     ("GMD Map", gmd_map),
@@ -92,6 +112,7 @@ def main() -> None:
     init_zoom_overlay()
     ui.run(title="VMI Analysis",
            port=int(os.environ.get("VMI_GUI_PORT", 8090)),
+           reconnect_timeout=1.0,
            reload=False,
            show=os.environ.get("VMI_GUI_NO_SHOW", "") != "1")
 

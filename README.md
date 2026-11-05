@@ -36,10 +36,12 @@ uv run python -m gui.app         # → http://localhost:8090 (opens a browser)
                                  # don't open a browser: VMI_GUI_NO_SHOW=1 uv run python -m gui.app
 ```
 
-The server stops automatically a few seconds after the last browser tab
-showing the app is closed (page reloads are fine — the tab reconnects within
-a grace period). `Ctrl+C` in the terminal works too. A running job is
-cancelled on shutdown so no script subprocess is left behind.
+The server stops automatically about 1–2 seconds after the last browser tab
+showing the app disconnects. Reloads and brief disconnects have a one-second
+reconnect grace period; a slower reload may require restarting the server.
+Silent connection loss takes longer to detect because it relies on socket
+heartbeats. `Ctrl+C` in the terminal works too. Shutdown cancels queued jobs,
+terminates the running job's process tree, and waits for cleanup before exit.
 
 That is the whole setup. The app starts with one tab per script:
 
@@ -147,6 +149,9 @@ Per-dataset analysis outputs (checkpoints, histograms, result folders) are
 gitignored.
 
 ## Further reading
+
+Run the shutdown regression checks with `uv run python -m unittest discover -s tests -v`.
+They use temporary local servers and dummy subprocesses; no dataset is required.
 
 - `PLAN.md` — architecture and design decisions (why NiceGUI, why
   subprocesses, theme mapping from `DESIGN.md`).
