@@ -99,13 +99,15 @@ stages 1–4 and skips stages whose outputs already exist.
 ## Command-line use
 
 In the Centroiding tab, **Energy calibration / Xe 4d fit** provides an optional
-**α** in eV/pixel². A positive value displays `E = α r²` in eV and scales the
-density to counts/eV; leaving it empty keeps the squared-radius axis in pixel².
-The CSV keeps its `r_px,r2_px2,energy,dN_per_dr,dN_per_dE` columns, with `energy`
-and the final density column in the displayed units. Alpha refers to histogram
+**α** in eV/pixel². A positive value displays `E = α r²` in eV while preserving
+the original intensity; leaving it empty keeps the squared-radius axis in pixel².
+The y-axis is **Intensity (arb. units)** in both cases, not a density per eV.
+The CSV columns are `r_px,r2_px2,energy,dN_per_dr,intensity`; the final column
+was renamed from `dN_per_dE` to reflect its unchanged intensity values.
+Only the `energy` column changes with alpha. Alpha refers to histogram
 pixels, so it must be recalibrated if the histogram resolution factor changes.
-Reset the spectrum axis limits to auto when switching units, or enter limits
-in the new displayed units.
+Reset the spectrum x-axis limits to auto when switching units, or enter limits
+in the new displayed units. Y-axis limits keep the same meaning.
 
 Enable **Fit Xe 4d doublet** to fit the two most prominent peaks in pixel²
 using two independent Gaussians plus a linear background. Optional fit min/max

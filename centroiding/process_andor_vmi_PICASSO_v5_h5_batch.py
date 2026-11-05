@@ -902,8 +902,8 @@ def perform_abel_transform(vmi_2d):
         r_t = r[mask]
         speed_dr = speed[mask].copy()   # dN/dr for CSV/plots
 
-        # 2) toPES converts radius -> kinetic energy (E = a * r^2) and applies
-        #    the Jacobian, yielding the spectrum dN/dE directly
+        # 2) Build the reference (r², intensity) spectrum with factor 1.
+        #    User calibration changes only x; preserve this reference intensity.
         q, pes_px2 = abel.tools.vmi.toPES(r_t, speed_dr.copy(), 1.0)
         fit_xe_energy_calibration(q, pes_px2)
         energy, pes = scale_spectrum(q, pes_px2, ENERGY_CALIBRATION.alpha)
@@ -911,13 +911,13 @@ def perform_abel_transform(vmi_2d):
             print("[Spectrum] Uncalibrated: x = r^2 (pixel^2)")
         else:
             print(f"[Spectrum] E = alpha*r^2; input alpha = "
-                  f"{ENERGY_CALIBRATION.alpha:.8g} eV/pixel^2; x in eV, y in counts/eV")
+                  f"{ENERGY_CALIBRATION.alpha:.8g} eV/pixel^2; x in eV, original intensity retained")
 
         spectrum_path = os.path.join(OUTPUT_DIR, "energy_spectrum.csv")
         np.savetxt(spectrum_path,
                    np.column_stack([r_t, r_t**2, energy, speed_dr, pes]),
                    delimiter=",",
-                   header="r_px,r2_px2,energy,dN_per_dr,dN_per_dE",
+                   header="r_px,r2_px2,energy,dN_per_dr,intensity",
                    comments="")
         print(f"[Spectrum] Saved: {spectrum_path} ({len(r_t)} radial bins)")
 
@@ -1016,7 +1016,7 @@ def plot_final_summary(vmi_2d, vmi_3d, n_events, n_frames, energy=None, pes=None
     ax3.set_title("Photoelectron Spectrum", fontsize=12, fontweight='bold')
     calibrated = ENERGY_CALIBRATION.alpha is not None
     ax3.set_xlabel("Kinetic energy (eV)" if calibrated else "Squared radius (pixel²)")
-    ax3.set_ylabel("Counts / eV (dN/dE)" if calibrated else "Counts / pixel² (dN/d(r²))")
+    ax3.set_ylabel("Intensity (arb. units)")
 
     ax4 = plt.subplot(2, 2, 4)
     ax4.axis('off')

@@ -101,7 +101,7 @@ def build(jobs: JobManager) -> None:
         for group, caption in GROUPS.items():
             ui.label(caption).classes("vmi-caption")
             if group == "energy_calibration":
-                ui.label("E = α × r². Leave α empty for pixel². Xe fitting reports "
+                ui.label("E = α × r²; intensity is unchanged. Leave α empty for pixel². Xe fitting reports "
                          "a suggested α without changing your input. Fit limits "
                          "always use pixel²; spectrum axis limits use the displayed units.") \
                     .classes("vmi-subtitle")

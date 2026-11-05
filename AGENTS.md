@@ -68,7 +68,9 @@ Side tools (QC / helpers, not pipeline stages):
   optional `fit_min_px2`/`fit_max_px2`. The Xe doublet is fitted in pixel²;
   its gas-phase IPs (4d3/2: 69.537 eV, 4d5/2: 67.548 eV) determine alpha and
   photon energy via `alpha*r² = hv - IP`. Fitted values are console advice;
-  only the user-supplied alpha changes the plotted/CSV energy and density.
+  only the user-supplied alpha changes the plotted/CSV energy coordinates.
+  Intensity is preserved when alpha changes (no division by alpha); label
+  the y-axis "Intensity (arb. units)". The CSV's last column is `intensity`.
   Fit windows always use pixel²; plot limits use the displayed units.
 
 - **`process_gmd_bins.py` must run sequentially.** The MATLAB CPBASEX step

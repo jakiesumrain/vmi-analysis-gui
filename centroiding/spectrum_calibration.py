@@ -59,11 +59,11 @@ class XeCalibrationFit:
     fit_density_per_px2: np.ndarray
 
 
-def scale_spectrum(q, density_per_px2, alpha=None):
-    """Convert dN/d(r²) to dN/dE, preserving the integrated electron yield."""
+def scale_spectrum(q, intensity, alpha=None):
+    """Calibrate only the x coordinates, preserving the original intensity."""
     settings = CalibrationSettings.from_config({"alpha": alpha})
     factor = settings.alpha if settings.alpha is not None else 1.0
-    return np.asarray(q) * factor, np.asarray(density_per_px2) / factor
+    return np.asarray(q) * factor, np.asarray(intensity)
 
 
 def fit_xe_4d(q, density_per_px2, fit_min_px2=None, fit_max_px2=None):
