@@ -8,7 +8,8 @@ from nicegui import ui
 
 from ..jobs import Job, JobManager
 from .. import theme
-from .common import JobView, REPO_ROOT, num_input, path_input
+from .common import (JobView, REPO_ROOT, num_input, open_folder_button,
+                     path_input)
 
 
 def build(jobs: JobManager) -> None:
@@ -82,17 +83,6 @@ def _clear_output(output_path) -> None:
         ui.notify(f"Deleted {target}", type="positive")
 
 
-def _open_folder(file_path: str) -> None:
-    """Open the containing folder in the OS file manager (server machine)."""
-    folder = Path(file_path).parent
-    try:
-        os.startfile(str(folder))  # Windows
-    except (OSError, AttributeError) as e:
-        ui.notify(f"Could not open {folder}: {e}", type="negative")
-    else:
-        ui.notify(f"Opened {folder}")
-
-
 def _results(job: Job):
     out = job.extra.get("output_path", "")
     if job.status == "done" and out:
@@ -101,6 +91,4 @@ def _results(job: Job):
             n_lines = sum(1 for _ in fh)
         ui.label(f"Map written: {out}  ({n_lines:,} lines, {size:.1f} MB)") \
             .classes("vmi-subtitle")
-        ui.button("open containing folder", icon="folder_open",
-                  on_click=lambda: _open_folder(out)) \
-            .props("flat dense").classes("vmi-caption")
+        open_folder_button(out)

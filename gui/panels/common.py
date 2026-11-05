@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -45,6 +46,31 @@ def file_url(path) -> str:
     except OSError:
         stamp = 0
     return f"{serve_dir(p.parent)}/{p.name}?t={stamp}"
+
+
+# --------------------------------------------------------------------------
+# Open-in-file-manager
+# --------------------------------------------------------------------------
+
+def open_folder(path) -> None:
+    """Open a file's containing folder (or the folder itself) in the OS
+    file manager on the machine running the server."""
+    p = Path(path)
+    folder = p if p.is_dir() else p.parent
+    try:
+        os.startfile(str(folder))  # Windows
+    except (OSError, AttributeError) as e:
+        ui.notify(f"Could not open {folder}: {e}", type="negative")
+    else:
+        ui.notify(f"Opened {folder}")
+
+
+def open_folder_button(path, label: str = "open containing folder"
+                       ) -> ui.button:
+    """Flat caption-style button that opens the folder in the file manager."""
+    return ui.button(label, icon="folder_open",
+                     on_click=lambda: open_folder(path)) \
+        .props("flat dense").classes("vmi-caption")
 
 
 # --------------------------------------------------------------------------

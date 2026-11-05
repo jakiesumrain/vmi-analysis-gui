@@ -9,7 +9,8 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     path_input, serve_dir, zoomable_image)
+                     open_folder_button, path_input, serve_dir,
+                     zoomable_image)
 
 
 def build(jobs: JobManager) -> None:
@@ -82,6 +83,7 @@ def _results(job: Job):
         movie = job.extra["movie_path_gif"]  # ffmpeg fallback
     if Path(movie).exists():
         ui.label(f"Movie: {movie}").classes("vmi-subtitle")
+        open_folder_button(movie)
         if movie.lower().endswith(".mp4"):
             ui.video(file_url(movie)).classes("w-full max-w-2xl")
         else:
