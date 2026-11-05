@@ -169,7 +169,9 @@ def build(jobs: JobManager) -> None:
             pause_btn = ui.button("Pause", on_click=lambda: _toggle_pause()) \
                 .props("flat dense color=primary")
             ui.label("").props("id=vmi-live-counter").classes("vmi-subtitle")
-        live_img = ui.image("").props("id=vmi-live-img") \
+        # a plain <img>, not ui.image: the JS player drives src directly,
+        # and Quasar's QImg wrapper div would swallow the updates
+        live_img = ui.element("img").props("id=vmi-live-img") \
             .classes("w-full max-w-2xl")
         live_img.visible = False
         live_state = {"job": None}
