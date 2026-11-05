@@ -184,6 +184,9 @@ class JobManager:
         env = dict(os.environ)
         env.setdefault("MPLBACKEND", "Agg")
         env["PYTHONUNBUFFERED"] = "1"
+        # The pipe is decoded as UTF-8 below; without this the child (Windows
+        # locale) writes GBK and tqdm bars / em-dashes arrive as U+FFFD.
+        env["PYTHONIOENCODING"] = "utf-8"
         job.log.append(f"[gui] $ {' '.join(str(c) for c in cmd)}")
         kwargs = {}
         if sys.platform == "win32":
