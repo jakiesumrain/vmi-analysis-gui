@@ -8,7 +8,8 @@ from nicegui import ui
 
 from ..jobs import Job, JobManager
 from .. import theme
-from .common import JobView, REPO_ROOT, file_url, num_input, path_input
+from .common import (JobView, REPO_ROOT, file_url, num_input, path_input,
+                     zoomable_image)
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
 SCRIPT = CENTROID_DIR / "vmi_histogram_gmd_bins.py"
@@ -81,6 +82,6 @@ def _results(job: Job):
     png = out_dir / f"vmi_gmd_bins{suffix}.png"
     if png.exists():
         ui.label(f"Bins overview ({png.name}):").classes("vmi-caption")
-        ui.image(file_url(png)).classes("w-full max-w-5xl")
+        zoomable_image(file_url(png)).classes("w-full max-w-5xl")
     else:
         ui.label(f"Expected plot not found: {png}").classes("vmi-subtitle")

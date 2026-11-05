@@ -9,7 +9,7 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     path_input, serve_dir)
+                     path_input, serve_dir, zoomable_image)
 
 
 def build(jobs: JobManager) -> None:
@@ -85,11 +85,11 @@ def _results(job: Job):
         if movie.lower().endswith(".mp4"):
             ui.video(file_url(movie)).classes("w-full max-w-2xl")
         else:
-            ui.image(file_url(movie)).classes("w-full max-w-2xl")
+            zoomable_image(file_url(movie)).classes("w-full max-w-2xl")
     frames = sorted(Path(job.extra["frames_dir"]).glob("frame_*.png"))
     if frames:
         ui.label(f"Scrub frames ({len(frames)}):").classes("vmi-caption")
-        img = ui.image(file_url(frames[0])).classes("w-full max-w-2xl")
+        img = zoomable_image(file_url(frames[0])).classes("w-full max-w-2xl")
 
         def show(e):
             img.set_source(file_url(frames[int(e.value)]))

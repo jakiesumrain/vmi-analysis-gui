@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -44,6 +45,116 @@ def file_url(path) -> str:
     except OSError:
         stamp = 0
     return f"{serve_dir(p.parent)}/{p.name}?t={stamp}"
+
+
+# --------------------------------------------------------------------------
+# Zoomable image lightbox
+# --------------------------------------------------------------------------
+
+_ZOOM_READY = False
+
+_OVERLAY_HTML = """
+<div id="vmi-zoom-overlay" style="display:none; position:fixed; inset:0;
+     z-index:9999; background:rgba(20,19,18,0.93); cursor:grab;
+     overflow:hidden; touch-action:none;">
+  <img id="vmi-zoom-img" src="" alt="" style="position:absolute; left:50%;
+       top:50%; max-width:none; user-select:none; -webkit-user-drag:none;"/>
+  <div style="position:absolute; top:14px; right:16px; display:flex; gap:8px;
+       font-family:monospace;">
+    <button onclick="vmiZoomAt(event,1.25)" style="background:#cc785c;
+      color:#faf9f5; border:none; border-radius:6px; width:34px; height:30px;
+      font-size:18px; cursor:pointer;">+</button>
+    <button onclick="vmiZoomAt(event,0.8)" style="background:#cc785c;
+      color:#faf9f5; border:none; border-radius:6px; width:34px; height:30px;
+      font-size:18px; cursor:pointer;">&minus;</button>
+    <button onclick="vmiZoomReset()" style="background:#efe9de; color:#141413;
+      border:none; border-radius:6px; padding:0 10px; height:30px;
+      font-size:12px; cursor:pointer;">reset</button>
+    <button onclick="vmiZoomClose()" style="background:#efe9de; color:#141413;
+      border:none; border-radius:6px; width:34px; height:30px;
+      font-size:14px; cursor:pointer;">&#10005;</button>
+  </div>
+</div>
+<script>
+(function () {
+  let scale = 1, tx = 0, ty = 0, dragging = false, sx = 0, sy = 0;
+  const overlay = document.getElementById('vmi-zoom-overlay');
+  const img = document.getElementById('vmi-zoom-img');
+  function apply() {
+    img.style.transform = 'translate(calc(-50% + ' + tx + 'px), calc(-50% + '
+      + ty + 'px)) scale(' + scale + ')';
+  }
+  img.addEventListener('load', function () {
+    const fw = overlay.clientWidth * 0.92 / img.naturalWidth;
+    const fh = overlay.clientHeight * 0.92 / img.naturalHeight;
+    scale = Math.min(1, fw, fh); tx = 0; ty = 0; apply();
+  });
+  window.vmiZoomOpen = function (src) {
+    overlay.style.display = 'block';
+    img.src = src;   // onload fits to viewport
+  };
+  window.vmiZoomClose = function () {
+    overlay.style.display = 'none'; img.src = '';
+  };
+  window.vmiZoomReset = function () {
+    img.dispatchEvent(new Event('load'));
+  };
+  window.vmiZoomAt = function (e, f) {
+    const cx = overlay.clientWidth / 2, cy = overlay.clientHeight / 2;
+    const px = e.clientX - cx - tx, py = e.clientY - cy - ty;
+    const ns = Math.min(30, Math.max(0.05, scale * f));
+    tx -= px * (ns / scale - 1);
+    ty -= py * (ns / scale - 1);
+    scale = ns; apply();
+  };
+  overlay.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    vmiZoomAt(e, e.deltaY < 0 ? 1.2 : 1 / 1.2);
+  }, { passive: false });
+  overlay.addEventListener('mousedown', function (e) {
+    if (e.target.tagName === 'BUTTON') return;
+    dragging = true; sx = e.clientX - tx; sy = e.clientY - ty;
+    overlay.style.cursor = 'grabbing';
+  });
+  window.addEventListener('mousemove', function (e) {
+    if (!dragging) return;
+    tx = e.clientX - sx; ty = e.clientY - sy; apply();
+  });
+  window.addEventListener('mouseup', function () {
+    dragging = false; overlay.style.cursor = 'grab';
+  });
+  overlay.addEventListener('click', function (e) {
+    if (e.target === overlay) vmiZoomClose();
+  });
+  overlay.addEventListener('dblclick', function (e) {
+    if (e.target.tagName !== 'BUTTON') vmiZoomReset();
+  });
+  window.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') vmiZoomClose();
+  });
+})();
+</script>
+"""
+
+
+def init_zoom_overlay() -> None:
+    global _ZOOM_READY
+    if not _ZOOM_READY:
+        _ZOOM_READY = True
+        # shared=True: appended to every page; a per-client add would be
+        # consumed by the auto-opened browser (ui.run(show=True)) and never
+        # reach later clients.
+        ui.add_body_html(_OVERLAY_HTML, shared=True)
+
+
+def zoomable_image(src: str = "", **kwargs) -> ui.image:
+    """ui.image that opens a fullscreen zoom/pan overlay when clicked."""
+    init_zoom_overlay()
+    img = ui.image(src, **kwargs)
+    img.style("cursor: zoom-in")
+    img.on("click", lambda: ui.run_javascript(
+        f"vmiZoomOpen({json.dumps(img.source)})"))
+    return img
 
 
 # --------------------------------------------------------------------------

@@ -8,7 +8,7 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     path_input, render_txt_image, serve_dir)
+                     path_input, render_txt_image, serve_dir, zoomable_image)
 
 CIRC_DIR = REPO_ROOT / "circularization"
 SCRIPT = CIRC_DIR / "circularization.py"
@@ -99,7 +99,7 @@ def _results(job: Job):
         try:
             render_txt_image(out, png)
             ui.label("Circularized image:").classes("vmi-caption")
-            ui.image(file_url(png)) \
+            zoomable_image(file_url(png)) \
                 .classes("w-full max-w-2xl")
         except Exception as e:
             ui.label(f"Could not render {out}: {e}").classes("vmi-subtitle")
@@ -108,4 +108,4 @@ def _results(job: Job):
         ui.label("Diagnostic plots:").classes("vmi-caption")
         with ui.row().classes("gap-4 flex-wrap"):
             for p in plots:
-                ui.image(file_url(p)).classes("w-80")
+                zoomable_image(file_url(p)).classes("w-80")

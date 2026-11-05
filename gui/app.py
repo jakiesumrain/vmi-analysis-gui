@@ -9,6 +9,7 @@ from . import theme
 from .jobs import MANAGER
 from .panels import (accumulate, binning, centroid, circularize, gmd_map,
                      movie, pes, pipeline)
+from .panels.common import init_zoom_overlay
 
 TABS = [
     ("GMD Map", gmd_map),
@@ -62,6 +63,7 @@ def index() -> None:
 
 def main() -> None:
     import os
+    init_zoom_overlay()
     ui.run(title="VMI Analysis",
            port=int(os.environ.get("VMI_GUI_PORT", 8080)),
            reload=False, show=True)

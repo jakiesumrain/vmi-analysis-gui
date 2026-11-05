@@ -8,7 +8,8 @@ from nicegui import ui
 
 from ..jobs import Job, JobManager
 from .. import theme
-from .common import JobView, REPO_ROOT, file_url, path_input
+from .common import (JobView, REPO_ROOT, file_url, path_input,
+                     zoomable_image)
 
 CIRC_DIR = REPO_ROOT / "circularization"
 SCRIPT = CIRC_DIR / "process_gmd_bins.py"
@@ -102,7 +103,7 @@ def _results(job: Job):
         png = out_dir / name
         if png.exists():
             ui.label(name).classes("vmi-caption")
-            ui.image(file_url(png)).classes("w-full max-w-4xl")
+            zoomable_image(file_url(png)).classes("w-full max-w-4xl")
     npz = out_dir / "gmd_bins_results.npz"
     if npz.exists():
         ui.label(f"Data: {npz}").classes("vmi-subtitle")
