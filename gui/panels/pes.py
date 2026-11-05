@@ -8,8 +8,8 @@ from nicegui import ui
 
 from ..jobs import Job, JobManager
 from .. import theme
-from .common import (JobView, REPO_ROOT, file_url, path_input,
-                     zoomable_image)
+from .common import (JobView, REPO_ROOT, file_url, open_folder_button,
+                     path_input, zoomable_image)
 
 CIRC_DIR = REPO_ROOT / "circularization"
 SCRIPT = CIRC_DIR / "process_gmd_bins.py"
@@ -97,6 +97,7 @@ def _results(job: Job):
     if job.status != "done":
         return
     out_dir = Path(job.extra["output_dir"])
+    open_folder_button(out_dir, "open results folder")
     for name in ("gmd_bins-energy-spectrum.png",
                  "gmd_bins-energy-spectrum-normalized.png",
                  "gmd_bins-betas.png"):

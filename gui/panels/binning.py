@@ -8,8 +8,8 @@ from nicegui import ui
 
 from ..jobs import Job, JobManager
 from .. import theme
-from .common import (JobView, REPO_ROOT, file_url, num_input, path_input,
-                     zoomable_image)
+from .common import (JobView, REPO_ROOT, file_url, num_input,
+                     open_folder_button, path_input, zoomable_image)
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
 SCRIPT = CENTROID_DIR / "vmi_histogram_gmd_bins.py"
@@ -79,6 +79,7 @@ def _results(job: Job):
         return
     suffix = _suffix(job.extra.get("weight_mode", "gmd_norm"),
                      job.extra.get("weight_power", 1.0))
+    open_folder_button(out_dir, "open output folder")
     png = out_dir / f"vmi_gmd_bins{suffix}.png"
     if png.exists():
         ui.label(f"Bins overview ({png.name}):").classes("vmi-caption")

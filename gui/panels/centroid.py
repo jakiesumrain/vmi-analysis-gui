@@ -8,7 +8,8 @@ from nicegui import ui
 
 from ..jobs import Job, JobManager
 from .. import theme
-from .common import JobView, REPO_ROOT, file_url, path_input, zoomable_image
+from .common import (JobView, REPO_ROOT, file_url, open_folder_button,
+                     path_input, zoomable_image)
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
 CONFIG_PATH = CENTROID_DIR / "config.toml"
@@ -214,6 +215,7 @@ def _results(job: Job):
         return
     doc = _load_doc()
     out_dir = _output_dir(doc)
+    open_folder_button(out_dir, "open output folder")
     tuning = out_dir / "01_tuning_check_picasso.png"
     summary = out_dir / "04_final_summary.png"
     if tuning.exists():

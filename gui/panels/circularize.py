@@ -8,7 +8,8 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     path_input, render_txt_image, serve_dir, zoomable_image)
+                     open_folder_button, path_input, render_txt_image,
+                     serve_dir, zoomable_image)
 
 CIRC_DIR = REPO_ROOT / "circularization"
 SCRIPT = CIRC_DIR / "circularization.py"
@@ -94,6 +95,7 @@ def _results(job: Job):
     if job.status != "done":
         return
     out = Path(job.extra["output"])
+    open_folder_button(out)
     if out.exists():
         png = GENERATED / f"circ_{job.id}.png"
         try:

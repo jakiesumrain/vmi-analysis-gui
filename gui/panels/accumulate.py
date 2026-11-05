@@ -10,7 +10,8 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     path_input, render_npy, zoomable_image)
+                     open_folder_button, path_input, render_npy,
+                     zoomable_image)
 
 
 def build(jobs: JobManager) -> None:
@@ -153,4 +154,5 @@ def _results(job: Job):
     png = os.path.splitext(out)[0] + ".png"
     if job.status == "done" and Path(png).exists():
         ui.label(f"Result: {out}").classes("vmi-subtitle")
+        open_folder_button(out)
         zoomable_image(file_url(png)).classes("w-full max-w-2xl")

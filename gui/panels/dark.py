@@ -9,7 +9,8 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     path_input, render_image, zoomable_image)
+                     open_folder_button, path_input, render_image,
+                     zoomable_image)
 
 SCRIPT = REPO_ROOT / "centroiding" / "compute_dark.py"
 
@@ -114,6 +115,7 @@ def _results(job: Job):
     ui.label(f"Dark frame: {npy}  —  mean={data.mean():.1f}, "
              f"std={data.std():.1f}, min={data.min():.0f}, "
              f"max={data.max():.0f}").classes("vmi-subtitle")
+    open_folder_button(npy)
     png = render_image(data, GENERATED / "dark_frame.png",
                        cmap="gray", log=False, vmin_pct=0, vmax_pct=99.9)
     zoomable_image(file_url(png)).classes("w-full max-w-2xl")
