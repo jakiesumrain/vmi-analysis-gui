@@ -1,12 +1,14 @@
 """Panel: build_gmd_map.py — frame → GMD correspondence map."""
 
+import os
 import sys
+from pathlib import Path
 
 from nicegui import ui
 
 from ..jobs import Job, JobManager
 from .. import theme
-from .common import JobView, REPO_ROOT, num_input, path_input, serve_dir
+from .common import JobView, REPO_ROOT, num_input, path_input
 
 
 def build(jobs: JobManager) -> None:
@@ -29,8 +31,12 @@ def build(jobs: JobManager) -> None:
                                  default_name="gmd_map_all.txt")
         with ui.row().classes("gap-4"):
             n_files = num_input("First N files (0 = all)", 0, step=1)
-        theme.run_button(on_click=lambda: _run(jobs, view, h5_dir, gmd_path,
-                                               output_path, n_files))
+        with ui.row().classes("gap-2"):
+            theme.run_button(on_click=lambda: _run(jobs, view, h5_dir, gmd_path,
+                                                   output_path, n_files))
+            ui.button("Clear output", icon="delete",
+                      on_click=lambda: _clear_output(output_path)) \
+                .props("flat color=negative")
 
     view.place_console()
 
@@ -46,14 +52,55 @@ def _run(jobs, view, h5_dir, gmd_path, output_path, n_files):
     view.attach(job)
 
 
+def _clear_output(output_path) -> None:
+    """Delete the output map file so the next run rewrites it from scratch."""
+    txt = (output_path.value or "").strip()
+    if not txt:
+        ui.notify("Set an output path first.", type="warning")
+        return
+    target = Path(txt)
+    if not target.exists():
+        ui.notify(f"Nothing to delete at {txt}", type="info")
+        return
+
+    with ui.dialog() as dlg, ui.card():
+        ui.label("Delete GMD map file?").classes("vmi-caption")
+        ui.label(str(target)).style("font-family: monospace")
+        with ui.row().classes("gap-2"):
+            ui.button("Delete", color="negative", on_click=lambda: do_delete())
+            ui.button("Cancel", on_click=dlg.close).props("flat")
+    dlg.open()
+
+    def do_delete():
+        try:
+            target.unlink()
+        except OSError as e:
+            dlg.close()
+            ui.notify(f"Could not delete {target}: {e}", type="negative")
+            return
+        dlg.close()
+        ui.notify(f"Deleted {target}", type="positive")
+
+
+def _open_folder(file_path: str) -> None:
+    """Open the containing folder in the OS file manager (server machine)."""
+    folder = Path(file_path).parent
+    try:
+        os.startfile(str(folder))  # Windows
+    except (OSError, AttributeError) as e:
+        ui.notify(f"Could not open {folder}: {e}", type="negative")
+    else:
+        ui.notify(f"Opened {folder}")
+
+
 def _results(job: Job):
     out = job.extra.get("output_path", "")
     if job.status == "done" and out:
-        import os
         size = os.path.getsize(out) / 1e6
-        n_lines = sum(1 for _ in open(out, "rb"))
+        with open(out, "rb") as fh:
+            n_lines = sum(1 for _ in fh)
         ui.label(f"Map written: {out}  ({n_lines:,} lines, {size:.1f} MB)") \
             .classes("vmi-subtitle")
-        ui.link("open containing folder", serve_dir(out.rsplit("\\", 1)[0]
-                                                    if "\\" in out else "."),
-                new_tab=True).classes("vmi-caption")
+        ui.button("open containing folder", icon="folder_open",
+                  on_click=lambda: _open_folder(out)) \
+            .props("flat dense").classes("vmi-caption")
