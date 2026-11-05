@@ -10,7 +10,7 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     open_folder_button, path_input, render_npy,
+                     open_folder_button, path_input, persist, render_npy,
                      zoomable_image)
 
 
@@ -44,26 +44,38 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, results_builder=_results, live_builder=_live)
 
     with theme.panel_card():
-        h5_dir = path_input("HDF5 directory", "", browse="dir",
-                            placeholder="folder containing RAW-*.h5 files")
-        output_path = path_input("Output image (.txt)", "",
-                                 browse="save", filters=[".txt"],
-                                 default_name="accumulated_result.txt",
-                                 placeholder="accumulated_result.txt")
+        h5_dir = persist(path_input(
+            "HDF5 directory", "", browse="dir",
+            placeholder="folder containing RAW-*.h5 files"),
+            "accumulate.h5_dir")
+        output_path = persist(path_input(
+            "Output image (.txt)", "", browse="save", filters=[".txt"],
+            default_name="accumulated_result.txt",
+            placeholder="accumulated_result.txt"), "accumulate.output_path")
         with ui.row().classes("gap-4 flex-wrap"):
-            im_threshold = num_input("Threshold", 5, step=1)
-            max_workers = num_input("Workers", 6, step=1)
-            do_denoise = ui.checkbox("Denoise (2×2 opening)", value=True)
-            simple_sum = ui.checkbox("Simple sum (no threshold)", value=False)
+            im_threshold = persist(num_input("Threshold", 5, step=1),
+                                   "accumulate.im_threshold")
+            max_workers = persist(num_input("Workers", 6, step=1),
+                                  "accumulate.max_workers")
+            do_denoise = persist(ui.checkbox("Denoise (2×2 opening)",
+                                             value=True),
+                                 "accumulate.do_denoise")
+            simple_sum = persist(ui.checkbox("Simple sum (no threshold)",
+                                             value=False),
+                                 "accumulate.simple_sum")
         with ui.row().classes("gap-4 flex-wrap"):
-            enable_gmd = ui.checkbox("GMD weighting", value=False)
-            gmd_map_path = path_input("GMD map file",
-                                      str(REPO_ROOT / "gmd_map_all.txt"),
-                                      browse="file", filters=[".txt"])
-            gmd_w_min = num_input("Weight min", 0.0, step=0.5)
-            gmd_w_max = num_input("Weight max", 4.0, step=0.5)
-        dark_path = path_input("Dark frame .npy (optional)", "",
-                               browse="file", filters=[".npy"])
+            enable_gmd = persist(ui.checkbox("GMD weighting", value=False),
+                                 "accumulate.enable_gmd")
+            gmd_map_path = persist(path_input(
+                "GMD map file", str(REPO_ROOT / "gmd_map_all.txt"),
+                browse="file", filters=[".txt"]), "accumulate.gmd_map_path")
+            gmd_w_min = persist(num_input("Weight min", 0.0, step=0.5),
+                                "accumulate.gmd_w_min")
+            gmd_w_max = persist(num_input("Weight max", 4.0, step=0.5),
+                                "accumulate.gmd_w_max")
+        dark_path = persist(path_input("Dark frame .npy (optional)", "",
+                                       browse="file", filters=[".npy"]),
+                            "accumulate.dark_path")
 
         def run():
             job_id_hint = str(time.time_ns())[-8:]

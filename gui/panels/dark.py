@@ -9,7 +9,7 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     open_folder_button, path_input, render_image,
+                     open_folder_button, path_input, persist, render_image,
                      zoomable_image)
 
 SCRIPT = REPO_ROOT / "centroiding" / "compute_dark.py"
@@ -26,19 +26,24 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, results_builder=_results)
 
     with theme.panel_card():
-        dark_dir = path_input("Dark HDF5 directory", "", browse="dir",
-                              placeholder="folder containing dark RAW-*.h5 files")
+        dark_dir = persist(path_input(
+            "Dark HDF5 directory", "", browse="dir",
+            placeholder="folder containing dark RAW-*.h5 files"),
+            "dark.dark_dir")
         with ui.row().classes("gap-4 flex-wrap"):
-            pattern = ui.input("HDF5 pattern", value="RAW-*.h5") \
-                .props("outlined dense")
-            dataset = ui.input("Frame dataset", value="raw/data") \
-                .props("outlined dense")
+            pattern = persist(ui.input("HDF5 pattern", value="RAW-*.h5")
+                              .props("outlined dense"), "dark.pattern")
+            dataset = persist(ui.input("Frame dataset", value="raw/data")
+                              .props("outlined dense"), "dark.dataset")
         with ui.row().classes("gap-4 flex-wrap"):
-            method = ui.select(["median", "mean"], value="median",
-                               label="Method").props("outlined dense")
-            frames = num_input("Dark frame count (0 = all)", 2000, step=100)
-        out_dir = path_input("Output directory",
-                             str(REPO_ROOT / "centroiding"), browse="dir")
+            method = persist(ui.select(["median", "mean"], value="median",
+                                       label="Method")
+                             .props("outlined dense"), "dark.method")
+            frames = persist(num_input("Dark frame count (0 = all)", 2000,
+                                       step=100), "dark.frames")
+        out_dir = persist(path_input("Output directory",
+                                     str(REPO_ROOT / "centroiding"),
+                                     browse="dir"), "dark.out_dir")
 
         def run():
             npy = str(Path(out_dir.value) / f"dark_{method.value}.npy")

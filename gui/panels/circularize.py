@@ -8,8 +8,8 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     open_folder_button, path_input, render_txt_image,
-                     serve_dir, zoomable_image)
+                     open_folder_button, path_input, persist,
+                     render_txt_image, serve_dir, zoomable_image)
 
 CIRC_DIR = REPO_ROOT / "circularization"
 SCRIPT = CIRC_DIR / "circularization.py"
@@ -24,39 +24,55 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, results_builder=_results)
 
     with theme.panel_card():
-        inp = path_input("Input image (.txt)",
-                         str(CIRC_DIR / "image.txt"),
-                         browse="file", filters=[".txt"])
-        out = path_input("Output image (.txt)",
-                         str(CIRC_DIR / "image_circularized.txt"),
-                         browse="save", filters=[".txt"],
-                         default_name="image_circularized.txt")
+        inp = persist(path_input("Input image (.txt)",
+                                 str(CIRC_DIR / "image.txt"),
+                                 browse="file", filters=[".txt"]),
+                      "circularize.inp")
+        out = persist(path_input("Output image (.txt)",
+                                 str(CIRC_DIR / "image_circularized.txt"),
+                                 browse="save", filters=[".txt"],
+                                 default_name="image_circularized.txt"),
+                      "circularize.out")
         with ui.row().classes("gap-4 flex-wrap"):
-            shape_y = num_input("Shape NY", 1023, step=1)
-            shape_x = num_input("Shape NX", 1023, step=1)
-            center_x = num_input("Center X", 511.0, step=1)
-            center_y = num_input("Center Y", 511.0, step=1)
-        extracted = path_input(
+            shape_y = persist(num_input("Shape NY", 1023, step=1),
+                              "circularize.shape_y")
+            shape_x = persist(num_input("Shape NX", 1023, step=1),
+                              "circularize.shape_x")
+            center_x = persist(num_input("Center X", 511.0, step=1),
+                               "circularize.center_x")
+            center_y = persist(num_input("Center Y", 511.0, step=1),
+                               "circularize.center_y")
+        extracted = persist(path_input(
             "Extracted trig-fit file",
             str(CIRC_DIR / "extracted-FOC100eV-20260710.txt"),
-            browse="file", filters=[".txt"])
-        reassign = path_input(
+            browse="file", filters=[".txt"]), "circularize.extracted")
+        reassign = persist(path_input(
             "Reassignment file (optional)",
             str(CIRC_DIR / "reassignment-FOC100eV-20260710.txt"),
-            browse="file", filters=[".txt"])
+            browse="file", filters=[".txt"]), "circularize.reassign")
         with ui.row().classes("gap-4 flex-wrap"):
-            radial_model = ui.select(["interp", "poly"], value="interp",
-                                     label="Radial model").props("outlined dense")
-            poly_order = num_input("Poly order", 2, step=1)
-            interp_order = num_input("Interp order", 3, step=1)
-            max_trig_n = num_input("Max trig n (0 = auto)", 0, step=1)
-            polar_dr = num_input("Polar dr", 1.0, step=0.5)
+            radial_model = persist(ui.select(
+                ["interp", "poly"], value="interp",
+                label="Radial model").props("outlined dense"),
+                "circularize.radial_model")
+            poly_order = persist(num_input("Poly order", 2, step=1),
+                                 "circularize.poly_order")
+            interp_order = persist(num_input("Interp order", 3, step=1),
+                                   "circularize.interp_order")
+            max_trig_n = persist(num_input("Max trig n (0 = auto)", 0, step=1),
+                                 "circularize.max_trig_n")
+            polar_dr = persist(num_input("Polar dr", 1.0, step=0.5),
+                               "circularize.polar_dr")
         with ui.row().classes("gap-4 flex-wrap"):
-            no_jacobian = ui.checkbox("No Jacobian", value=True)
-            no_plots = ui.checkbox("No diagnostic plots", value=False)
-            summary_only = ui.checkbox("Summary only", value=False)
-        plot_dir = path_input("Plot output dir", str(CIRC_DIR / "trig_fit_plots"),
-                              browse="dir")
+            no_jacobian = persist(ui.checkbox("No Jacobian", value=True),
+                                  "circularize.no_jacobian")
+            no_plots = persist(ui.checkbox("No diagnostic plots", value=False),
+                               "circularize.no_plots")
+            summary_only = persist(ui.checkbox("Summary only", value=False),
+                                   "circularize.summary_only")
+        plot_dir = persist(path_input(
+            "Plot output dir", str(CIRC_DIR / "trig_fit_plots"),
+            browse="dir"), "circularize.plot_dir")
 
         def run():
             cmd = [sys.executable, str(SCRIPT),

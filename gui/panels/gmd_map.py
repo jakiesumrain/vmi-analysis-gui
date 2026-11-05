@@ -9,7 +9,7 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (JobView, REPO_ROOT, num_input, open_folder_button,
-                     path_input)
+                     path_input, persist)
 
 
 def build(jobs: JobManager) -> None:
@@ -21,17 +21,20 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, results_builder=_results)
 
     with theme.panel_card():
-        h5_dir = path_input("HDF5 directory", "", browse="dir",
-                            placeholder="folder containing RAW-*.h5 files")
-        gmd_path = path_input("GMD timestamp file (current-time-both.txt)",
-                              "", browse="file", filters=[".txt"],
-                              placeholder="current-time-both.txt")
-        output_path = path_input("Output map file",
-                                 str(REPO_ROOT / "gmd_map_all.txt"),
-                                 browse="save", filters=[".txt"],
-                                 default_name="gmd_map_all.txt")
+        h5_dir = persist(path_input(
+            "HDF5 directory", "", browse="dir",
+            placeholder="folder containing RAW-*.h5 files"), "gmd_map.h5_dir")
+        gmd_path = persist(path_input(
+            "GMD timestamp file (current-time-both.txt)",
+            "", browse="file", filters=[".txt"],
+            placeholder="current-time-both.txt"), "gmd_map.gmd_path")
+        output_path = persist(path_input(
+            "Output map file", str(REPO_ROOT / "gmd_map_all.txt"),
+            browse="save", filters=[".txt"],
+            default_name="gmd_map_all.txt"), "gmd_map.output_path")
         with ui.row().classes("gap-4"):
-            n_files = num_input("First N files (0 = all)", 0, step=1)
+            n_files = persist(num_input("First N files (0 = all)", 0, step=1),
+                              "gmd_map.n_files")
         with ui.row().classes("gap-2"):
             theme.run_button(on_click=lambda: _run(jobs, view, h5_dir, gmd_path,
                                                    output_path, n_files))

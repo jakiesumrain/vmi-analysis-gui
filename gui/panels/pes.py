@@ -9,7 +9,7 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (JobView, REPO_ROOT, file_url, open_folder_button,
-                     path_input, zoomable_image)
+                     path_input, persist, zoomable_image)
 
 CIRC_DIR = REPO_ROOT / "circularization"
 SCRIPT = CIRC_DIR / "process_gmd_bins.py"
@@ -57,20 +57,26 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, results_builder=_results)
 
     with theme.panel_card():
-        weight_suffix = ui.input(
+        weight_suffix = persist(ui.input(
             "Weight suffix", value="_w-gmd_norm",
-            placeholder="'' = unweighted").classes("w-64").props("outlined dense")
-        bin_dir = path_input(
-            "Bin image directory", _default_bin_dir(), browse="dir")
-        output_dir = path_input(
+            placeholder="'' = unweighted").classes("w-64")
+            .props("outlined dense"), "pes.weight_suffix")
+        bin_dir = persist(path_input(
+            "Bin image directory", _default_bin_dir(), browse="dir"),
+            "pes.bin_dir")
+        output_dir = persist(path_input(
             "Output directory (empty = automatic from suffix/backend)", "",
-            browse="dir")
+            browse="dir"), "pes.output_dir")
         with ui.row().classes("gap-4 flex-wrap"):
-            backend = ui.select(["pyabel", "matlab"], value="pyabel",
-                                label="Inversion backend").props("outlined dense")
-            method = ui.select(PYABEL_METHODS, value="daun",
-                               label="PyAbel method").props("outlined dense")
-            use_cache = ui.checkbox("Use cached inversions", value=False)
+            backend = persist(ui.select(
+                ["pyabel", "matlab"], value="pyabel",
+                label="Inversion backend").props("outlined dense"),
+                "pes.backend")
+            method = persist(ui.select(
+                PYABEL_METHODS, value="daun",
+                label="PyAbel method").props("outlined dense"), "pes.method")
+            use_cache = persist(ui.checkbox("Use cached inversions",
+                                            value=False), "pes.use_cache")
         gdata_warn = ui.label(
             "⚠ MATLAB basis data missing — generate "
             "pbasex-matlab/examples/G_r512_k512_l10.h5 first: in MATLAB, "
