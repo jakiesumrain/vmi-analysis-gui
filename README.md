@@ -31,7 +31,8 @@ runs the whole chain in order.
 git clone <this-repo-url>
 cd vmi-analysis-gui
 uv sync                          # creates .venv and installs everything
-uv run python -m gui.app         # → http://localhost:8080 (opens a browser)
+uv run python -m gui.app         # → http://localhost:8090 (opens a browser)
+                                 # override port: VMI_GUI_PORT=8080 uv run python -m gui.app
 ```
 
 That is the whole setup. The app starts with one tab per script:

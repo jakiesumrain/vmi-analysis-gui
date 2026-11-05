@@ -68,7 +68,7 @@ def main() -> None:
     import os
     init_zoom_overlay()
     ui.run(title="VMI Analysis",
-           port=int(os.environ.get("VMI_GUI_PORT", 8080)),
+           port=int(os.environ.get("VMI_GUI_PORT", 8090)),
            reload=False, show=True)
 
 
