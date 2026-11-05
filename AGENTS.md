@@ -89,6 +89,21 @@ Side tools (QC, not pipeline stages):
 - This repository is the self-contained uv-managed copy of the workspace
   project (scripts + GUI), mirrored to a private GitHub repository.
 
+## Git workflow
+
+All changes land on `main` through pull requests, never direct pushes:
+
+1. Branch off `main` (`feature/<name>` or `fix/<name>`), commit there.
+2. Push with `HTTPS_PROXY=http://127.0.0.1:7890` (direct GitHub access is
+   blocked on this machine; repo-local `http.proxy` covers plain `git push`).
+3. Open the PR with `gh pr create` (same proxy), squash-merge with
+   `gh pr merge --squash`; the head branch is deleted automatically.
+
+Squash is the only enabled merge method; merge/rebase merges are disabled.
+GitHub branch *protection* is unavailable (private repo, free plan) — the
+no-direct-push rule is enforced by convention. Commit with
+`-c user.name=jakiesumrain -c user.email=jakiesumrain@users.noreply.github.com`.
+
 ## GUI
 
 `gui/` — NiceGUI app, one tab per script plus a pipeline tab, themed by
