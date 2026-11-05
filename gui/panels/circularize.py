@@ -1,7 +1,6 @@
 """Panel: circularization.py — single-image circularization."""
 
 import sys
-import time
 from pathlib import Path
 
 from nicegui import ui
@@ -100,7 +99,7 @@ def _results(job: Job):
         try:
             render_txt_image(out, png)
             ui.label("Circularized image:").classes("vmi-caption")
-            ui.image(f"{file_url(png)}?t={time.time()}") \
+            ui.image(file_url(png)) \
                 .classes("w-full max-w-2xl")
         except Exception as e:
             ui.label(f"Could not render {out}: {e}").classes("vmi-subtitle")

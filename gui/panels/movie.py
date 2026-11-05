@@ -92,7 +92,7 @@ def _results(job: Job):
         img = ui.image(file_url(frames[0])).classes("w-full max-w-2xl")
 
         def show(e):
-            img.set_source(f"{file_url(frames[int(e.value)])}?t={id(e.value)}")
+            img.set_source(file_url(frames[int(e.value)]))
 
         ui.slider(min=0, max=len(frames) - 1, value=0, on_change=show) \
             .classes("w-full max-w-2xl")

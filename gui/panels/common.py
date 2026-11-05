@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import numpy as np
@@ -34,9 +33,17 @@ def serve_dir(path) -> str:
 
 
 def file_url(path) -> str:
-    """URL for a single file inside a served directory."""
+    """URL for a single file inside a served directory.
+
+    Appends the file's mtime as a cache-buster so the browser refetches
+    when a job rewrites the same filename (e.g. tuning check, result PNGs).
+    """
     p = Path(path)
-    return f"{serve_dir(p.parent)}/{p.name}"
+    try:
+        stamp = p.stat().st_mtime_ns
+    except OSError:
+        stamp = 0
+    return f"{serve_dir(p.parent)}/{p.name}?t={stamp}"
 
 
 # --------------------------------------------------------------------------
