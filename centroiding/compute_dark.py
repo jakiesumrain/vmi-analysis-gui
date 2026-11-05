@@ -5,9 +5,9 @@ Compute a dark frame from dark HDF5 files and save to disk.
 Defaults come from centroiding/config.toml (same as the main analysis
 script); every value can be overridden on the command line.
 
-Two methods (--method):
-  mean:   streaming running sum — uses all dark files, ~8 MB memory
-  median: parallel subsample — uses --frames frames, ~4 GB memory
+Two methods (--method), both honour --frames (0 = all frames):
+  mean:   streaming running sum — low memory
+  median: parallel subsample — higher memory (all selected frames in RAM)
 
 Output: <output-dir>/dark_{method}.npy (float64) plus a small
 dark_{method}_info.txt with basic statistics. Point the main analysis
@@ -69,10 +69,21 @@ def _read_h5_data(fpath: str, dataset: str):
         return hf[dataset][:]
 
 
-def compute_mean(dark_files, dataset: str):
-    """Compute mean dark frame from all files (streaming, low memory)."""
+def compute_mean(dark_files, dataset: str, frame_count: int):
+    """Compute mean dark frame (streaming, low memory).
+
+    Uses the first frame_count frames across the selected files;
+    frame_count <= 0 means all frames of all files.
+    """
+    if frame_count > 0:
+        with h5py.File(dark_files[0], "r") as hf:
+            frames_per_file = hf[dataset].shape[0]
+        n_needed = int(np.ceil(frame_count / frames_per_file))
+        dark_files = dark_files[:min(n_needed, len(dark_files))]
     n_files = len(dark_files)
-    print(f"[Mean] Processing {n_files} files...")
+    print(f"[Mean] Processing {n_files} files"
+          + (f" (target {frame_count} frames)..." if frame_count > 0
+             else " (all frames)..."))
     running_sum = None
     n_total = 0
     t0 = time.time()
@@ -80,15 +91,19 @@ def compute_mean(dark_files, dataset: str):
         try:
             with h5py.File(fpath, "r") as hf:
                 data = hf[dataset][:]
+            if 0 < frame_count - n_total < data.shape[0]:
+                data = data[:frame_count - n_total]
             if running_sum is None:
                 running_sum = data.sum(axis=0, dtype=np.float64)
             else:
                 running_sum += data.sum(axis=0, dtype=np.float64)
             n_total += data.shape[0]
-            if idx % 50 == 0:
+            if idx % 50 == 0 or (frame_count > 0 and n_total >= frame_count):
                 elapsed = time.time() - t0
                 print(f"  [{idx}/{n_files}] {n_total} frames, "
                       f"{n_total/elapsed:.0f} frames/s", flush=True)
+            if frame_count > 0 and n_total >= frame_count:
+                break
         except Exception as e:
             print(f"  WARNING: {os.path.basename(fpath)}: {e}")
     dark = running_sum / n_total
@@ -97,11 +112,18 @@ def compute_mean(dark_files, dataset: str):
 
 
 def compute_median(dark_files, dataset: str, frame_count: int):
-    """Compute median of subsampled dark frames (parallel read)."""
-    with h5py.File(dark_files[0], "r") as hf:
-        frames_per_file = hf[dataset].shape[0]
-    n_needed = int(np.ceil(frame_count / frames_per_file))
-    selected = dark_files[:min(n_needed, len(dark_files))]
+    """Compute median of subsampled dark frames (parallel read).
+
+    Uses the first frame_count frames; frame_count <= 0 means all
+    frames of all files (memory-hungry).
+    """
+    if frame_count > 0:
+        with h5py.File(dark_files[0], "r") as hf:
+            frames_per_file = hf[dataset].shape[0]
+        n_needed = int(np.ceil(frame_count / frames_per_file))
+        selected = dark_files[:min(n_needed, len(dark_files))]
+    else:
+        selected = dark_files
     n_workers = min(len(selected), cpu_count())
     print(f"[Median] Reading {len(selected)} files ({n_workers} workers)...")
     t0 = time.time()
@@ -116,7 +138,9 @@ def compute_median(dark_files, dataset: str, frame_count: int):
                 print(f"  WARNING: {e}")
     if not all_frames:
         raise RuntimeError("No dark frames could be read!")
-    stack = np.concatenate(all_frames, axis=0)[:frame_count]
+    stack = np.concatenate(all_frames, axis=0)
+    if frame_count > 0:
+        stack = stack[:frame_count]
     dark = np.median(stack, axis=0).astype(np.float64)
     print(f"[Median] Done: {stack.shape[0]} frames in {time.time()-t0:.1f}s")
     return dark, stack.shape[0]
@@ -144,7 +168,7 @@ def main(argv=None) -> None:
                    default=defaults.get("method", DEFAULT_METHOD))
     p.add_argument("--frames", type=int,
                    default=defaults.get("frames", DEFAULT_FRAMES),
-                   help="number of frames used by the median method")
+                   help="number of frames to use; 0 = all frames of all files")
     p.add_argument("--output-dir", default=here,
                    help="where dark_{method}.npy is written "
                         "(default: this script's directory)")
@@ -167,7 +191,7 @@ def main(argv=None) -> None:
     if args.method == "median":
         dark, n_used = compute_median(dark_files, args.dataset, args.frames)
     else:
-        dark, n_used = compute_mean(dark_files, args.dataset)
+        dark, n_used = compute_mean(dark_files, args.dataset, args.frames)
 
     os.makedirs(args.output_dir, exist_ok=True)
     out_path = os.path.join(args.output_dir, f"dark_{args.method}.npy")

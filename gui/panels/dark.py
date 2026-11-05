@@ -35,7 +35,7 @@ def build(jobs: JobManager) -> None:
         with ui.row().classes("gap-4 flex-wrap"):
             method = ui.select(["median", "mean"], value="median",
                                label="Method").props("outlined dense")
-            frames = num_input("Dark frame count (median)", 2000, step=100)
+            frames = num_input("Dark frame count (0 = all)", 2000, step=100)
         out_dir = path_input("Output directory",
                              str(REPO_ROOT / "centroiding"), browse="dir")
 
@@ -56,9 +56,52 @@ def build(jobs: JobManager) -> None:
                                   extra={"dark_npy": npy, "info": info}))
             view.attach(job)
 
-        theme.run_button(on_click=run)
+        with ui.row().classes("gap-2"):
+            theme.run_button(on_click=run)
+            ui.button("Clear output", icon="delete",
+                      on_click=lambda: _clear_output(out_dir, method)) \
+                .props("flat color=negative")
 
     view.place_console()
+
+
+def _clear_output(out_dir, method) -> None:
+    """Delete dark_{method}.npy (+ info) so the next run recomputes."""
+    folder = Path((out_dir.value or "").strip())
+    if not folder.is_dir():
+        ui.notify("Set an output directory first.", type="warning")
+        return
+    targets = [folder / f"dark_{method.value}.npy",
+               folder / f"dark_{method.value}_info.txt"]
+    existing = [p for p in targets if p.exists()]
+    if not existing:
+        ui.notify(f"Nothing to delete in {folder}", type="info")
+        return
+
+    with ui.dialog() as dlg, ui.card():
+        ui.label("Delete dark frame outputs?").classes("vmi-caption")
+        for p in existing:
+            ui.label(str(p)).style("font-family: monospace")
+        with ui.row().classes("gap-2"):
+            ui.button("Delete", color="negative",
+                      on_click=lambda: do_delete())
+            ui.button("Cancel", on_click=dlg.close).props("flat")
+    dlg.open()
+
+    def do_delete():
+        failed = []
+        for p in existing:
+            try:
+                p.unlink()
+            except OSError as e:
+                failed.append(f"{p.name}: {e}")
+        dlg.close()
+        if failed:
+            ui.notify("Could not delete: " + "; ".join(failed),
+                      type="negative")
+        else:
+            ui.notify(f"Deleted {len(existing)} file(s) from {folder}",
+                      type="positive")
 
 
 def _results(job: Job):
