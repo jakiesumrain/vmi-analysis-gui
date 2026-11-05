@@ -46,7 +46,9 @@ def build(jobs: JobManager) -> None:
                                 "movie.vmin_frac")
             vmax_pct = persist(num_input("vmax percentile", 99.9, step=0.1),
                                "movie.vmax_pct")
-        with ui.row().classes("gap-4 flex-wrap"):
+        with ui.row().classes("gap-4 flex-wrap items-center"):
+            save_movie = persist(ui.checkbox("Save movie file", value=True),
+                                 "movie.save_movie")
             movie_dir = persist(path_input("Movie output folder",
                                            str(REPO_ROOT / "movies"),
                                            browse="dir"), "movie.movie_dir")
@@ -55,6 +57,8 @@ def build(jobs: JobManager) -> None:
                                 .props("outlined dense"), "movie.movie_ext")
             movie_fps = persist(num_input("Saved fps (0 = playback)", 0,
                                           step=1), "movie.movie_fps")
+        for w in (movie_dir, movie_ext, movie_fps):
+            w.bind_enabled_from(save_movie, "value")
 
         def run():
             frames_dir = GENERATED / "movie_frames"
@@ -71,7 +75,8 @@ def build(jobs: JobManager) -> None:
                    "--movie-dir", movie_dir.value,
                    "--movie-ext", movie_ext.value,
                    "--movie-fps", str(movie_fps.value or 0),
-                   "--headless", "--save-movie",
+                   "--headless",
+                   "--save-movie" if save_movie.value else "--no-save-movie",
                    "--dump-frames", str(frames_dir)]
             if log_scale.value:
                 cmd.append("--log-scale")
