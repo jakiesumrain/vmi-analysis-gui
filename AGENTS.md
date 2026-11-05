@@ -116,8 +116,9 @@ no-direct-push rule is enforced by convention.
 machines, causing WinError 10013 on bind; `VMI_GUI_PORT` overrides,
 `VMI_GUI_NO_SHOW=1` suppresses the browser auto-open). The server shuts
 itself down once the last browser client is gone (checked after NiceGUI's
-reconnect grace period, so reloads survive; a running job is cancelled
-first).
+one-second reconnect grace period; faster reloads survive). Shutdown stops
+queue advancement, cancels queued jobs, and waits for the running process
+tree to be terminated. Silent socket loss still needs heartbeat detection.
 
 Rules for GUI-related changes:
 

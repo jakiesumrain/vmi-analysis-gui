@@ -68,8 +68,13 @@ dark log console at the bottom → results area.
   (queued/running/done/failed/cancelled), timestamps, return code.
 - stdout+stderr merged, read on a background thread into a ring buffer;
   tqdm `\r` lines parsed into a progress fraction (last `NN%` match).
-- `cancel()` → `terminate()` then `kill()` after a timeout
-  (`CREATE_NEW_PROCESS_GROUP` on Windows).
+- `cancel()` terminates the process tree (`taskkill /T /F` on Windows;
+  a separate process group with SIGTERM/SIGKILL on POSIX).
+- Shutdown prevents queue advancement, cancels queued work, handles a
+  cancellation during subprocess startup, and waits for worker cleanup.
+- The last socket disconnect schedules shutdown after a one-second grace
+  period; reconnecting cancels that check. The app shutdown hook also
+  cleans up jobs on terminal/server shutdown.
 - Panels poll with `ui.timer` (~0.7 s) to refresh logs, progress, badges,
   and live images (cache-busted reload).
 - Pipeline jobs are one job with ordered stages, per-stage output
