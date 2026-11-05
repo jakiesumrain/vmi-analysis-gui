@@ -1,0 +1,25 @@
+[project]
+name = "vmi-analysis-gui"
+version = "0.1.0"
+description = "VMI photoelectron analysis pipeline with a NiceGUI web interface"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "astropy>=8.0.0",
+    "h5py>=3.11.0",
+    "matplotlib>=3.9.0",
+    "nicegui>=2.0.0",
+    "numpy>=2.0.0",
+    "opencv-python>=4.10.0",
+    "pandas>=2.2.0",
+    "picassosr>=0.10.3",
+    "pyabel>=0.9.1",
+    "pyyaml>=6.0.0",
+    "scikit-image>=0.26.0",
+    "scipy>=1.14.0",
+    "tqdm>=4.66.0",
+]
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true

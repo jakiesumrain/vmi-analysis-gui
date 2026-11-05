@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Analysis outputs (per-dataset results, checkpoints, movies)
+centroiding/1103_*/
+circularization/gmd_bins_results*/
+*.h5
+*.npy
+*.mp4
+*.gif
+vmi_gmd_bins*.png
+gmd_map*.txt
+accumulated_result.txt
+
+# Generated GUI artifacts
+gui/generated/
