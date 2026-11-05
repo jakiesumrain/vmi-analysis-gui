@@ -23,6 +23,7 @@ import h5py
 import numpy as np
 import inspect
 import os
+import time
 
 import matplotlib
 if "--headless" in sys.argv or os.environ.get("MPLBACKEND"):
@@ -50,6 +51,7 @@ movie_dpi   = 100             # resolution of the saved movie
 movie_fps   = 0               # saved-movie frame rate; 0 -> same speed as playback
 headless    = False           # skip the playback window (for web/GUI use)
 dump_frames = r""             # optional dir for per-frame PNGs; empty to skip
+stream_pace = False           # dump frames at playback pace (live web view)
 # ------------------------------------------
 
 
@@ -76,6 +78,9 @@ def parse_args():
                    help="Skip the playback window; only write outputs.")
     p.add_argument("--dump-frames", default=dump_frames,
                    help="Directory for per-frame PNGs (empty = skip).")
+    p.add_argument("--stream-pace", action="store_true", default=stream_pace,
+                   help="Dump frames at playback pace (interval-ms between "
+                        "frames) so a web UI can follow the movie live.")
     args = p.parse_args()
     if not args.h5_dir:
         p.error("--h5-dir is required "
@@ -189,13 +194,17 @@ def main():
     norm = (LogNorm(vmin=vmax * vmin_frac, vmax=vmax) if log_scale
             else matplotlib.colors.Normalize(vmin=vmax * vmin_frac, vmax=vmax))
 
-    # optional per-frame PNG dump (for the GUI scrub slider)
+    # optional per-frame PNG dump (for the GUI scrub slider; with
+    # --stream-pace the dump runs at playback speed for the live web view)
     if dump_frames:
         os.makedirs(dump_frames, exist_ok=True)
         for rec in frames:
             img = preprocess(load_frame(rec), dark)
             plt.imsave(os.path.join(dump_frames, f"frame_{rec[3]:04d}.png"),
                        norm(img), cmap=cmap, vmin=0.0, vmax=1.0)
+            if stream_pace:
+                print(f"[stream] frame {rec[3] + 1}/{n_total}", flush=True)
+                time.sleep(max(0, interval_ms) / 1000.0)
         print(f"Dumped {n_total} frame PNGs to {dump_frames}")
 
     fig, ax = plt.subplots(figsize=(7, 7.8))
@@ -277,4 +286,5 @@ if __name__ == '__main__':
     movie_fps = _args.movie_fps
     headless = _args.headless
     dump_frames = _args.dump_frames
+    stream_pace = _args.stream_pace
     main()
