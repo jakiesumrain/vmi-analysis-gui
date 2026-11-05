@@ -17,6 +17,7 @@ dependencies = [
     "pyyaml>=6.0.0",
     "scikit-image>=0.26.0",
     "scipy>=1.14.0",
+    "tomlkit>=0.15.2",
     "tqdm>=4.66.0",
 ]
 
