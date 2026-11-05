@@ -138,9 +138,9 @@ defaults) → Run/Cancel → status badge + progress → dark log console → re
 
 ## Step 6 — `gui/app.py`
 
-`ui.tabs` + `ui.tab_panels` (8 tabs), header with serif title, footer job-queue
+`ui.tabs` + `ui.tab_panels` (9 tabs), header with serif title, footer job-queue
 indicator. `ui.run(title='VMI Analysis', port=8080, reload=False)`.
-Launch: `uv run python gui/app.py` from `data_20261104` (documented).
+Launch: `uv run python -m gui.app` from `vmi-analysis-gui/` (documented).
 
 ## Step 7 — Verification
 

@@ -25,7 +25,7 @@ Side tools: `h5_play_frames_movie.py` (frame movie), `h5_accumulate_fast_gmd.py`
 ## GUI
 
 ```bash
-uv run python gui/app.py   # → http://localhost:8080
+uv run python -m gui.app   # → http://localhost:8080
 ```
 
 One tab per script plus a pipeline tab. See `PLAN.md` (build plan), `DESIGN.md`

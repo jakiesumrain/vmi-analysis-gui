@@ -1,0 +1,125 @@
+/* VMI Analysis GUI theme — mapped from DESIGN.md (Claude warm-canvas spec).
+   Tokens: canvas #faf9f5, ink #141413, primary coral #cc785c,
+   surface-card #efe9de, surface-dark #181715, hairline #e6dfd8. */
+
+:root {
+  --vmi-canvas: #faf9f5;
+  --vmi-ink: #141413;
+  --vmi-body: #3d3d3a;
+  --vmi-muted: #6c6a64;
+  --vmi-muted-soft: #8e8b82;
+  --vmi-hairline: #e6dfd8;
+  --vmi-surface-card: #efe9de;
+  --vmi-surface-soft: #f5f0e8;
+  --vmi-surface-dark: #181715;
+  --vmi-on-dark: #faf9f5;
+  --vmi-primary: #cc785c;
+  --vmi-primary-active: #a9583e;
+  --vmi-success: #5db872;
+  --vmi-warning: #d4a017;
+  --vmi-error: #c64545;
+  --vmi-teal: #5db8a6;
+  --vmi-font-display: "Cormorant Garamond", "Tiempos Headline", Garamond, "Times New Roman", serif;
+  --vmi-font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --vmi-font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+body {
+  background: var(--vmi-canvas);
+  color: var(--vmi-body);
+  font-family: var(--vmi-font-body);
+}
+
+/* ---- display type: serif, weight 400, negative tracking ---- */
+.vmi-title {
+  font-family: var(--vmi-font-display);
+  font-weight: 400;
+  letter-spacing: -0.5px;
+  color: var(--vmi-ink);
+}
+.vmi-title-lg { font-size: 36px; line-height: 1.15; }
+.vmi-title-md { font-size: 28px; line-height: 1.2; letter-spacing: -0.3px; }
+.vmi-title-sm { font-size: 22px; line-height: 1.3; letter-spacing: -0.2px; }
+.vmi-subtitle {
+  color: var(--vmi-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.vmi-caption {
+  color: var(--vmi-muted-soft);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+
+/* ---- panels: cream feature-card ---- */
+.vmi-panel {
+  background: var(--vmi-surface-card);
+  border: 1px solid var(--vmi-hairline);
+  border-radius: 12px;
+  padding: 24px;
+}
+.vmi-panel-soft {
+  background: var(--vmi-surface-soft);
+  border: 1px solid var(--vmi-hairline);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+/* ---- log console: dark code-window card ---- */
+.vmi-log {
+  background: var(--vmi-surface-dark);
+  color: var(--vmi-on-dark);
+  border-radius: 12px;
+  font-family: var(--vmi-font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 16px;
+}
+.vmi-log .q-field__native, .vmi-log textarea {
+  color: var(--vmi-on-dark) !important;
+  font-family: var(--vmi-font-mono) !important;
+}
+
+/* ---- Quasar component overrides ---- */
+.q-btn {
+  border-radius: 8px;
+  text-transform: none;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.q-card {
+  border-radius: 12px;
+}
+.q-tab {
+  color: var(--vmi-muted);
+  text-transform: none;
+  font-weight: 500;
+  border-radius: 8px;
+}
+.q-tab--active {
+  color: var(--vmi-ink);
+  background: var(--vmi-surface-card);
+}
+.q-field--outlined .q-field__control {
+  border-radius: 8px;
+}
+.q-badge {
+  border-radius: 9999px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+/* status badge colors */
+.vmi-badge-queued    { background: var(--vmi-surface-card); color: var(--vmi-muted); }
+.vmi-badge-running   { background: var(--vmi-primary);      color: #ffffff; }
+.vmi-badge-done      { background: var(--vmi-success);      color: #ffffff; }
+.vmi-badge-failed    { background: var(--vmi-error);        color: #ffffff; }
+.vmi-badge-cancelled { background: var(--vmi-warning);      color: #ffffff; }
+.vmi-badge-skipped   { background: var(--vmi-muted-soft);   color: #ffffff; }
+.vmi-badge-idle      { background: var(--vmi-surface-soft); color: var(--vmi-muted); }
+
+/* thin scrollbars for consoles */
+.vmi-log::-webkit-scrollbar { width: 8px; }
+.vmi-log::-webkit-scrollbar-thumb { background: #3a3835; border-radius: 4px; }

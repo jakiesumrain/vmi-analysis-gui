@@ -52,12 +52,12 @@ Side tools (QC, not pipeline stages):
 
 | script | configuration |
 |---|---|
-| `build_gmd_map.py` | config block at top of file (CLI args in progress) |
-| `h5_play_frames_movie.py` | config block at top of file |
-| `h5_accumulate_fast_gmd.py` | config block at top of file |
-| `process_andor_vmi_PICASSO_v5_h5_batch.py` | `centroiding/config.toml` `[vmi_picasso]` |
-| `vmi_histogram_gmd_bins.py` | config.toml paths + module-top `GMD_THRESHOLDS`, `WEIGHT_MODE`, `WEIGHT_POWER` |
-| `process_gmd_bins.py` | module-top constants (`WEIGHT_SUFFIX`, `INVERSION_BACKEND`, ...) |
+| `build_gmd_map.py` | argparse CLI (`--h5-dir --gmd-path --output-path --n-files`) |
+| `h5_play_frames_movie.py` | argparse CLI (`--headless`, `--dump-frames`, ...) |
+| `h5_accumulate_fast_gmd.py` | argparse CLI (`--no-show`, `--live-path`, ...) |
+| `process_andor_vmi_PICASSO_v5_h5_batch.py` | `config.toml` `[vmi_picasso]` + `--config PATH` |
+| `vmi_histogram_gmd_bins.py` | config.toml paths + argparse CLI (`--thresholds`, `--weight-mode`, `--weight-power`, `--no-show`) |
+| `process_gmd_bins.py` | argparse CLI (`--weight-suffix`, `--inversion-backend`, `--pyabel-method`, `--use-cache`, `--no-show`) |
 | `circularization/circularization.py` | full argparse CLI — no changes needed |
 
 ## Constraints and traps
@@ -89,11 +89,11 @@ Side tools (QC, not pipeline stages):
 - This repository is the self-contained uv-managed copy of the workspace
   project (scripts + GUI), mirrored to a private GitHub repository.
 
-## GUI (under construction)
+## GUI
 
 `gui/` — NiceGUI app, one tab per script plus a pipeline tab, themed by
-`DESIGN.md`. See `PLAN.md` for the build plan. Launch (when built):
-`uv run python gui/app.py` → http://localhost:8080.
+`DESIGN.md`. See `PLAN.md` for the build plan. Launch:
+`uv run python -m gui.app` → http://localhost:8080.
 
 Rules for GUI-related changes:
 
