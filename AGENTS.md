@@ -111,7 +111,9 @@ no-direct-push rule is enforced by convention.
 
 `gui/` — NiceGUI app, one tab per script plus a pipeline tab, themed by
 `DESIGN.md`. See `PLAN.md` for the architecture. Launch:
-`uv run python -m gui.app` → http://localhost:8080.
+`uv run python -m gui.app` → http://localhost:8090
+(8080 was avoided: it falls in a Windows reserved port range on some
+machines, causing WinError 10013 on bind; `VMI_GUI_PORT` overrides).
 
 Rules for GUI-related changes:
 
