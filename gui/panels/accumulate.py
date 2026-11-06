@@ -41,7 +41,7 @@ def build(jobs: JobManager) -> None:
         except Exception:
             pass  # file may be mid-write; next refresh picks it up
 
-    view = JobView(jobs, results_builder=_results, live_builder=_live)
+    view = JobView(jobs, job_name='Accumulate', results_builder=_results, live_builder=_live)
 
     with theme.panel_card():
         h5_dir = persist(path_input(
@@ -108,7 +108,7 @@ def build(jobs: JobManager) -> None:
             view.attach(job)
 
         with ui.row().classes("gap-2 items-center"):
-            theme.run_button(on_click=run)
+            view.run_button(on_click=run)
             ui.button("Clear output", icon="delete",
                       on_click=lambda: _clear_output(output_path)) \
                 .props("flat color=negative")

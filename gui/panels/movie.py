@@ -58,7 +58,7 @@ def build(jobs: JobManager) -> None:
         "(h5_play_frames_movie.py). Uncheck 'Save movie file' to watch the "
         "movie play live in this page instead of writing a file.")
 
-    view = JobView(jobs, results_builder=_results)
+    view = JobView(jobs, job_name='Frame movie', results_builder=_results)
     ui.add_body_html(_PLAYER_JS, shared=True)
 
     with theme.panel_card():
@@ -153,7 +153,7 @@ def build(jobs: JobManager) -> None:
             view.attach(job)
 
         with ui.row().classes("gap-2"):
-            theme.run_button(on_click=run)
+            view.run_button(on_click=run)
             ui.button("Clear outputs", icon="delete",
                       on_click=lambda: _clear_outputs(
                           movie_dir, h5_dir)) \

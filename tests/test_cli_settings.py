@@ -166,6 +166,7 @@ class GuiSubmissionTests(unittest.TestCase):
             captured[text] = kwargs["on_click"]
             return ui.button(text, **kwargs)
         manager = Mock()
+        manager.jobs.return_value = []
         manager.submit.side_effect = lambda job: job
         client = Client(ui.page("/_test_settings"))
         try:

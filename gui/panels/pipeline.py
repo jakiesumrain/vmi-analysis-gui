@@ -25,7 +25,7 @@ def build(jobs: JobManager) -> None:
         "centroiding parameters on its own tab first — its saved settings "
         "are used with this pipeline's dataset and GMD map.")
 
-    view = JobView(jobs)
+    view = JobView(jobs, job_name='Pipeline')
 
     stage_badges: list[ui.badge] = []
     with ui.row().classes("gap-2 items-center"):
@@ -140,7 +140,7 @@ def build(jobs: JobManager) -> None:
             current_job["job"] = job
             view.attach(job)
 
-        theme.run_button("Run pipeline", on_click=run)
+        view.run_button("Run pipeline", on_click=run)
         ui.label("Watch each stage's detailed parameters on its own tab; "
                  "this panel uses the same defaults.").classes("vmi-subtitle")
 

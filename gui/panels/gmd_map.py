@@ -18,7 +18,7 @@ def build(jobs: JobManager) -> None:
         "Match each camera frame to its GMD pulse-energy record by timestamp "
         "(build_gmd_map.py). Required before GMD weighting or binning.")
 
-    view = JobView(jobs, results_builder=_results)
+    view = JobView(jobs, job_name='GMD map', results_builder=_results)
 
     with theme.panel_card():
         h5_dir = persist(path_input(
@@ -36,7 +36,7 @@ def build(jobs: JobManager) -> None:
             n_files = persist(num_input("First N files (0 = all)", 0, step=1),
                               "gmd_map.n_files")
         with ui.row().classes("gap-2"):
-            theme.run_button(on_click=lambda: _run(jobs, view, h5_dir, gmd_path,
+            view.run_button(on_click=lambda: _run(jobs, view, h5_dir, gmd_path,
                                                    output_path, n_files))
             ui.button("Clear output", icon="delete",
                       on_click=lambda: _clear_output(output_path)) \

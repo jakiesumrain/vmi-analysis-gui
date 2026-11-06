@@ -49,7 +49,7 @@ def build(jobs: JobManager) -> None:
                  + ", ".join(missing)
                  + " — supply them before running.").classes("text-negative")
 
-    view = JobView(jobs, results_builder=_results)
+    view = JobView(jobs, job_name='PES', results_builder=_results)
 
     with theme.panel_card():
         weight_suffix = persist(ui.input(
@@ -103,7 +103,7 @@ def build(jobs: JobManager) -> None:
                                   extra={"output_dir": str(out)}))
             view.attach(job)
 
-        theme.run_button(on_click=run)
+        view.run_button(on_click=run)
 
     view.place_console()
 

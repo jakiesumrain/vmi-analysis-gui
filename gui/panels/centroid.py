@@ -82,7 +82,7 @@ def build(jobs: JobManager) -> None:
         "(process_andor_vmi_PICASSO_v5_h5_batch.py). "
         "Set 'Tuning mode only' to optimize detection on a single frame first.")
 
-    view = JobView(jobs, results_builder=_results)
+    view = JobView(jobs, job_name='Centroiding', results_builder=_results)
 
     doc = centroid_settings()
     widgets = {}
@@ -118,7 +118,7 @@ def build(jobs: JobManager) -> None:
             view.attach(job)
 
         with ui.row().classes("gap-2"):
-            theme.run_button(on_click=run)
+            view.run_button(on_click=run)
             ui.button("Clear outputs", icon="delete",
                       on_click=_clear_outputs).props("flat color=negative")
 

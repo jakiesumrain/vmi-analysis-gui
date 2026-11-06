@@ -23,7 +23,7 @@ def build(jobs: JobManager) -> None:
         "'Pre-computed dark .npy' at the result to skip recomputing it "
         "on every run.")
 
-    view = JobView(jobs, results_builder=_results)
+    view = JobView(jobs, job_name='Dark frame', results_builder=_results)
 
     with theme.panel_card():
         dark_dir = persist(path_input(
@@ -62,7 +62,7 @@ def build(jobs: JobManager) -> None:
             view.attach(job)
 
         with ui.row().classes("gap-2"):
-            theme.run_button(on_click=run)
+            view.run_button(on_click=run)
             ui.button("Clear output", icon="delete",
                       on_click=lambda: _clear_output(out_dir, method)) \
                 .props("flat color=negative")

@@ -143,6 +143,11 @@ tree to be terminated. Silent socket loss still needs heartbeat detection.
 
 Rules for GUI-related changes:
 
+- Every panel uses `JobView.run_button`, a single Run → Stop control with
+  Cancel queued / Stopping states. Set `job_name` to the exact submitted job
+  name so an active job can be recovered after page reload. Do not add a
+  separate panel Stop button or submit a second job from a stale Stop click.
+
 - `centroiding/options.py` owns neutral defaults and CLI serialization;
   `gui/settings.py` owns persistence/migration and shared stage inputs. Pipeline
   uses its selected dataset/map and disables tuning-only in its job snapshot,
