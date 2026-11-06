@@ -31,8 +31,10 @@ import numpy as np
 
 if __package__:
     from .spectrum_calibration import CalibrationSettings, fit_xe_4d, scale_spectrum
+    from .plot_data import save_plot_data, TUNING_DATA, SUMMARY_DATA
 else:
     from spectrum_calibration import CalibrationSettings, fit_xe_4d, scale_spectrum
+    from plot_data import save_plot_data, TUNING_DATA, SUMMARY_DATA
 
 # Set Picasso CPU utilization BEFORE importing Picasso to suppress warning
 os.environ['PICASSO_CPU_UTILIZATION'] = '0.8'
@@ -952,6 +954,16 @@ def plot_final_summary(vmi_2d, vmi_3d, n_events, n_frames, energy=None, pes=None
         raw_disp = center_and_rotate(vmi_2d, verbose=False)
     else:
         raw_disp = np.rot90(vmi_2d)
+    save_plot_data(os.path.join(OUTPUT_DIR, SUMMARY_DATA), {
+        "n_events": int(n_events), "n_frames": int(n_frames),
+        "box_size": BOX_SIZE, "min_net_gradient": MIN_NET_GRADIENT,
+        "dark_subtraction": ENABLE_DARK_SUBTRACTION, "flat_field": ENABLE_FLAT_FIELD,
+        "circular_mask": ENABLE_CIRCULAR_MASK, "alpha": ENERGY_CALIBRATION.alpha,
+        "x_min": SPECTRUM_X_MIN, "x_max": SPECTRUM_X_MAX,
+        "y_min": SPECTRUM_Y_MIN, "y_max": SPECTRUM_Y_MAX,
+    }, raw=raw_disp, abel=vmi_3d if vmi_3d is not None else np.empty((0, 0)),
+        energy=energy if energy is not None else np.array([]),
+        intensity=pes if pes is not None else np.array([]))
     im1 = _mesh_axes(ax1, raw_disp, f"2D VMI Image (Raw, log)\n{n_events} events")
     plt.colorbar(im1, ax=ax1, label='Counts')
 
@@ -1072,6 +1084,19 @@ def run_tuning_check(frame_info, dark_frame, flat_field_normalized):
             it = locs['iterations']
             print(f"[Tuning] Iterations: median={it.median():.0f}  max={it.max():.0f}  "
                   f"lt10={((it <= 10).mean()*100):.0f}%  lt50={((it <= 50).mean()*100):.0f}%")
+
+    # Save the corrected frame and localization diagnostics for an interactive
+    # GUI figure without importing the analysis script into the web process.
+    columns = {}
+    for column in ("x", "y", "photons", "net_gradient", "lpx", "lpy"):
+        columns[column] = (locs[column].to_numpy() if locs is not None and column in locs
+                           else np.array([]))
+    save_plot_data(os.path.join(OUTPUT_DIR, TUNING_DATA), {
+        "frame_index": int(test_global_idx), "n_events": len(locs) if locs is not None else 0,
+        "min_net_gradient": MIN_NET_GRADIENT, "fitting_method": FITTING_METHOD,
+        "bins_photons": TUNING_BINS_PHOTONS, "bins_net_gradient": TUNING_BINS_NET_GRADIENT,
+        "bins_precision": TUNING_BINS_PRECISION,
+    }, frame=corrected, **columns)
 
     # Visualization
     fig, axes = plt.subplots(1, 4, figsize=(20, 5))
