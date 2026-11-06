@@ -283,9 +283,12 @@ class JobView:
     """
 
     def __init__(self, jobs: JobManager, results_builder=None, live_builder=None,
-                 interval: float = 0.7):
+                 interval: float = 0.7, job_name: str | None = None):
         self.jobs = jobs
+        self.job_name = job_name
         self.job: Job | None = None
+        self.action_button = None
+        self._run_label = "Run"
         self._log_cursor = 0
         self._results_shown = False
         self._results_builder = results_builder
@@ -298,17 +301,44 @@ class JobView:
             self.progress = ui.linear_progress(value=0, show_value=False) \
                 .classes("grow").props("color=primary track-color=grey-4")
             self.progress.visible = False
-            self.cancel_btn = theme.cancel_button(on_click=self.cancel)
-            self.cancel_btn.visible = False
         self.log = None
         self.results = None
         self._interval = interval
+
+    def run_button(self, label="Run", *, on_click):
+        """One button: Run when idle, Stop/Cancel queued while work is active."""
+        self._run_label = label
+        def toggle():
+            # Honor the displayed action: a click on a stale Stop button must
+            # never launch a new job if the old one just finished.
+            if self.action_button.text != self._run_label:
+                self.cancel()
+            else:
+                self.refresh()
+                if self.job is None or self.job.status not in ("running", "queued"):
+                    on_click()
+        self.action_button = theme.run_button(label, on_click=toggle)
+        self._sync_button()
+        return self.action_button
+
+    def _sync_button(self):
+        if self.action_button is None:
+            return
+        j = self.job
+        active = j is not None and j.status in ("running", "queued")
+        stopping = active and j.cancel_requested
+        self.action_button.text = ("Stopping…" if stopping else
+                                   "Cancel queued" if active and j.status == "queued" else
+                                   "Stop" if active else self._run_label)
+        self.action_button.props("color=negative" if active else "color=primary")
+        self.action_button.set_enabled(not stopping)
 
     def place_console(self) -> None:
         """Create the log console and results area; call at panel bottom."""
         self.log = theme.log_console()
         self.results = ui.column().classes("w-full gap-4")
         ui.timer(self._interval, self.refresh)
+        self.refresh()
 
     def attach(self, job: Job) -> None:
         self.job = job
@@ -319,18 +349,26 @@ class JobView:
         self.refresh()
 
     def cancel(self) -> None:
-        if self.job is not None:
+        if self.job is not None and not self.job.cancel_requested:
             self.jobs.cancel(self.job.id)
+            self.refresh()
 
     def refresh(self) -> None:
+        # Reconnect the new page's controls to a job still owned by the server.
+        if self.job_name and (self.job is None or self.job.status in ("done", "failed", "cancelled")):
+            active = [j for j in self.jobs.jobs() if j.name == self.job_name
+                      and j.status in ("running", "queued")]
+            if active:
+                self.attach(next((j for j in active if j.status == "running"), active[-1]))
+                return
         j = self.job
+        self._sync_button()
         if j is None:
             theme.set_badge(self.badge, "idle")
             return
         theme.set_badge(self.badge, j.status)
         running = j.status == "running"
         self.spinner.visible = running
-        self.cancel_btn.visible = running or j.status == "queued"
         self.progress.visible = running
         if running and j.progress is not None:
             self.progress.value = j.progress

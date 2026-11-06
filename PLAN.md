@@ -63,9 +63,14 @@ gui/
     └── pipeline.py     # ordered stage runner with per-stage status/resume
 ```
 
-Common pattern per panel: section title → status badge/progress/cancel →
-parameter form (neutral defaults; folder buttons open `LocalFilePicker`) →
+Common pattern per panel: section title → status badge/progress →
+parameter form and Run/Stop control (folder buttons open `LocalFilePicker`) →
 dark log console at the bottom → results area.
+
+The form's single Run button becomes Stop for its active job, Cancel queued
+while waiting, and disabled Stopping during cleanup. `JobView` restores its
+panel's active job after reload by job name. A separate cancel button is not
+used. When a job ends, the same control returns to its original Run label.
 
 ## Job plumbing (`gui/jobs.py`)
 

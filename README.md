@@ -62,6 +62,13 @@ console at the bottom of each panel, and results (images, movies, spectra)
 render underneath it. Every path field has a folder button that browses
 your local disks — no typing of paths needed.
 
+Each panel uses a single action button: **Run** changes to **Stop** while
+processing. Click Stop to terminate that job and its subprocess tree. A queued
+job shows **Cancel queued**, and cancellation in progress shows disabled
+**Stopping…**. The button returns to Run when the job finishes or stops.
+Reloading the page restores controls for that panel's active job. Other queued
+jobs still run in order; stopping one job does not shut down the server.
+
 ## What you need to bring
 
 The repository contains **no data**. You need:

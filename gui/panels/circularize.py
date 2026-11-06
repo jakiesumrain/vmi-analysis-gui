@@ -21,7 +21,7 @@ def build(jobs: JobManager) -> None:
         "Correct radial distortion of one VMI image using the Gascooke "
         "trig-fit calibration (circularization.py).")
 
-    view = JobView(jobs, results_builder=_results)
+    view = JobView(jobs, job_name='Circularize', results_builder=_results)
 
     with theme.panel_card():
         inp = persist(path_input("Input image (.txt)",
@@ -102,7 +102,7 @@ def build(jobs: JobManager) -> None:
                                          "plot_dir": plot_dir.value}))
             view.attach(job)
 
-        theme.run_button(on_click=run)
+        view.run_button(on_click=run)
 
     view.place_console()
 

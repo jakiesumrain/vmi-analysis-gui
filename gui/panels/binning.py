@@ -21,7 +21,7 @@ def build(jobs: JobManager) -> None:
         "Partition checkpoint events into GMD bins, one 2D histogram per bin "
         "(vmi_histogram_gmd_bins.py). Run after centroiding.")
 
-    view = JobView(jobs, results_builder=_results)
+    view = JobView(jobs, job_name='GMD binning', results_builder=_results)
     settings = binning_inputs()
 
     with theme.panel_card():
@@ -78,7 +78,7 @@ def build(jobs: JobManager) -> None:
                                                            else CENTROID_DIR / output.value)}))
             view.attach(job)
 
-        theme.run_button(on_click=run)
+        view.run_button(on_click=run)
 
     view.place_console()
 

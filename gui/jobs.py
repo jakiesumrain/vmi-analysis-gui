@@ -54,6 +54,10 @@ class Job:
     _cancel_requested: bool = field(default=False, repr=False)
     _termination_thread: threading.Thread | None = field(default=None, repr=False)
 
+    @property
+    def cancel_requested(self) -> bool:
+        return self._cancel_requested
+
 
 class JobManager:
     """Serial queue of subprocess jobs with log streaming and cancellation."""

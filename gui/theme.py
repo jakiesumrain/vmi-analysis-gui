@@ -56,10 +56,6 @@ def run_button(label: str = "Run", **kwargs) -> ui.button:
     return ui.button(label, **kwargs).props("color=primary unelevated")
 
 
-def cancel_button(**kwargs) -> ui.button:
-    return ui.button("Cancel", **kwargs).props("flat color=negative")
-
-
 def status_badge(text: str = "idle") -> ui.badge:
     return ui.badge(text).classes("vmi-badge-idle")
 
