@@ -132,6 +132,7 @@ def build(jobs: JobManager) -> None:
                 .props("flat color=negative")
 
     view.place_console()
+    live_area.move()
 
 
 def _clear_output(output_path) -> None:
