@@ -1,0 +1,57 @@
+# Optional legacy CLI defaults. Set data paths before use; GUI settings are saved separately.
+# Omitted optional values use built-in defaults.
+[vmi_picasso]
+h5_dir = ""
+h5_pattern = "RAW-*.h5"
+h5_dataset = "raw/data"
+h5_meta = "raw/meta"
+meta_column_gmd = 1
+gmd_map_path = ""
+dark_data_dir = ""
+dark_h5_pattern = "RAW-*.h5"
+dark_file = ""
+output_dir = "vmi_output"
+checkpoint_file = "vmi_results_raw.h5"
+box_size = 5
+min_net_gradient = 400.0
+camera_baseline = 0.0
+camera_sensitivity = 1.0
+camera_gain = 1.0
+camera_qe = 0.9
+mle_convergence = 0.1
+mle_max_iterations = 50
+mle_method = "sigma"
+fitting_method = "mle"
+tuning_frame_index = 0
+tuning_bins_photons = 40
+tuning_bins_net_gradient = 40
+tuning_bins_precision = 40
+
+[vmi_picasso.processing]
+enable_parallel = true
+num_cores = 6
+enable_dark_subtraction = false
+dark_method = "mean"
+dark_frame_count = 2000
+enable_flat_field = false
+flat_field_file = ""
+enable_circular_mask = false
+tuning_only = false
+
+[vmi_picasso.histogram]
+resolution_factor = 1
+enable_abel = true
+
+[vmi_picasso.energy_calibration]
+fit_xe_4d = false
+
+[vmi_picasso.spectrum_plot]
+x_min = -1.0
+x_max = -1.0
+y_min = -1.0
+y_max = -1.0
+
+[vmi_picasso.gmd]
+enable_gmd_weighting = false
+gmd_weight_min = 0.0
+gmd_weight_max = 4.0

@@ -95,10 +95,10 @@ Side tools (QC / helpers, not pipeline stages):
 - **`vmi_histogram_gmd_bins.py` prefers the TkAgg backend** for its live plot
   window; override via `MPLBACKEND` (e.g. Agg) when running headless.
 - **GMD weighting is a per-frame scalar** — it corrects yield, never shape.
-- **MATLAB + CPBASEX**: the CPBASEX code is bundled at `pbasex-matlab/`
+- **MATLAB + CPBASEX**: the CPBASEX code is bundled at `vendor/pbasex-matlab/`
   (MIT, Elio Gilbert Champenois). Only needed for the `matlab` inversion
   backend; `CPBASEX_DIR` overrides the bundled location. The backend
-  requires the basis file `pbasex-matlab/examples/G_r512_k512_l10.h5`,
+  requires the basis file `vendor/pbasex-matlab/examples/G_r512_k512_l10.h5`,
   generated once in MATLAB with `examples/save_gData.m` (time-consuming) —
   `run_matlab_cpbasex()` fails with an explicit error while it is missing.
 
@@ -130,9 +130,9 @@ no-direct-push rule is enforced by convention.
 
 ## GUI
 
-`gui/` — NiceGUI app, one tab per script plus a pipeline tab, themed by
-`DESIGN.md`. See `PLAN.md` for the architecture. Launch:
-`uv run python -m gui.app` → http://localhost:8090
+`src/vmi_analysis/gui/` — NiceGUI app, one tab per script plus a pipeline tab, themed by
+`docs/DESIGN.md`. See `docs/architecture.md` for the architecture. Launch:
+`uv run vmi-analysis` (legacy: `uv run python -m gui.app`) → http://localhost:8090
 (8080 was avoided: it falls in a Windows reserved port range on some
 machines, causing WinError 10013 on bind; `VMI_GUI_PORT` overrides,
 `VMI_GUI_NO_SHOW=1` suppresses the browser auto-open). The server shuts
@@ -143,21 +143,21 @@ tree to be terminated. Silent socket loss still needs heartbeat detection.
 
 Rules for GUI-related changes:
 
-- All `zoomable_image` outputs share `gui/image_zoom.js`: Pan, wheel zoom,
+- All `zoomable_image` outputs share `src/vmi_analysis/gui/assets/image_zoom.js`: Pan, wheel zoom,
   Crop area (drag a rectangle to create a cropped browser preview), Reset,
   and Escape handling. Exclude outside pixels even when zooming out; repeated
   crops operate on the current preview, and Reset restores the original image.
   Never modify the saved output image or analysis data.
-  Browser regression checks use `tests/zoom_fixture.py` and
-  `tests/zoom_overlay.browser.js`; generated artifacts stay in `gui/generated/`.
+  Browser regression checks use `tests/browser/zoom_fixture.py` and
+  `tests/browser/zoom_overlay.browser.js`; generated artifacts stay in `.cache/vmi-analysis/`.
 
 - Every panel uses `JobView.run_button`, a single Run → Stop control with
   Cancel queued / Stopping states. Set `job_name` to the exact submitted job
   name so an active job can be recovered after page reload. Do not add a
   separate panel Stop button or submit a second job from a stale Stop click.
 
-- `centroiding/options.py` owns neutral defaults and CLI serialization;
-  `gui/settings.py` owns persistence/migration and shared stage inputs. Pipeline
+- `src/vmi_analysis/centroiding/options.py` owns neutral defaults and CLI serialization;
+  `src/vmi_analysis/gui/settings.py` owns persistence/migration and shared stage inputs. Pipeline
   uses its selected dataset/map and disables tuning-only in its job snapshot,
   without changing the saved Centroiding form. No GUI job passes `--config`.
 
@@ -166,3 +166,22 @@ Rules for GUI-related changes:
 - The GUI runs scripts as subprocesses (isolation + cancellation), never
   imports them into the web process.
 - One job at a time (the sequential MATLAB constraint and disk bandwidth).
+
+## Source layout
+
+- All application implementations live under `src/vmi_analysis/`. Keep legacy
+  command launchers thin; never add analysis logic to the root shims.
+- Run `uv sync` before commands/tests; the package is installed editably.
+  `uv run vmi-analysis` and `python -m vmi_analysis.gui.app` are the primary GUI
+  entry points. Panels run analysis modules with `sys.executable -m`.
+- Use `vmi_analysis.paths` for workspace locations; never infer writable paths
+  from a source module's parent directory. Preserve legacy centroiding and
+  circularization data roots, saved `.nicegui` keys, and CLI relative paths.
+- CSS/JS are resources under `gui/assets` in the package. Disposable artifacts
+  go in `.cache/vmi-analysis/`; user analysis outputs remain where selected.
+- `centroiding/config.toml` is a local ignored legacy input; the neutral template
+  is `examples/config.example.toml`. Do not overwrite existing local config.
+- CPBASEX is vendored under `vendor/pbasex-matlab`; `CPBASEX_DIR` and an existing
+  old `pbasex-matlab` checkout remain supported. Never move user basis files.
+- Python tests: `uv run python -m unittest discover -s tests -v`. Test groups:
+  `tests/unit/`, `tests/integration/`, and `tests/browser/`. No CI unless requested.

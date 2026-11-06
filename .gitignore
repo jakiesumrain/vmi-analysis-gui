@@ -20,3 +20,10 @@ gui/generated/
 
 # NiceGUI persisted form state
 .nicegui/
+/centroiding/config.toml
+
+# Local build products and disposable previews
+.cache/
+build/
+dist/
+*.egg-info/
