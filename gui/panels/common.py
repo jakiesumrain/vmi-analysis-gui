@@ -95,7 +95,7 @@ _OVERLAY_HTML = """
       padding:0 10px; height:30px; cursor:pointer;">Pan</button>
     <button id="vmi-zoom-select" onclick="vmiZoomSelect()" aria-pressed="false"
       style="background:#efe9de; color:#141413; border:none; border-radius:6px;
-      padding:0 10px; height:30px; cursor:pointer;">Select area</button>
+      padding:0 10px; height:30px; cursor:pointer;">Crop area</button>
     <button onclick="vmiZoomAt(null,1.25)" style="background:#cc785c;
       color:#faf9f5; border:none; border-radius:6px; width:34px; height:30px;
       font-size:18px; cursor:pointer;">+</button>
@@ -111,7 +111,7 @@ _OVERLAY_HTML = """
   </div>
   <div id="vmi-zoom-hint" style="position:absolute; bottom:14px; left:16px;
        color:#efe9de; font:12px sans-serif; pointer-events:none;">
-    Drag to pan · Mouse wheel to zoom · Select area to inspect a region
+    Drag to pan · Mouse wheel to zoom · Crop area to inspect only a region
   </div>
 </div>
 """ + "<script>" + (GUI_DIR / "image_zoom.js").read_text(encoding="utf-8") + "</script>"
@@ -127,7 +127,7 @@ def init_zoom_overlay() -> None:
 
 
 def zoomable_image(src: str = "", **kwargs) -> ui.image:
-    """Image opening a shared overlay with pan, wheel zoom, and area selection."""
+    """Image opening a shared overlay with pan, wheel zoom, and view cropping."""
     init_zoom_overlay()
     img = ui.image(src, **kwargs)
     img.style("cursor: zoom-in")
