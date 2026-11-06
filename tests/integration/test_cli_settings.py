@@ -124,9 +124,9 @@ class SavedSettingsTests(unittest.TestCase):
 
 class StandaloneInputsTests(unittest.TestCase):
     def binning_namespace(self, args):
-        script = ROOT / "centroiding/vmi_histogram_gmd_bins.py"
-        with patch.object(sys, "argv", [str(script), *args]), patch.dict(os.environ, MPLBACKEND="Agg"):
-            return runpy.run_path(str(script), run_name="binning_test")
+        module = "vmi_analysis.centroiding.vmi_histogram_gmd_bins"
+        with patch.object(sys, "argv", [module, *args]), patch.dict(os.environ, MPLBACKEND="Agg"):
+            return runpy.run_module(module, run_name="binning_test")
 
     def test_binning_explicit_inputs_and_legacy_override(self):
         args = ["--checkpoint-path", "chosen.h5", "--gmd-map-path", "chosen.txt",
@@ -151,7 +151,7 @@ class StandaloneInputsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             for script in scripts:
                 with self.subTest(script=script):
-                    result = subprocess.run([sys.executable, str(ROOT / "centroiding" / script), "--help"],
+                    result = subprocess.run([sys.executable, "-m", "vmi_analysis.centroiding." + script.removesuffix(".py"), "--help"],
                                             cwd=folder, capture_output=True, text=True, timeout=30,
                                             env=dict(os.environ, MPLBACKEND="Agg", PYTHONIOENCODING="utf-8"))
                     self.assertEqual(result.returncode, 0, result.stderr)

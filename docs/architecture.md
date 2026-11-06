@@ -102,8 +102,8 @@ used. When a job ends, the same control returns to its original Run label.
 The project is an editable-installed `src/vmi_analysis` package. `uv sync`
 installs it; `uv run vmi-analysis` starts the GUI. Panels launch analysis tools
 as `[sys.executable, "-m", "vmi_analysis.<module>", ...]`, preserving explicit
-CLI snapshots and the former working directories. Old script paths and
-`python -m gui.app` are compatibility launchers, not duplicate implementations.
+CLI snapshots and the former working directories. Analysis tools run through
+their package modules; old script paths and `python -m gui.app` were removed.
 
 `vmi_analysis.paths` distinguishes the workspace from package source. A checkout
 retains its original centroiding/circularization data roots; installed copies

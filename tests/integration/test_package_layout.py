@@ -11,16 +11,12 @@ import h5py
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-COMMANDS = {
-    "build_gmd_map.py": "gmd.build_gmd_map",
-    "h5_accumulate_fast_gmd.py": "imaging.h5_accumulate_fast_gmd",
-    "h5_play_frames_movie.py": "imaging.h5_play_frames_movie",
-    "centroiding/compute_dark.py": "centroiding.compute_dark",
-    "centroiding/vmi_histogram_gmd_bins.py": "centroiding.vmi_histogram_gmd_bins",
-    "centroiding/process_andor_vmi_PICASSO_v5_h5_batch.py": "centroiding.process_andor_vmi_PICASSO_v5_h5_batch",
-    "circularization/circularization.py": "circularization.circularization",
-    "circularization/process_gmd_bins.py": "circularization.process_gmd_bins",
-}
+COMMANDS = (
+    "gmd.build_gmd_map", "imaging.h5_accumulate_fast_gmd", "imaging.h5_play_frames_movie",
+    "centroiding.compute_dark", "centroiding.vmi_histogram_gmd_bins",
+    "centroiding.process_andor_vmi_PICASSO_v5_h5_batch",
+    "circularization.circularization", "circularization.process_gmd_bins",
+)
 
 
 class PackageLayoutTests(unittest.TestCase):
@@ -33,31 +29,26 @@ class PackageLayoutTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
 
-    def test_all_analysis_modules_and_legacy_launchers_from_unrelated_cwd(self):
+    def test_all_analysis_modules_from_unrelated_cwd(self):
         with tempfile.TemporaryDirectory() as folder:
-            for launcher, module in COMMANDS.items():
-                for command in ([str(ROOT / launcher)], ["-m", "vmi_analysis." + module]):
-                    with self.subTest(command=command):
-                        result = self.run_command([*command, "--help"], folder)
-                        self.assertIn("usage:", result.stdout.lower())
+            for module in COMMANDS:
+                with self.subTest(module=module):
+                    result = self.run_command(["-m", "vmi_analysis." + module, "--help"], folder)
+                    self.assertIn("usage:", result.stdout.lower())
             self.assertFalse((Path(folder) / "src").exists())
 
-    def test_accumulation_module_and_legacy_command_match_with_worker_processes(self):
+    def test_accumulation_module_with_worker_processes(self):
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
             data = np.arange(3 * 16 * 16, dtype=np.uint16).reshape(3, 16, 16) % 30 + 1
             with h5py.File(folder / "RAW-test.h5", "w") as handle:
                 handle.create_dataset("raw/data", data=data)
-            outputs = []
-            for index, command in enumerate(([str(ROOT / "h5_accumulate_fast_gmd.py")],
-                                             ["-m", "vmi_analysis.imaging.h5_accumulate_fast_gmd"])):
-                output = folder / f"sum{index}.txt"
-                self.run_command([*command, "--h5-dir", str(folder), "--output-path", str(output),
-                                  "--simple-sum", "--max-workers", "2", "--no-show"], folder)
-                outputs.append(np.loadtxt(output))
-                self.assertTrue(output.with_suffix(".png").is_file())
-            for output in outputs:
-                np.testing.assert_array_equal(output, data.sum(axis=0))
+            output = folder / "sum.txt"
+            self.run_command(["-m", "vmi_analysis.imaging.h5_accumulate_fast_gmd",
+                              "--h5-dir", str(folder), "--output-path", str(output),
+                              "--simple-sum", "--max-workers", "2", "--no-show"], folder)
+            self.assertTrue(output.with_suffix(".png").is_file())
+            np.testing.assert_array_equal(np.loadtxt(output), data.sum(axis=0))
 
     def test_dark_frame_default_writes_to_workspace_instead_of_source(self):
         with tempfile.TemporaryDirectory() as folder:
