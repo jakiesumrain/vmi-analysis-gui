@@ -177,7 +177,34 @@ class CentroidScriptCalibrationTests(unittest.TestCase):
                     self.assertEqual(axes[0].get_ylabel(), "Intensity (arb. units)")
                     np.testing.assert_array_equal(axes[0].lines[0].get_ydata(), y)
                     self.assertTrue((Path(folder) / "04_final_summary.png").exists())
+                    from centroiding.plot_data import load_plot_data, SUMMARY_DATA
+                    metadata, arrays = load_plot_data(Path(folder) / SUMMARY_DATA)
+                    self.assertEqual(metadata["alpha"], alpha)
+                    np.testing.assert_array_equal(arrays["energy"], energy)
+                    np.testing.assert_array_equal(arrays["intensity"], density)
                 plt.close("all")
+
+    def test_tuning_script_exports_corrected_frame_and_localizations(self):
+        import h5py
+        import pandas as pd
+        from centroiding.plot_data import load_plot_data, TUNING_DATA
+        locs = pd.DataFrame({"x": [2., 3.], "y": [4., 5.], "photons": [100., 200.],
+                             "net_gradient": [500., 600.], "lpx": [.1, .2], "lpy": [.2, .3]})
+        with tempfile.TemporaryDirectory() as folder:
+            raw = np.arange(64, dtype=np.uint16).reshape(8, 8)
+            path = Path(folder) / "frame.h5"
+            with h5py.File(path, "w") as handle:
+                handle.create_dataset("raw/data", data=raw[None])
+            with patch.dict(self.env, OUTPUT_DIR=folder, TUNING_FRAME_INDEX=0,
+                            _run_picasso_batch=lambda *args: locs,
+                            sigma_clipped_stats=lambda *args, **kw: (2., 2., 0.)), \
+                    patch.object(self.env["plt"], "show"), redirect_stdout(io.StringIO()):
+                self.env["run_tuning_check"]([(str(path), 0)], None, None)
+            metadata, arrays = load_plot_data(Path(folder) / TUNING_DATA)
+            self.assertEqual(metadata["n_events"], 2)
+            np.testing.assert_array_equal(arrays["frame"], raw.astype(float) - 2)
+            np.testing.assert_array_equal(arrays["x"], locs.x)
+            np.testing.assert_array_equal(arrays["photons"], locs.photons)
 
 
 if __name__ == "__main__":

@@ -129,6 +129,31 @@ fields; PES initially suggests the saved Centroiding output directory. Pipeline
 uses saved Centroiding parameters with its own dataset and generated GMD map,
 forces a full batch run, and uses the Binning tab's saved thresholds/column/floor.
 
+Centroiding's **Tuning check** and **Final summary** can be inspected as Plotly
+figures: hover for numerical values, drag within a subplot to zoom, choose Pan
+from the plot toolbar to move the view, and double-click or use Reset axes to
+restore it. Image axes keep equal pixel scales. The log VMI color scale masks
+nonpositive pixels and shows original counts on hover; the spectrum retains
+its saved energy calibration and unchanged intensity.
+Separate **Colormap** dropdowns control the tuning image, raw VMI, and Abel
+image. Each remembers its selection and preserves the current zoom.
+
+Runs save `01_tuning_check_picasso.npz` and `04_final_summary.npz` alongside the
+usual PNG files. These contain numeric plotting data and JSON metadata, so
+the GUI does not import or rerun analysis scripts to render a figure. Use
+**View saved results** to reopen plots from the selected output directory.
+Older runs without these sidecars still show their PNGs; rerun the relevant
+stage once to produce interactive data. The **Saved PNG** expansion retains
+the original downloadable/croppable figure, and standalone PNG export is unchanged.
+
+Accumulate uses the same interactive controls for its live preview and final
+image, with equal pixel scales and original counts on hover. The final view
+reads the saved `.txt` array directly; **View saved result** opens existing
+outputs without rerunning. Its Viridis log color range matches the standalone
+script, and the original PNG remains available under **Saved PNG**.
+The **Colormap** dropdown above the image changes colors immediately without
+rerunning or resetting the zoom, and remembers the selection for future views.
+
 ## Command-line use
 
 In the Centroiding tab, **Energy calibration / Xe 4d fit** provides an optional

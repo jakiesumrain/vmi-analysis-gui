@@ -4,10 +4,13 @@ import sys
 from pathlib import Path
 
 from nicegui import app, ui
+from plotly.colors import get_colorscale
 from centroiding.options import centroid_cli_args, section as _section, validate_settings
+from centroiding.plot_data import TUNING_DATA, SUMMARY_DATA
 
 from ..jobs import Job, JobManager
 from .. import theme
+from ..centroid_plots import COLORMAPS, PLOT_HEIGHT, tuning_figure, summary_figure, plot_options
 from ..settings import centroid_settings, storage_key, output_dir as _output_dir
 from .common import (JobView, REPO_ROOT, file_url, open_folder_button,
                      path_input, persist, zoomable_image)
@@ -119,6 +122,14 @@ def build(jobs: JobManager) -> None:
 
         with ui.row().classes("gap-2"):
             view.run_button(on_click=run)
+            def show_saved():
+                if view.job is not None and view.job.status in ("running", "queued"):
+                    ui.notify("Wait for the current job to finish before loading saved results.", type="info")
+                    return
+                view.results.clear()
+                with view.results:
+                    _result_files(_output_dir(centroid_settings()))
+            ui.button("View saved results", icon="insights", on_click=show_saved).props("flat color=secondary")
             ui.button("Clear outputs", icon="delete",
                       on_click=_clear_outputs).props("flat color=negative")
 
@@ -184,7 +195,7 @@ def _clear_outputs() -> None:
     checkpoint = out_dir / str(doc["vmi_picasso"].get("checkpoint_file", ""))
     targets = [out_dir / name for name in (
         "01_tuning_check_picasso.png", "04_final_summary.png",
-        "vmi_2d_raw.npy", "vmi_3d_abel.npy", "energy_spectrum.csv")]
+        TUNING_DATA, SUMMARY_DATA, "vmi_2d_raw.npy", "vmi_3d_abel.npy", "energy_spectrum.csv")]
     existing = [p for p in targets if p.exists()]
     has_checkpoint = checkpoint.exists()
     if not existing and not has_checkpoint:
@@ -236,12 +247,63 @@ def _results(job: Job):
     if job.status != "done":
         return
     out_dir = Path(job.extra["output_dir"])
+    _result_files(out_dir)
+
+
+def _interactive_plot(figure, *, tuning=False):
+    controls = []
+    with ui.row().classes("gap-4 flex-wrap"):
+        for index, trace in enumerate(figure.data):
+            if trace.type != "heatmap":
+                continue
+            name = "Tuning" if tuning else "Raw VMI" if index == 0 else "Abel VMI"
+            key = "tuning" if tuning else "raw" if index == 0 else "abel"
+            colors = persist(ui.select(list(COLORMAPS), value="Gray" if tuning else "Turbo",
+                                       label=f"{name} colormap").classes("w-52").props("outlined dense"),
+                             f"centroid.{key}_colormap")
+            trace.colorscale = get_colorscale(colors.value)
+            controls.append((index, colors))
+    plot = ui.plotly(plot_options(figure)).classes("w-full").style(f"height: {PLOT_HEIGHT}px")
+
+    def recolor(index, event):
+        scale = get_colorscale(event.value)
+        plot.figure["data"][index]["colorscale"] = scale
+        plot.run_plot_method("restyle", {"colorscale": [scale]}, [index])
+
+    for index, colors in controls:
+        colors.on_value_change(lambda event, index=index: recolor(index, event))
+    return plot
+
+
+def _result_files(out_dir: Path):
     open_folder_button(out_dir, "open output folder")
-    tuning = out_dir / "01_tuning_check_picasso.png"
-    summary = out_dir / "04_final_summary.png"
-    if tuning.exists():
-        ui.label("Tuning check:").classes("vmi-caption")
-        zoomable_image(file_url(tuning)).classes("w-full max-w-4xl")
-    if summary.exists():
-        ui.label("Final summary:").classes("vmi-caption")
-        zoomable_image(file_url(summary)).classes("w-full max-w-4xl")
+    found = False
+    for title, data_file, png_name, builder in (
+        ("Tuning check", TUNING_DATA, "01_tuning_check_picasso.png", tuning_figure),
+        ("Final summary", SUMMARY_DATA, "04_final_summary.png", summary_figure),
+    ):
+        data, png = out_dir / data_file, out_dir / png_name
+        if not data.exists() and not png.exists():
+            continue
+        found = True
+        ui.label(title).classes("vmi-caption")
+        interactive = False
+        if data.exists():
+            try:
+                figure = builder(data)
+                ui.label("Drag inside a plot to zoom; wheel to zoom, Shift-drag to pan, double-click to reset. Hover for values.") \
+                    .classes("vmi-subtitle")
+                _interactive_plot(figure, tuning=data_file == TUNING_DATA)
+                interactive = True
+            except (ValueError, OSError, KeyError) as exc:
+                ui.label(f"Interactive data could not be loaded: {exc}").classes("text-negative")
+        elif png.exists():
+            ui.label("Saved PNG only. Re-run this stage once to generate interactive data.").classes("vmi-subtitle")
+        if png.exists():
+            if interactive:
+                with ui.expansion("Saved PNG", icon="image").classes("w-full"):
+                    zoomable_image(file_url(png)).classes("w-full max-w-4xl")
+            else:
+                zoomable_image(file_url(png)).classes("w-full max-w-4xl")
+    if not found:
+        ui.label("No saved Centroiding plots found in this output directory.").classes("vmi-subtitle")

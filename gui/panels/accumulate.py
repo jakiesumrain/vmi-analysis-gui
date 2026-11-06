@@ -5,12 +5,16 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
 from nicegui import ui
+from plotly.colors import get_colorscale
 
+from ..accumulate_plot import ACCUMULATE_HEIGHT, COLORMAPS, accumulation_figure
+from ..centroid_plots import plot_options
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     open_folder_button, path_input, persist, render_npy,
+                     open_folder_button, path_input, persist,
                      zoomable_image)
 
 
@@ -21,8 +25,9 @@ def build(jobs: JobManager) -> None:
         "optional GMD weighting (h5_accumulate_fast_gmd.py). "
         "Quick-look tool — the Picasso path is the precise one.")
 
-    live_img = zoomable_image().classes("w-full max-w-2xl")
-    live_img.visible = False
+    with ui.column().classes("w-full") as live_area:
+        live_img, live_colors = _interactive_plot()
+    live_area.visible = False
     live_state = {"stamp": 0.0}
 
     def _live(job: Job):
@@ -32,16 +37,20 @@ def build(jobs: JobManager) -> None:
         stamp = os.path.getmtime(npy)
         if stamp <= live_state["stamp"]:
             return
-        live_state["stamp"] = stamp
-        png = GENERATED / f"accum_live_{job.id}.png"
         try:
-            render_npy(npy, png)
-            live_img.set_source(file_url(png))
-            live_img.visible = True
-        except Exception:
+            figure = accumulation_figure(np.load(npy, allow_pickle=False), title="Accumulation in progress",
+                                         revision=job.id, colormap=live_colors.value)
+            live_img.update_figure(plot_options(figure))
+            live_area.visible = True
+            live_state["stamp"] = stamp
+        except (OSError, ValueError):
             pass  # file may be mid-write; next refresh picks it up
 
-    view = JobView(jobs, job_name='Accumulate', results_builder=_results, live_builder=_live)
+    def finished(job):
+        live_area.visible = False
+        _results(job)
+
+    view = JobView(jobs, job_name='Accumulate', results_builder=finished, live_builder=_live)
 
     with theme.panel_card():
         h5_dir = persist(path_input(
@@ -83,6 +92,7 @@ def build(jobs: JobManager) -> None:
             if live_path.exists():
                 live_path.unlink()
             live_state["stamp"] = 0.0
+            live_area.visible = False
             cmd = [sys.executable, str(REPO_ROOT / "h5_accumulate_fast_gmd.py"),
                    "--h5-dir", h5_dir.value,
                    "--output-path", output_path.value,
@@ -109,6 +119,14 @@ def build(jobs: JobManager) -> None:
 
         with ui.row().classes("gap-2 items-center"):
             view.run_button(on_click=run)
+            def show_saved():
+                if view.job and view.job.status in ("running", "queued"):
+                    ui.notify("Wait for the running job to finish.", type="warning")
+                    return
+                view.results.clear()
+                with view.results:
+                    _result_file((output_path.value or "").strip())
+            ui.button("View saved result", icon="analytics", on_click=show_saved).props("flat")
             ui.button("Clear output", icon="delete",
                       on_click=lambda: _clear_output(output_path)) \
                 .props("flat color=negative")
@@ -162,9 +180,48 @@ def _clear_output(output_path) -> None:
 
 
 def _results(job: Job):
-    out = job.extra.get("output_path", "")
+    if job.status == "done":
+        _result_file(job.extra.get("output_path", ""))
+
+
+def _interactive_plot(figure=None):
+    colors = persist(ui.select(list(COLORMAPS), value="Viridis", label="Colormap")
+                     .classes("w-48").props("outlined dense"), "accumulate.colormap")
+    if figure is not None:
+        figure.update_traces(colorscale=colors.value)
+    plot = ui.plotly(plot_options(figure) if figure is not None else {"data": [], "layout": {}}) \
+        .classes("w-full").style(f"height: {ACCUMULATE_HEIGHT}px")
+
+    def recolor(event):
+        if plot.figure["data"]:
+            scale = get_colorscale(event.value)
+            plot.figure["data"][0]["colorscale"] = scale
+            # Only send the color change; keep the current zoom and full image data.
+            # Python knows more named scales than plotly.js. Pass explicit stops,
+            # wrapped once because restyle distributes array values over traces.
+            plot.run_plot_method("restyle", {"colorscale": [scale]}, [0])
+
+    colors.on_value_change(recolor)
+    return plot, colors
+
+
+def _result_file(out: str):
+    if not out:
+        ui.label("Set an output path to view a saved result.").classes("vmi-subtitle")
+        return
     png = os.path.splitext(out)[0] + ".png"
-    if job.status == "done" and Path(png).exists():
+    if Path(out).is_file():
         ui.label(f"Result: {out}").classes("vmi-subtitle")
         open_folder_button(out)
-        zoomable_image(file_url(png)).classes("w-full max-w-2xl")
+        try:
+            figure = accumulation_figure(np.loadtxt(out))
+            ui.label("Drag to zoom; wheel to zoom; use Pan to move; double-click to reset. Hover for original counts.") \
+                .classes("vmi-subtitle")
+            _interactive_plot(figure)
+        except (OSError, ValueError) as exc:
+            ui.label(f"Interactive data could not be loaded: {exc}").classes("text-negative")
+    elif not Path(png).is_file():
+        ui.label("No saved Accumulate result found at this path.").classes("vmi-subtitle")
+    if Path(png).is_file():
+        with ui.expansion("Saved PNG", icon="image").classes("w-full"):
+            zoomable_image(file_url(png)).classes("w-full max-w-4xl")
