@@ -34,17 +34,6 @@ if __package__:
 else:
     from spectrum_calibration import CalibrationSettings, fit_xe_4d, scale_spectrum
 
-# Load configuration from TOML file
-try:
-    import tomllib  # Python 3.11+
-except ImportError:
-    try:
-        import tomli as tomllib  # Python 3.6-3.10
-    except ImportError:
-        print("[ERROR] TOML parser not available!")
-        print("Install with: pip install tomli")
-        sys.exit(1)
-
 # Set Picasso CPU utilization BEFORE importing Picasso to suppress warning
 os.environ['PICASSO_CPU_UTILIZATION'] = '0.8'
 
@@ -79,40 +68,16 @@ except ImportError:
     sys.exit(1)
 
 # ==============================================================================
-# LOAD CONFIGURATION FROM TOML
+# RESOLVE EXPLICIT CLI INPUTS (optional legacy TOML defaults)
 # ==============================================================================
 
-def _parse_cli():
-    """CLI entry: only --config for now; all real knobs live in the TOML."""
-    import argparse
-    parser = argparse.ArgumentParser(
-        description="VMI Photoelectron Analysis - PICASSO V5 (Batch HDF5, LQ/MLE)")
-    parser.add_argument(
-        "--config", default="config.toml",
-        help="Path to the TOML configuration file (default: config.toml "
-             "in the current working directory).")
-    return parser.parse_args()
+if __package__:
+    from .options import parse_centroid_args
+else:
+    from options import parse_centroid_args
 
-
-def load_config(config_path="config.toml"):
-    """Load configuration from TOML file"""
-    if not os.path.exists(config_path):
-        print(f"[ERROR] Configuration file not found: {config_path}")
-        print(f"[ERROR] Please create config.toml with [vmi_picasso] section")
-        sys.exit(1)
-
-    with open(config_path, "rb") as f:
-        config = tomllib.load(f)
-
-    if "vmi_picasso" not in config:
-        print(f"[ERROR] Missing [vmi_picasso] section in {config_path}")
-        sys.exit(1)
-
-    return config
-
-# Load configuration
-CLI_ARGS = _parse_cli()
-CONFIG = load_config(CLI_ARGS.config)
+CLI_ARGS = parse_centroid_args()
+CONFIG = CLI_ARGS.settings
 vmi_cfg = CONFIG["vmi_picasso"]
 proc_cfg = CONFIG["vmi_picasso"]["processing"]
 hist_cfg = CONFIG["vmi_picasso"]["histogram"]
@@ -131,7 +96,7 @@ META_COLUMN_GMD = vmi_cfg.get("meta_column_gmd", 1)  # DEPRECATED — see GMD_MA
 
 # Pre-computed frame-to-GMD map file
 GMD_MAP_PATH = vmi_cfg.get("gmd_map_path", "")
-GMD_MAP_PATH = os.path.abspath(GMD_MAP_PATH)
+GMD_MAP_PATH = os.path.abspath(GMD_MAP_PATH) if GMD_MAP_PATH else ""
 
 OUTPUT_DIR = vmi_cfg["output_dir"]
 OUTPUT_H5 = os.path.join(OUTPUT_DIR, "vmi_results.h5")
@@ -1171,7 +1136,7 @@ def main():
     print("=" * 80)
     print("VMI PHOTOELECTRON ANALYSIS - PICASSO V4 BATCH (HDF5 Input)")
     print("=" * 80)
-    print(f"[Config] Loaded from: {CLI_ARGS.config}")
+    print(f"[Config] Inputs: {CLI_ARGS.config or 'CLI arguments / built-in defaults'}")
     print(f"[Config] HDF5 dir: {H5_DIR}")
     print(f"[Config] HDF5 dataset: {H5_DATASET}")
     print(f"[Config] GMD map: {GMD_MAP_PATH}")

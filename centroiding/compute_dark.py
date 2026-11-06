@@ -2,8 +2,8 @@
 """
 Compute a dark frame from dark HDF5 files and save to disk.
 
-Defaults come from centroiding/config.toml (same as the main analysis
-script); every value can be overridden on the command line.
+All inputs have neutral CLI defaults. Optional --config loads legacy defaults;
+explicit command-line values take precedence.
 
 Two methods (--method), both honour --frames (0 = all frames):
   mean:   streaming running sum — low memory
@@ -41,7 +41,7 @@ def _config_defaults(config_path: str) -> dict:
         import tomllib
     except ImportError:
         import tomli as tomllib
-    if not os.path.exists(config_path):
+    if not config_path:
         return {}
     with open(config_path, "rb") as f:
         cfg = tomllib.load(f)
@@ -150,14 +150,14 @@ def main(argv=None) -> None:
     here = os.path.dirname(os.path.abspath(__file__))
 
     pre = argparse.ArgumentParser(add_help=False)
-    pre.add_argument("--config", default=os.path.join(here, "config.toml"))
+    pre.add_argument("--config")
     known, _ = pre.parse_known_args(argv)
     defaults = _config_defaults(known.config)
 
     p = argparse.ArgumentParser(
         description="Compute a mean/median dark frame from dark HDF5 files.")
     p.add_argument("--config", default=known.config,
-                   help="config.toml for default values")
+                   help="Optional legacy TOML defaults")
     p.add_argument("--dark-dir", default=defaults.get("dark_dir", ""),
                    help="directory containing the dark HDF5 files")
     p.add_argument("--pattern", default=defaults.get("pattern", DEFAULT_PATTERN),

@@ -50,12 +50,11 @@ def build(jobs: JobManager) -> None:
             info = str(Path(out_dir.value)
                        / f"dark_{method.value}_info.txt")
             cmd = [sys.executable, str(SCRIPT),
-                   "--config", str(REPO_ROOT / "centroiding" / "config.toml"),
                    "--dark-dir", dark_dir.value,
                    "--pattern", pattern.value,
                    "--dataset", dataset.value,
                    "--method", method.value,
-                   "--frames", str(int(frames.value or 2000)),
+                   "--frames", str(int(frames.value if frames.value is not None else 2000)),
                    "--output-dir", out_dir.value]
             job = jobs.submit(Job(name="Dark frame", cmd=cmd,
                                   cwd=str(REPO_ROOT),

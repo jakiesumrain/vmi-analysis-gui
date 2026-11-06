@@ -1,19 +1,18 @@
-"""Panel: Picasso centroiding — config.toml form editor + batch run."""
+"""Panel: Picasso centroiding with saved fields and explicit CLI inputs."""
 
 import sys
 from pathlib import Path
 
-import tomlkit
-from nicegui import ui
-from centroiding.spectrum_calibration import CalibrationSettings
+from nicegui import app, ui
+from centroiding.options import centroid_cli_args, section as _section, validate_settings
 
 from ..jobs import Job, JobManager
 from .. import theme
+from ..settings import centroid_settings, storage_key, output_dir as _output_dir
 from .common import (JobView, REPO_ROOT, file_url, open_folder_button,
-                     path_input, zoomable_image)
+                     path_input, persist, zoomable_image)
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
-CONFIG_PATH = CENTROID_DIR / "config.toml"
 SCRIPT = CENTROID_DIR / "process_andor_vmi_PICASSO_v5_h5_batch.py"
 
 # (section path, key, kind, label) — kind: str/int/float/bool/select:opts
@@ -46,6 +45,10 @@ FIELDS = [
     ("processing", "dark_frame_count", "int", "Dark frame count"),
     ("processing", "enable_flat_field", "bool", "Flat field"),
     ("processing", "flat_field_file", "file:.txt,.npy", "Flat field file"),
+    ("processing", "enable_circular_mask", "bool", "Circular mask"),
+    ("processing", "mask_center_x", "float", "Mask center X (empty = image center)"),
+    ("processing", "mask_center_y", "float", "Mask center Y (empty = image center)"),
+    ("processing", "mask_radius", "float", "Mask radius (empty = automatic)"),
     ("processing", "tuning_only", "bool", "Tuning mode only"),
     ("histogram", "resolution_factor", "int", "Histogram resolution factor"),
     ("histogram", "enable_abel", "bool", "Abel inversion"),
@@ -72,29 +75,16 @@ GROUPS = {
 }
 
 
-def _load_doc():
-    return tomlkit.parse(CONFIG_PATH.read_text(encoding="utf-8"))
-
-
-def _section(doc, name):
-    sec = doc["vmi_picasso"]
-    if name == "vmi_picasso":
-        return sec
-    if name not in sec:
-        sec[name] = tomlkit.table()
-    return sec[name]
-
-
 def build(jobs: JobManager) -> None:
     theme.section_title(
         "Picasso Centroiding",
-        "Edit centroiding/config.toml and run the Picasso localization "
+        "Settings are saved automatically. Run the Picasso localization "
         "(process_andor_vmi_PICASSO_v5_h5_batch.py). "
         "Set 'Tuning mode only' to optimize detection on a single frame first.")
 
     view = JobView(jobs, results_builder=_results)
 
-    doc = _load_doc()
+    doc = centroid_settings()
     widgets = {}
 
     with theme.panel_card():
@@ -110,22 +100,25 @@ def build(jobs: JobManager) -> None:
                 for section, key, kind, label in fields:
                     sec = _section(doc, section)
                     value = sec.get(key, "")
-                    wid = _make_widget(kind, label, value)
+                    wid = persist(_make_widget(kind, label, value), storage_key(section, key))
                     widgets[(section, key, kind)] = wid
 
         def run():
             if not _save(widgets):
                 return
-            cmd = [sys.executable, str(SCRIPT),
-                   "--config", str(CONFIG_PATH)]
+            snapshot = centroid_settings()
+            try:
+                cmd = [sys.executable, str(SCRIPT), *centroid_cli_args(snapshot)]
+            except ValueError as exc:
+                ui.notify(str(exc), type="negative")
+                return
             job = jobs.submit(Job(name="Centroiding", cmd=cmd,
-                                  cwd=str(CENTROID_DIR)))
+                                  cwd=str(CENTROID_DIR),
+                                  extra={"output_dir": str(_output_dir(snapshot))}))
             view.attach(job)
 
         with ui.row().classes("gap-2"):
             theme.run_button(on_click=run)
-            ui.button("Save config only", on_click=lambda: _save(widgets)) \
-                .props("flat color=secondary")
             ui.button("Clear outputs", icon="delete",
                       on_click=_clear_outputs).props("flat color=negative")
 
@@ -151,7 +144,8 @@ def _make_widget(kind: str, label: str, value):
 
 
 def _save(widgets) -> bool:
-    doc = _load_doc()
+    """Validate and snapshot the form before submitting; never write TOML."""
+    doc = centroid_settings()
     for (section, key, kind), wid in widgets.items():
         sec = _section(doc, section)
         v = wid.value
@@ -160,25 +154,22 @@ def _save(widgets) -> bool:
         elif kind in ("int", "float"):
             if (v is None or v == "") and section in ("spectrum_plot", "energy_calibration"):
                 # Empty optional values are omitted so the script uses defaults.
-                sec.pop(key, None)
+                sec[key] = None if section == "energy_calibration" else -1.0
+            elif v is None and key in ("mask_center_x", "mask_center_y", "mask_radius"):
+                sec[key] = None
             else:
                 sec[key] = (int(v or 0) if kind == "int"
                             else float(v or 0.0))
         else:
             sec[key] = str(v)
     try:
-        CalibrationSettings.from_config(doc["vmi_picasso"].get("energy_calibration", {}))
+        validate_settings(doc)
     except ValueError as exc:
         ui.notify(str(exc), type="negative")
         return False
-    CONFIG_PATH.write_text(tomlkit.dumps(doc), encoding="utf-8")
-    ui.notify(f"Saved {CONFIG_PATH}", type="positive")
+    for section, key, _ in widgets:
+        app.storage.general[storage_key(section, key)] = _section(doc, section)[key]
     return True
-
-
-def _output_dir(doc) -> Path:
-    out = Path(str(doc["vmi_picasso"].get("output_dir", "")))
-    return out if out.is_absolute() else CENTROID_DIR / out
 
 
 def _clear_outputs() -> None:
@@ -188,7 +179,7 @@ def _clear_outputs() -> None:
     ("[Resume] Found checkpoint"), so a stale checkpoint must be removed
     explicitly to force re-localization.
     """
-    doc = _load_doc()
+    doc = centroid_settings()
     out_dir = _output_dir(doc)
     checkpoint = out_dir / str(doc["vmi_picasso"].get("checkpoint_file", ""))
     targets = [out_dir / name for name in (
@@ -244,8 +235,7 @@ def _clear_outputs() -> None:
 def _results(job: Job):
     if job.status != "done":
         return
-    doc = _load_doc()
-    out_dir = _output_dir(doc)
+    out_dir = Path(job.extra["output_dir"])
     open_folder_button(out_dir, "open output folder")
     tuning = out_dir / "01_tuning_check_picasso.png"
     summary = out_dir / "04_final_summary.png"

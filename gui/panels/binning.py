@@ -1,19 +1,18 @@
 """Panel: vmi_histogram_gmd_bins.py — GMD-binned 2D histograms."""
 
 import sys
-import tomllib
 from pathlib import Path
 
 from nicegui import ui
 
 from ..jobs import Job, JobManager
 from .. import theme
+from ..settings import binning_inputs
 from .common import (JobView, REPO_ROOT, file_url, num_input,
                      open_folder_button, path_input, persist, zoomable_image)
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
 SCRIPT = CENTROID_DIR / "vmi_histogram_gmd_bins.py"
-CONFIG_PATH = CENTROID_DIR / "config.toml"
 
 
 def build(jobs: JobManager) -> None:
@@ -23,11 +22,18 @@ def build(jobs: JobManager) -> None:
         "(vmi_histogram_gmd_bins.py). Run after centroiding.")
 
     view = JobView(jobs, results_builder=_results)
+    settings = binning_inputs()
 
     with theme.panel_card():
-        config = persist(path_input("Config file", str(CONFIG_PATH),
-                                    browse="file", filters=[".toml"]),
-                         "binning.config")
+        checkpoint = persist(path_input("Localization checkpoint (.h5)",
+                                        settings["checkpoint"],
+                                        browse="file", filters=[".h5"]), "binning.checkpoint")
+        output = persist(path_input("Output directory", settings["output_dir"], browse="dir"),
+                         "binning.output_dir")
+        gmd_map = persist(path_input("Frame-to-GMD map", settings["gmd_map"],
+                                    browse="file", filters=[".txt"]), "binning.gmd_map")
+        resolution = persist(num_input("Histogram resolution factor", settings["resolution_factor"], step=1),
+                             "binning.resolution_factor")
         thresholds = persist(ui.input("GMD thresholds (comma-separated)",
                                       value="3.75e-8,5.5e-8,7.25e-8")
                              .classes("w-full").props("outlined dense"),
@@ -45,10 +51,19 @@ def build(jobs: JobManager) -> None:
                                    "binning.weight_power")
             gmd_floor = persist(num_input("GMD floor", 1e-12, format="%.1e"),
                                 "binning.gmd_floor")
+            weight_min = persist(num_input("GMD weight min", settings["gmd_weight_min"]),
+                                 "binning.gmd_weight_min")
+            weight_max = persist(num_input("GMD weight max", settings["gmd_weight_max"]),
+                                 "binning.gmd_weight_max")
 
         def run():
             cmd = [sys.executable, str(SCRIPT),
-                   "--config", config.value,
+                   "--checkpoint-path", checkpoint.value,
+                   "--output-dir", output.value,
+                   "--gmd-map-path", gmd_map.value,
+                   "--resolution-factor", str(int(resolution.value or 1)),
+                   "--gmd-weight-min", str(weight_min.value or 0),
+                   "--gmd-weight-max", str(weight_max.value or 0),
                    "--thresholds", thresholds.value,
                    "--gmd-col", str(gmd_col.value),
                    "--weight-mode", weight_mode.value,
@@ -58,7 +73,9 @@ def build(jobs: JobManager) -> None:
             job = jobs.submit(Job(name="GMD binning", cmd=cmd,
                                   cwd=str(CENTROID_DIR),
                                   extra={"weight_mode": weight_mode.value,
-                                         "weight_power": weight_power.value}))
+                                         "weight_power": weight_power.value,
+                                         "output_dir": str(Path(output.value) if Path(output.value).is_absolute()
+                                                           else CENTROID_DIR / output.value)}))
             view.attach(job)
 
         theme.run_button(on_click=run)
@@ -77,12 +94,7 @@ def _suffix(mode: str, power: float) -> str:
 def _results(job: Job):
     if job.status != "done":
         return
-    try:
-        cfg = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        out_dir = CENTROID_DIR / cfg["vmi_picasso"]["output_dir"]
-    except Exception as e:
-        ui.label(f"Could not locate output dir: {e}").classes("vmi-subtitle")
-        return
+    out_dir = Path(job.extra["output_dir"])
     suffix = _suffix(job.extra.get("weight_mode", "gmd_norm"),
                      job.extra.get("weight_power", 1.0))
     open_folder_button(out_dir, "open output folder")

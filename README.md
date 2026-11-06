@@ -82,12 +82,12 @@ The repository contains **no data**. You need:
 
 1. **GMD Map tab** — pick your HDF5 folder and GMD timestamp file, choose
    an output map path, Run. Produces `gmd_map_all.txt`.
-2. **Centroiding tab** — the form edits `centroiding/config.toml` directly.
+2. **Centroiding tab** — field edits save automatically and are passed as CLI inputs.
    Set the HDF5 directory and output directory (folder buttons), keep the
    defaults otherwise. Tick **Tuning mode only** first and Run to check spot
    detection on a single frame; then untick and run the full batch.
    Produces a checkpoint `.h5` and a 2D histogram in the output directory.
-3. **Binning tab** — defaults read the same `config.toml`; Run produces one
+3. **Binning tab** — choose the checkpoint, GMD map, and output directory; Run produces one
    GMD-binned 2D histogram `.npy` per bin.
 4. **PES tab** — drop the two calibration files into `circularization/`,
    keep the PyAbel backend, Run. Produces energy spectra, betas, and an
@@ -95,6 +95,23 @@ The repository contains **no data**. You need:
 
 Or press **Run pipeline** on the Pipeline tab after step 1 — it chains
 stages 1–4 and skips stages whose outputs already exist.
+
+All panel values are stored in `.nicegui/storage-general.json`, including
+Centroiding edits made without clicking Run. This storage survives server
+restarts and is shared by browsers connected to the same server. Keep `.nicegui/`
+to retain your settings. Jobs capture their inputs at submission, so editing a
+form afterward does not change a queued job or where its results are displayed.
+
+`config.toml` is no longer required by the GUI or scripts. On first use after
+upgrading, the GUI copies existing centroiding TOML values into saved settings
+without changing the file; existing saved values take precedence. After that
+one-time migration, removing or editing the TOML file does not affect the GUI.
+With no file, neutral built-in defaults are used. Binning also migrates its
+previously selected config path into explicit saved inputs once, if available.
+Binning has explicit input
+fields; PES initially suggests the saved Centroiding output directory. Pipeline
+uses saved Centroiding parameters with its own dataset and generated GMD map,
+forces a full batch run, and uses the Binning tab's saved thresholds/column/floor.
 
 ## Command-line use
 
@@ -121,8 +138,11 @@ Reported uncertainties are formal fit errors and exclude systematic errors.
 The fit does not change your alpha: copy the fitted value into the alpha field
 and run again to apply it. Existing localization checkpoints are reused.
 
-For standalone runs, these controls live in the optional
-`[vmi_picasso.energy_calibration]` section of `centroiding/config.toml`:
+For standalone runs, use `--alpha`, `--fit-xe-4d`, `--fit-min-px2`, and
+`--fit-max-px2`. For older workflows, passing `--config PATH` explicitly reads
+optional TOML defaults; explicit CLI arguments override them, including false
+boolean options such as `--no-abel` and `--no-gmd-weighting`. Files are never
+loaded implicitly based on the working directory. The legacy equivalent is:
 
 ```toml
 [vmi_picasso.energy_calibration]
@@ -140,10 +160,13 @@ uv run python build_gmd_map.py \
     --output-path gmd_map_all.txt
 
 uv run python centroiding/process_andor_vmi_PICASSO_v5_h5_batch.py \
-    --config centroiding/config.toml
+    --h5-dir /path/to/dataset --output-dir /path/to/results \
+    --alpha 0.000731 --fit-xe-4d
 
 uv run python centroiding/vmi_histogram_gmd_bins.py \
-    --config centroiding/config.toml --weight-mode gmd_norm --no-show
+    --checkpoint-path /path/to/results/vmi_results_raw.h5 \
+    --gmd-map-path /path/to/gmd_map_all.txt --output-dir /path/to/results \
+    --weight-mode gmd_norm --no-show
 
 uv run python circularization/process_gmd_bins.py \
     --inversion-backend pyabel --pyabel-method daun --no-show
@@ -165,7 +188,7 @@ build_gmd_map.py                      # pipeline stage 1
 h5_play_frames_movie.py               # QC tool
 h5_accumulate_fast_gmd.py             # QC tool
 centroiding/
-├── config.toml                       # centroiding + binning configuration
+├── config.toml                       # optional legacy defaults / one-time GUI migration
 ├── process_andor_vmi_PICASSO_v5_h5_batch.py   # stage 2
 └── vmi_histogram_gmd_bins.py         # stage 3
 circularization/

@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import tomllib
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -73,9 +74,13 @@ NO_SHOW = False  # skip the interactive plot window (for web/GUI use)
 def parse_args():
     p = argparse.ArgumentParser(
         description="Build 2D VMI histograms partitioned into GMD bins.")
-    p.add_argument("--config",
-                   default=os.path.join(os.path.dirname(__file__), "config.toml"),
-                   help="Path to the TOML configuration file.")
+    p.add_argument("--config", help="Optional legacy TOML defaults; CLI values take precedence")
+    p.add_argument("--checkpoint-path", help="Input localization checkpoint HDF5")
+    p.add_argument("--output-dir", help="Histogram output directory")
+    p.add_argument("--gmd-map-path", help="Frame-to-GMD map file")
+    p.add_argument("--resolution-factor", type=int)
+    p.add_argument("--gmd-weight-min", type=float)
+    p.add_argument("--gmd-weight-max", type=float)
     p.add_argument("--thresholds", default=",".join(f"{t:g}" for t in GMD_THRESHOLDS),
                    help="Comma-separated GMD thresholds (N values -> N+1 bins).")
     p.add_argument("--gmd-col", type=int, default=GMD_COL,
@@ -85,7 +90,30 @@ def parse_args():
     p.add_argument("--weight-power", type=float, default=WEIGHT_POWER)
     p.add_argument("--gmd-floor", type=float, default=GMD_FLOOR)
     p.add_argument("--no-show", action="store_true", default=NO_SHOW)
-    return p.parse_args()
+    args = p.parse_args()
+    vmi = {}
+    if args.config:
+        try:
+            with open(args.config, "rb") as handle:
+                vmi = tomllib.load(handle)["vmi_picasso"]
+        except (OSError, ValueError, KeyError) as exc:
+            p.error(str(exc))
+    if args.output_dir is None:
+        args.output_dir = vmi.get("output_dir", "vmi_output")
+    if args.checkpoint_path is None and vmi:
+        args.checkpoint_path = os.path.join(args.output_dir, vmi.get("checkpoint_file", "vmi_results_raw.h5"))
+    if args.gmd_map_path is None:
+        args.gmd_map_path = vmi.get("gmd_map_path", "")
+    if args.resolution_factor is None:
+        args.resolution_factor = vmi.get("histogram", {}).get("resolution_factor", 1)
+    for key in ("gmd_weight_min", "gmd_weight_max"):
+        if getattr(args, key) is None:
+            setattr(args, key, vmi.get("gmd", {}).get(key, 0.0))
+    if not args.checkpoint_path or not args.gmd_map_path:
+        p.error("Provide --checkpoint-path and --gmd-map-path (or --config with those inputs)")
+    if args.resolution_factor < 1:
+        p.error("--resolution-factor must be positive")
+    return args
 
 
 CLI = parse_args()
@@ -97,44 +125,20 @@ GMD_FLOOR = CLI.gmd_floor
 NO_SHOW = CLI.no_show
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LOAD CONFIG FROM config.toml
+# RESOLVED INPUTS (optional TOML plus explicit CLI overrides)
 # ─────────────────────────────────────────────────────────────────────────────
-try:
-    import tomllib
-except ImportError:
-    try:
-        import tomli as tomllib
-    except ImportError:
-        print("[ERROR] TOML parser not available — install tomli")
-        sys.exit(1)
-
-config_path = CLI.config
-if not os.path.exists(config_path):
-    print(f"[ERROR] Config not found: {config_path}")
-    sys.exit(1)
-
-with open(config_path, "rb") as f:
-    config = tomllib.load(f)
-
-vmi_cfg = config["vmi_picasso"]
-
-OUTPUT_DIR = vmi_cfg["output_dir"]
-CHECKPOINT_FILE = vmi_cfg.get("checkpoint_file", "vmi_results_raw.h5")
-CHECKPOINT_PATH = os.path.join(OUTPUT_DIR, CHECKPOINT_FILE)
-GMD_MAP_PATH = vmi_cfg.get("gmd_map_path", "")
-
-# Histogram resolution (from config)
-hist_cfg = config["vmi_picasso"]["histogram"]
-RES_FACTOR = hist_cfg.get("resolution_factor", 1)
+OUTPUT_DIR = CLI.output_dir
+CHECKPOINT_PATH = CLI.checkpoint_path
+GMD_MAP_PATH = CLI.gmd_map_path
+RES_FACTOR = CLI.resolution_factor
 
 # GMD weight clamp — mirrors [vmi_picasso.gmd] in config.toml, the same guard
 # the main V5 pipeline applies. WITHOUT this, 'gmd_norm' is dominated by the
 # handful of frames whose GMD is near zero (weight -> mean/0 -> huge): in bin0
 # the top 10 frames then carry ~13% of the total weight and the spectrum is
 # destroyed by noise. Out-of-range weights are ZEROED (matching V5).
-gmd_cfg = vmi_cfg.get("gmd", {})
-GMD_WEIGHT_MIN = gmd_cfg.get("gmd_weight_min", 0.0)
-GMD_WEIGHT_MAX = gmd_cfg.get("gmd_weight_max", 0.0)
+GMD_WEIGHT_MIN = CLI.gmd_weight_min
+GMD_WEIGHT_MAX = CLI.gmd_weight_max
 
 N_BINS = len(GMD_THRESHOLDS) + 1
 

@@ -1,20 +1,20 @@
 """Panel: pipeline — gmd_map → centroiding → binning → pes in one job."""
 
 import sys
-import tomllib
 from pathlib import Path
 
-from nicegui import ui
+from nicegui import app, ui
+from centroiding.options import centroid_cli_args
 
 from ..jobs import Job, JobManager, Stage
 from .. import theme
+from ..settings import centroid_settings, output_dir as centroid_output_dir, binning_cli_args
 from .common import JobView, REPO_ROOT, num_input, path_input, persist
 from .pes import default_output_dir
 from .binning import _suffix
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
 CIRC_DIR = REPO_ROOT / "circularization"
-CONFIG_PATH = CENTROID_DIR / "config.toml"
 
 
 def build(jobs: JobManager) -> None:
@@ -22,8 +22,8 @@ def build(jobs: JobManager) -> None:
         "Pipeline",
         "Run the full chain as one sequential job: GMD map → Picasso "
         "centroiding → GMD binning → PES/Abel inversion. Configure the "
-        "centroiding parameters on its own tab first — they are read from "
-        "centroiding/config.toml.")
+        "centroiding parameters on its own tab first — its saved settings "
+        "are used with this pipeline's dataset and GMD map.")
 
     view = JobView(jobs)
 
@@ -73,13 +73,22 @@ def build(jobs: JobManager) -> None:
         def run():
             suffix = _suffix(weight_mode.value, weight_power.value)
             try:
-                cfg = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+                cfg = centroid_settings()
                 vmi = cfg["vmi_picasso"]
-                out_dir = CENTROID_DIR / vmi["output_dir"]
-                checkpoint = out_dir / vmi.get(
-                    "checkpoint_file", "vmi_results_raw.h5")
-            except Exception as e:
-                ui.notify(f"Cannot read {CONFIG_PATH}: {e}", type="negative")
+                # The pipeline's chosen inputs must reach all stages, even
+                # when the Centroiding tab was last used for another dataset.
+                if not h5_dir.value:
+                    raise ValueError("Choose an HDF5 dataset directory")
+                vmi["h5_dir"] = str(Path(h5_dir.value).resolve())
+                vmi["gmd_map_path"] = str(Path(map_out.value).resolve())
+                vmi["processing"]["tuning_only"] = False
+                out_dir = centroid_output_dir(cfg)
+                checkpoint = out_dir / vmi["checkpoint_file"]
+                centroid_args = centroid_cli_args(cfg)
+                if not gmd_path.value or not map_out.value:
+                    raise ValueError("Choose a GMD timestamp file and map output path")
+            except ValueError as e:
+                ui.notify(str(e), type="negative")
                 return
 
             py = sys.executable
@@ -97,14 +106,17 @@ def build(jobs: JobManager) -> None:
                     name="Centroiding",
                     cmd=[py, str(CENTROID_DIR /
                                  "process_andor_vmi_PICASSO_v5_h5_batch.py"),
-                         "--config", str(CONFIG_PATH)],
+                         *centroid_args],
                     cwd=str(CENTROID_DIR),
                     outputs=[str(checkpoint)],
                 ),
                 Stage(
                     name="Binning",
                     cmd=[py, str(CENTROID_DIR / "vmi_histogram_gmd_bins.py"),
-                         "--config", str(CONFIG_PATH),
+                         *binning_cli_args(cfg),
+                         "--thresholds", str(app.storage.general.get("binning.thresholds", "3.75e-8,5.5e-8,7.25e-8")),
+                         "--gmd-col", str(app.storage.general.get("binning.gmd_col", 4)),
+                         "--gmd-floor", str(app.storage.general.get("binning.gmd_floor", 1e-12)),
                          "--weight-mode", weight_mode.value,
                          "--weight-power", str(weight_power.value),
                          "--no-show"],

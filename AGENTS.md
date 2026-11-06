@@ -24,7 +24,7 @@ GMD binning additionally needs a GMD timestamp file
 (`current-time-both.txt`: index, timestamp, value 1, value 2).
 
 Per-dataset analysis outputs (checkpoint `.h5`, `vmi_2d_raw.npy`, PNGs) live
-in `centroiding/<output_dir>/` (from `config.toml`) and are **not**
+in the selected output directory (relative paths use the script cwd) and are **not**
 committed to git.
 
 ## Scripts and pipeline
@@ -47,7 +47,7 @@ Side tools (QC / helpers, not pipeline stages):
   optional GMD weighting); no sub-pixel localization. Superseded by the Picasso
   path for analysis, kept for quick looks.
 - `centroiding/compute_dark.py` — precompute a mean/median dark frame
-  (`dark_{method}.npy`); point `dark_file` in `config.toml` at the result to
+  (`dark_{method}.npy`); point the GUI's dark-file field or `--dark-file` at the result to
   skip per-run dark computation in the centroiding script.
 
 | script | configuration |
@@ -55,15 +55,16 @@ Side tools (QC / helpers, not pipeline stages):
 | `build_gmd_map.py` | argparse CLI (`--h5-dir --gmd-path --output-path --n-files`; first two required) |
 | `h5_play_frames_movie.py` | argparse CLI (`--h5-dir` required, `--headless`, `--dump-frames`, ...) |
 | `h5_accumulate_fast_gmd.py` | argparse CLI (`--h5-dir` required, `--no-show`, `--live-path`, ...) |
-| `process_andor_vmi_PICASSO_v5_h5_batch.py` | `config.toml` `[vmi_picasso]` + `--config PATH`; optional `[vmi_picasso.spectrum_plot]` x/y min/max control the Photoelectron Spectrum axes in `04_final_summary.png` (negative = auto) |
-| `compute_dark.py` | argparse CLI (`--dark-dir`, `--method mean\|median`, `--frames`, `--output-dir`; defaults from config.toml) |
-| `vmi_histogram_gmd_bins.py` | config.toml paths + argparse CLI (`--thresholds`, `--weight-mode`, `--weight-power`, `--no-show`) |
+| `process_andor_vmi_PICASSO_v5_h5_batch.py` | explicit CLI (`--h5-dir`, `--output-dir`, detection/processing/calibration flags); optional `--config PATH` for legacy defaults; `--spectrum-x-min/max` and `--spectrum-y-min/max` control summary axes (negative = auto) |
+| `compute_dark.py` | argparse CLI (`--dark-dir`, `--method mean\|median`, `--frames`, `--output-dir`); optional explicit `--config PATH` defaults |
+| `vmi_histogram_gmd_bins.py` | explicit `--checkpoint-path`, `--gmd-map-path`, `--output-dir`, resolution/filter/weighting flags; optional `--config PATH` defaults |
 | `process_gmd_bins.py` | argparse CLI (`--weight-suffix`, `--inversion-backend`, `--pyabel-method`, `--use-cache`, `--no-show`) |
 | `circularization/circularization.py` | full argparse CLI — no changes needed |
 
 ## Constraints and traps
 
-- Centroiding's optional `[vmi_picasso.energy_calibration]` section accepts
+- Centroiding accepts `--alpha`, `--fit-xe-4d`, `--fit-min-px2`, and
+  `--fit-max-px2`. The legacy optional `[vmi_picasso.energy_calibration]` section accepts
   positive `alpha` (eV per histogram pixel²), `fit_xe_4d` (default false), and
   optional `fit_min_px2`/`fit_max_px2`. The Xe doublet is fitted in pixel²;
   its gas-phase IPs (4d3/2: 69.537 eV, 4d5/2: 67.548 eV) determine alpha and
@@ -84,8 +85,13 @@ Side tools (QC / helpers, not pipeline stages):
   running stage 4. The reassignment file for the reference dataset was the
   identity map — only the azimuthal (trig) terms act, so any radial
   nonlinearity propagates into the energy axis.
-- **`config.toml` is read cwd/script-relative.** Run the centroiding scripts
-  from the `centroiding/` directory (or pass `--config` where supported).
+- **TOML is optional and never loaded implicitly by scripts.** Explicit CLI
+  values override an explicitly supplied `--config PATH`. Relative analysis
+  paths resolve from the subprocess cwd (GUI centroiding/binning jobs use
+  `centroiding/`). The GUI migrates legacy values once, read-only, to
+  `.nicegui/storage-general.json`; all subsequent field edits autosave there.
+  Never rewrite legacy TOML from GUI events. Keep submitted result paths in
+  job metadata rather than reading current form values when jobs finish.
 - **`vmi_histogram_gmd_bins.py` prefers the TkAgg backend** for its live plot
   window; override via `MPLBACKEND` (e.g. Agg) when running headless.
 - **GMD weighting is a per-frame scalar** — it corrects yield, never shape.
@@ -136,6 +142,11 @@ queue advancement, cancels queued jobs, and waits for the running process
 tree to be terminated. Silent socket loss still needs heartbeat detection.
 
 Rules for GUI-related changes:
+
+- `centroiding/options.py` owns neutral defaults and CLI serialization;
+  `gui/settings.py` owns persistence/migration and shared stage inputs. Pipeline
+  uses its selected dataset/map and disables tuning-only in its job snapshot,
+  without changing the saved Centroiding form. No GUI job passes `--config`.
 
 - Scripts stay standalone-runnable; CLI args default to sane neutral values
   (no machine-specific paths — data locations always come from the user).
