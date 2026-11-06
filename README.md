@@ -36,6 +36,10 @@ uv run vmi-analysis         # → http://localhost:3157 (opens a browser)
                                  # don't open a browser: VMI_GUI_NO_SHOW=1 uv run vmi-analysis
 ```
 
+If the requested port is unavailable, startup exits with a clear error and
+prints PowerShell commands using a checked alternative port. The app does not
+switch ports automatically; run the suggested commands to relaunch it.
+
 The server stops automatically about 1–2 seconds after the last browser tab
 showing the app disconnects. Reloads and brief disconnects have a one-second
 reconnect grace period; a slower reload may require restarting the server.

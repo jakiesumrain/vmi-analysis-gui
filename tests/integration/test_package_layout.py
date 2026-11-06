@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import subprocess
+import socket
 import sys
 import tempfile
 import unittest
@@ -70,6 +71,22 @@ class PackageLayoutTests(unittest.TestCase):
         assets = files("vmi_analysis.gui.assets")
         self.assertIn("vmiZoomOpen", (assets / "image_zoom.js").read_text(encoding="utf-8"))
         self.assertIn("--", (assets / "theme.css").read_text(encoding="utf-8"))
+
+    def test_busy_gui_port_exits_with_relaunch_commands_before_ready_message(self):
+        with socket.socket() as listener, tempfile.TemporaryDirectory() as folder:
+            listener.bind(('127.0.0.1', 0))
+            listener.listen()
+            port = listener.getsockname()[1]
+            result = subprocess.run([sys.executable, '-m', 'vmi_analysis.gui.app'], cwd=folder,
+                env=dict(os.environ, VMI_GUI_PORT=str(port), VMI_GUI_NO_SHOW='1',
+                         VMI_WORKSPACE_DIR=folder, NICEGUI_STORAGE_PATH=str(Path(folder) / 'storage'),
+                         PYTHONIOENCODING='utf-8'), capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn(f'port {port} is unavailable', result.stderr)
+            self.assertIn('$env:VMI_GUI_PORT = "', result.stderr)
+            self.assertIn('uv run vmi-analysis', result.stderr)
+            self.assertNotIn('NiceGUI ready', result.stdout + result.stderr)
+            self.assertNotIn('Traceback', result.stdout + result.stderr)
 
     def test_workspace_survives_a_subprocess_working_directory_change(self):
         code = """

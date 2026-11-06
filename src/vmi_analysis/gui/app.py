@@ -9,6 +9,7 @@ from nicegui import app, background_tasks, ui
 
 from . import theme
 from .jobs import MANAGER
+from .startup import startup_port
 from .panels import (accumulate, binning, centroid, circularize, dark,
                      gmd_map, movie, pes, pipeline)
 from .panels.common import init_zoom_overlay
@@ -126,6 +127,7 @@ def index() -> None:
 
 def main() -> None:
     import os
+    port = startup_port()
     from vmi_analysis.paths import prepare_workspace
     prepare_workspace()
     try:
@@ -134,7 +136,7 @@ def main() -> None:
         MANAGER.set_max_concurrent(2)
     init_zoom_overlay()
     ui.run(title="VMI Analysis",
-           port=int(os.environ.get("VMI_GUI_PORT", 3157)),
+           port=port,
            reconnect_timeout=1.0,
            reload=False,
            show=os.environ.get("VMI_GUI_NO_SHOW", "") != "1")

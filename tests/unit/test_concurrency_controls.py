@@ -35,6 +35,7 @@ class ConcurrencyControlsTests(unittest.TestCase):
             with patch.object(gui, 'MANAGER', manager), \
                     patch.object(app.storage, '_general', {'jobs.max_concurrent': saved}), \
                     patch('vmi_analysis.paths.prepare_workspace'), \
+                    patch.object(gui, 'startup_port', return_value=3157), \
                     patch.object(gui, 'init_zoom_overlay'), patch.object(ui, 'run'):
                 gui.main()
             self.assertEqual(manager.max_concurrent, expected)
