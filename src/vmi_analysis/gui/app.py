@@ -1,6 +1,6 @@
 """VMI Analysis GUI — one tab per script plus the pipeline.
 
-Launch from the repository root:  uv run python -m gui.app
+Launch from the repository root:  uv run vmi-analysis
 """
 
 import asyncio

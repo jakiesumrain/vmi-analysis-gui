@@ -47,14 +47,14 @@ That is the whole setup. The app starts with one tab per script:
 
 | tab | wraps | purpose |
 |---|---|---|
-| GMD Map | `build_gmd_map.py` | match each camera frame to its GMD pulse-energy record by timestamp |
-| Movie | `h5_play_frames_movie.py` | render the first N frames as a movie + frame scrubber (QC) |
-| Accumulate | `h5_accumulate_fast_gmd.py` | fast threshold+denoise accumulation with live preview (QC) |
-| Dark Frame | `centroiding/compute_dark.py` | mean/median dark frame from dark HDF5 files → `dark_{method}.npy` |
-| Centroiding | `centroiding/process_andor_vmi_PICASSO_v5_h5_batch.py` | Picasso localization → checkpoint + 2D VMI histogram |
-| Binning | `centroiding/vmi_histogram_gmd_bins.py` | split events into GMD bins, one 2D histogram per bin |
-| Circularize | `circularization/circularization.py` | correct radial distortion of a single image |
-| PES | `circularization/process_gmd_bins.py` | per-bin chain → Abel inversion → spectra + betas |
+| GMD Map | `vmi_analysis.gmd.build_gmd_map` | match each camera frame to its GMD pulse-energy record by timestamp |
+| Movie | `vmi_analysis.imaging.h5_play_frames_movie` | render the first N frames as a movie + frame scrubber (QC) |
+| Accumulate | `vmi_analysis.imaging.h5_accumulate_fast_gmd` | fast threshold+denoise accumulation with live preview (QC) |
+| Dark Frame | `vmi_analysis.centroiding.compute_dark` | mean/median dark frame from dark HDF5 files → `dark_{method}.npy` |
+| Centroiding | `vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch` | Picasso localization → checkpoint + 2D VMI histogram |
+| Binning | `vmi_analysis.centroiding.vmi_histogram_gmd_bins` | split events into GMD bins, one 2D histogram per bin |
+| Circularize | `vmi_analysis.circularization.circularization` | correct radial distortion of a single image |
+| PES | `vmi_analysis.circularization.process_gmd_bins` | per-bin chain → Abel inversion → spectra + betas |
 | Pipeline | all four pipeline stages | GMD map → centroiding → binning → PES, in one job |
 
 Jobs run one at a time as subprocesses; logs stream live into the dark
@@ -243,9 +243,10 @@ vendor/pbasex-matlab/   # third-party MATLAB backend, with its own license
 ```
 
 After `uv sync`, launch with `uv run vmi-analysis` or
-`uv run python -m vmi_analysis.gui.app`. The old `uv run python -m gui.app`
-and script paths remain thin compatibility launchers; there is only one
-implementation of each tool. Run the installed command from another directory
+`uv run python -m vmi_analysis.gui.app`. Analysis tools use
+`uv run python -m vmi_analysis.<module>` as in the examples above; the former
+root-level and working-directory launchers have been removed.
+Run the installed command from another directory
 using the environment's `vmi-analysis` executable.
 
 Existing `centroiding/` and `circularization/` directories remain working-data

@@ -127,10 +127,9 @@ class CentroidPanelCalibrationTests(unittest.TestCase):
 class CentroidScriptCalibrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        script = ROOT / "centroiding" / "process_andor_vmi_PICASSO_v5_h5_batch.py"
-        with patch.object(sys, "argv", [str(script), "--h5-dir", "unused-test-data"]), \
-                patch.object(sys, "path", [str(script.parent), *sys.path]):
-            cls.namespace = runpy.run_path(str(script), run_name="calibration_test")
+        module = "vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch"
+        with patch.object(sys, "argv", [module, "--h5-dir", "unused-test-data"]):
+            cls.namespace = runpy.run_module(module, run_name="calibration_test")
         cls.env = cls.namespace["perform_abel_transform"].__globals__
 
     def test_script_csv_and_console_use_input_alpha_independently_of_fit(self):

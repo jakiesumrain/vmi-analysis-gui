@@ -32,21 +32,21 @@ committed to git.
 End-to-end order:
 
 ```
-build_gmd_map.py                          # 1. frame → GMD correspondence (timestamp match)
-centroiding/process_andor_vmi_PICASSO_v5_h5_batch.py
+src/vmi_analysis/gmd/build_gmd_map.py       # 1. frame → GMD correspondence (timestamp match)
+src/vmi_analysis/centroiding/process_andor_vmi_PICASSO_v5_h5_batch.py
                                           # 2. Picasso localization → checkpoint + 2D VMI histogram
-centroiding/vmi_histogram_gmd_bins.py     # 3. split events into GMD bins → one 2D histogram per bin
-circularization/process_gmd_bins.py       # 4. per bin: hole patch → rotate → center →
+src/vmi_analysis/centroiding/vmi_histogram_gmd_bins.py # 3. split events into GMD bins
+src/vmi_analysis/circularization/process_gmd_bins.py  # 4. per bin: hole patch → rotate → center →
                                           #    circularization.py → apodize → Abel inversion → E, IE, betas
 ```
 
 Side tools (QC / helpers, not pipeline stages):
 
-- `h5_play_frames_movie.py` — play the first N frames as a movie; save mp4/gif.
-- `h5_accumulate_fast_gmd.py` — fast pixel accumulation (threshold + morphology,
+- `src/vmi_analysis/imaging/h5_play_frames_movie.py` — play the first N frames as a movie; save mp4/gif.
+- `src/vmi_analysis/imaging/h5_accumulate_fast_gmd.py` — fast pixel accumulation (threshold + morphology,
   optional GMD weighting); no sub-pixel localization. Superseded by the Picasso
   path for analysis, kept for quick looks.
-- `centroiding/compute_dark.py` — precompute a mean/median dark frame
+- `src/vmi_analysis/centroiding/compute_dark.py` — precompute a mean/median dark frame
   (`dark_{method}.npy`); point the GUI's dark-file field or `--dark-file` at the result to
   skip per-run dark computation in the centroiding script.
 
@@ -105,7 +105,7 @@ Side tools (QC / helpers, not pipeline stages):
 ## Environment
 
 - uv-managed project (`pyproject.toml`, Python ≥ 3.12). Run scripts with
-  `uv run python <script>` from the repo root, or use the venv interpreter
+  `uv run python -m vmi_analysis.<module>` from the repo root, or use the venv interpreter
   in `.venv/` directly.
 - `uv sync` after cloning installs everything, including the GUI.
 
@@ -132,7 +132,7 @@ no-direct-push rule is enforced by convention.
 
 `src/vmi_analysis/gui/` — NiceGUI app, one tab per script plus a pipeline tab, themed by
 `docs/DESIGN.md`. See `docs/architecture.md` for the architecture. Launch:
-`uv run vmi-analysis` (legacy: `uv run python -m gui.app`) → http://localhost:8090
+`uv run vmi-analysis` → http://localhost:8090
 (8080 was avoided: it falls in a Windows reserved port range on some
 machines, causing WinError 10013 on bind; `VMI_GUI_PORT` overrides,
 `VMI_GUI_NO_SHOW=1` suppresses the browser auto-open). The server shuts
@@ -169,8 +169,8 @@ Rules for GUI-related changes:
 
 ## Source layout
 
-- All application implementations live under `src/vmi_analysis/`. Keep legacy
-  command launchers thin; never add analysis logic to the root shims.
+- All application implementations live under `src/vmi_analysis/`. Old command
+  launchers have been removed; do not reintroduce root shims.
 - Run `uv sync` before commands/tests; the package is installed editably.
   `uv run vmi-analysis` and `python -m vmi_analysis.gui.app` are the primary GUI
   entry points. Panels run analysis modules with `sys.executable -m`.
