@@ -69,13 +69,14 @@ job shows **Cancel queued**, and cancellation in progress shows disabled
 Reloading the page restores controls for that panel's active job. Other queued
 jobs still run in order; stopping one job does not shut down the server.
 
-Click an output image to open the inspection overlay. Choose **Select area**,
-drag a rectangle over the region you want to inspect, and release to magnify
-and center it. The overlay returns to **Pan** afterward; you can drag to move
-the image, use the mouse wheel or +/− to zoom, or select another region.
-**reset** restores the whole image. Escape cancels an active selection; when
-not selecting, Escape closes the overlay. Selection changes only the view,
-without cropping or modifying the saved image.
+Click an output image to open the inspection overlay. Choose **Crop area**,
+drag a rectangle over the region you want to inspect, and release. The overlay
+displays only that cropped region, enlarged to fit; surrounding pixels are
+excluded even when you zoom out or pan. You can crop again within the preview.
+The overlay returns to **Pan** afterward, and the mouse wheel or +/− zooms
+the cropped preview. **reset** restores the original whole image. Escape
+cancels an active selection; when not selecting, Escape closes the overlay.
+Cropping is temporary in the browser and never changes the saved output file.
 
 ## What you need to bring
 

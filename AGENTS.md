@@ -144,8 +144,10 @@ tree to be terminated. Silent socket loss still needs heartbeat detection.
 Rules for GUI-related changes:
 
 - All `zoomable_image` outputs share `gui/image_zoom.js`: Pan, wheel zoom,
-  Select area (drag rectangle to zoom), Reset, and Escape handling. A selection
-  changes only the rendered view. Keep the bitmap and analysis data untouched.
+  Crop area (drag a rectangle to create a cropped browser preview), Reset,
+  and Escape handling. Exclude outside pixels even when zooming out; repeated
+  crops operate on the current preview, and Reset restores the original image.
+  Never modify the saved output image or analysis data.
   Browser regression checks use `tests/zoom_fixture.py` and
   `tests/zoom_overlay.browser.js`; generated artifacts stay in `gui/generated/`.
 
