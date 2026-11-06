@@ -85,12 +85,21 @@ _OVERLAY_HTML = """
      overflow:hidden; touch-action:none;">
   <img id="vmi-zoom-img" src="" alt="" style="position:absolute; left:50%;
        top:50%; max-width:none; user-select:none; -webkit-user-drag:none;"/>
-  <div style="position:absolute; top:14px; right:16px; display:flex; gap:8px;
+  <div id="vmi-zoom-selection" style="display:none; position:absolute; pointer-events:none;
+       border:2px solid #cc785c; background:rgba(204,120,92,0.16); box-sizing:border-box;"></div>
+  <div id="vmi-zoom-toolbar" role="toolbar" aria-label="Image inspection"
+       style="position:absolute; top:14px; right:16px; display:flex; gap:8px; flex-wrap:wrap; max-width:95%;
        font-family:monospace;">
-    <button onclick="vmiZoomAt(event,1.25)" style="background:#cc785c;
+    <button id="vmi-zoom-pan" onclick="vmiZoomPan()" aria-pressed="true"
+      style="background:#cc785c; color:#141413; border:none; border-radius:6px;
+      padding:0 10px; height:30px; cursor:pointer;">Pan</button>
+    <button id="vmi-zoom-select" onclick="vmiZoomSelect()" aria-pressed="false"
+      style="background:#efe9de; color:#141413; border:none; border-radius:6px;
+      padding:0 10px; height:30px; cursor:pointer;">Select area</button>
+    <button onclick="vmiZoomAt(null,1.25)" style="background:#cc785c;
       color:#faf9f5; border:none; border-radius:6px; width:34px; height:30px;
       font-size:18px; cursor:pointer;">+</button>
-    <button onclick="vmiZoomAt(event,0.8)" style="background:#cc785c;
+    <button onclick="vmiZoomAt(null,0.8)" style="background:#cc785c;
       color:#faf9f5; border:none; border-radius:6px; width:34px; height:30px;
       font-size:18px; cursor:pointer;">&minus;</button>
     <button onclick="vmiZoomReset()" style="background:#efe9de; color:#141413;
@@ -100,68 +109,12 @@ _OVERLAY_HTML = """
       border:none; border-radius:6px; width:34px; height:30px;
       font-size:14px; cursor:pointer;">&#10005;</button>
   </div>
+  <div id="vmi-zoom-hint" style="position:absolute; bottom:14px; left:16px;
+       color:#efe9de; font:12px sans-serif; pointer-events:none;">
+    Drag to pan · Mouse wheel to zoom · Select area to inspect a region
+  </div>
 </div>
-<script>
-(function () {
-  let scale = 1, tx = 0, ty = 0, dragging = false, sx = 0, sy = 0;
-  const overlay = document.getElementById('vmi-zoom-overlay');
-  const img = document.getElementById('vmi-zoom-img');
-  function apply() {
-    img.style.transform = 'translate(calc(-50% + ' + tx + 'px), calc(-50% + '
-      + ty + 'px)) scale(' + scale + ')';
-  }
-  img.addEventListener('load', function () {
-    const fw = overlay.clientWidth * 0.92 / img.naturalWidth;
-    const fh = overlay.clientHeight * 0.92 / img.naturalHeight;
-    scale = Math.min(1, fw, fh); tx = 0; ty = 0; apply();
-  });
-  window.vmiZoomOpen = function (src) {
-    overlay.style.display = 'block';
-    img.src = src;   // onload fits to viewport
-  };
-  window.vmiZoomClose = function () {
-    overlay.style.display = 'none'; img.src = '';
-  };
-  window.vmiZoomReset = function () {
-    img.dispatchEvent(new Event('load'));
-  };
-  window.vmiZoomAt = function (e, f) {
-    const cx = overlay.clientWidth / 2, cy = overlay.clientHeight / 2;
-    const px = e.clientX - cx - tx, py = e.clientY - cy - ty;
-    const ns = Math.min(30, Math.max(0.05, scale * f));
-    tx -= px * (ns / scale - 1);
-    ty -= py * (ns / scale - 1);
-    scale = ns; apply();
-  };
-  overlay.addEventListener('wheel', function (e) {
-    e.preventDefault();
-    vmiZoomAt(e, e.deltaY < 0 ? 1.2 : 1 / 1.2);
-  }, { passive: false });
-  overlay.addEventListener('mousedown', function (e) {
-    if (e.target.tagName === 'BUTTON') return;
-    dragging = true; sx = e.clientX - tx; sy = e.clientY - ty;
-    overlay.style.cursor = 'grabbing';
-  });
-  window.addEventListener('mousemove', function (e) {
-    if (!dragging) return;
-    tx = e.clientX - sx; ty = e.clientY - sy; apply();
-  });
-  window.addEventListener('mouseup', function () {
-    dragging = false; overlay.style.cursor = 'grab';
-  });
-  overlay.addEventListener('click', function (e) {
-    if (e.target === overlay) vmiZoomClose();
-  });
-  overlay.addEventListener('dblclick', function (e) {
-    if (e.target.tagName !== 'BUTTON') vmiZoomReset();
-  });
-  window.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') vmiZoomClose();
-  });
-})();
-</script>
-"""
-
+""" + "<script>" + (GUI_DIR / "image_zoom.js").read_text(encoding="utf-8") + "</script>"
 
 def init_zoom_overlay() -> None:
     global _ZOOM_READY
@@ -174,7 +127,7 @@ def init_zoom_overlay() -> None:
 
 
 def zoomable_image(src: str = "", **kwargs) -> ui.image:
-    """ui.image that opens a fullscreen zoom/pan overlay when clicked."""
+    """Image opening a shared overlay with pan, wheel zoom, and area selection."""
     init_zoom_overlay()
     img = ui.image(src, **kwargs)
     img.style("cursor: zoom-in")
