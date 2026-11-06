@@ -61,6 +61,9 @@ Jobs run as independent subprocesses; logs stream live into the dark
 console at the bottom of each panel, and results (images, movies, spectra)
 render underneath it. Every path field has a folder button that browses
 your local disks — no typing of paths needed.
+The picker's **New folder** button creates a named folder in the directory
+you are viewing and opens it, ready to select or save into. Existing files
+and folders are never overwritten.
 
 **Maximum concurrent jobs** in the header controls how many jobs may run at
 once (default 2, dropdown choices 1–9, one active job per panel). Changes apply immediately and
