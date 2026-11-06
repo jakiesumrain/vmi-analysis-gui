@@ -11,7 +11,6 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
-import tomlkit
 
 from centroiding.spectrum_calibration import (
     CalibrationSettings, XE_4D_3_2_IP_EV, XE_4D_5_2_IP_EV, fit_xe_4d, scale_spectrum,
@@ -102,20 +101,27 @@ class CentroidPanelCalibrationTests(unittest.TestCase):
                                                ("fit_xe_4d", "bool", True),
                                                ("fit_min_px2", "float", 20000),
                                                ("fit_max_px2", "float", 45000))}
-            with patch.object(centroid, "CONFIG_PATH", config), patch.object(centroid.ui, "notify"):
+            from gui.settings import centroid_settings, storage_key
+            store = {}
+            def snapshot():
+                return centroid_settings(store=store, legacy_path=config)
+            with patch.object(centroid, "centroid_settings", snapshot), \
+                    patch.object(centroid.app.storage, "_general", store), \
+                    patch.object(centroid.ui, "notify"):
+                original = config.read_bytes()
                 self.assertTrue(centroid._save(widgets))
-                doc = tomlkit.parse(config.read_text(encoding="utf-8"))
-                settings = CalibrationSettings.from_config(doc["vmi_picasso"]["energy_calibration"])
+                settings = CalibrationSettings.from_config(snapshot()["vmi_picasso"]["energy_calibration"])
                 self.assertEqual(settings, CalibrationSettings(.0004, True, 20000, 45000))
-                saved = config.read_bytes()
+                saved = dict(store)
                 widgets[("energy_calibration", "alpha", "float")].value = -1
                 self.assertFalse(centroid._save(widgets))
-                self.assertEqual(config.read_bytes(), saved)
+                self.assertEqual(store, saved)
                 widgets[("energy_calibration", "alpha", "float")].value = None
                 self.assertTrue(centroid._save(widgets))
-                doc = tomlkit.parse(config.read_text(encoding="utf-8"))
-                self.assertNotIn("alpha", doc["vmi_picasso"]["energy_calibration"])
-                self.assertEqual(doc["vmi_picasso"]["h5_dir"], "unchanged")
+                self.assertIsNone(store[storage_key("energy_calibration", "alpha")])
+                self.assertEqual(config.read_bytes(), original)
+                self.assertEqual(snapshot()["vmi_picasso"]["h5_dir"], "unchanged")
+
 
 
 class CentroidScriptCalibrationTests(unittest.TestCase):

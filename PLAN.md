@@ -26,9 +26,13 @@ cancellation, and image/video result display.
   old values (or, for data paths, are empty + validated as required — no
   machine-specific paths live in the repository). Running a script bare
   behaves as before once paths are supplied.
-- **`config.toml` is the centroiding source of truth.** The Centroiding
-  panel edits it in place with tomlkit (comments preserved) and passes
-  `--config`; the Binning and Pipeline panels read the same file.
+- **GUI fields are the source of job inputs.** All panels persist changes
+  in NiceGUI general storage. Centroiding uses the shared defaults/CLI schema
+  in `centroiding/options.py`; commands contain explicit argument snapshots.
+  `gui/settings.py` migrates legacy TOML values once, read-only. Scripts accept
+  optional explicit `--config` defaults for compatibility, with CLI overrides.
+  Binning has explicit paths; Pipeline combines saved settings with its own
+  dataset/GMD map. Result paths come from the submitted job, not live settings.
 - **Theme = DESIGN.md → static CSS + `ui.colors`.** No node/build step at
   runtime: the design tokens are mapped by hand into `gui/theme.css`, with
   Google Fonts links and local fallback stacks if fonts are unreachable.
@@ -45,13 +49,14 @@ gui/
 ├── theme.py          # DESIGN.md tokens -> ui.colors + component helpers
 ├── theme.css         # static CSS mapped from the tokens
 ├── jobs.py           # JobManager: subprocess queue, log capture, progress, cancel
+├── settings.py       # saved centroid values, one-time legacy migration, stage inputs
 └── panels/
     ├── common.py       # form helpers + JobView (badge/progress/log/results)
     ├── picker.py       # LocalFilePicker dialog
     ├── gmd_map.py      # build_gmd_map.py form
     ├── movie.py        # h5_play_frames_movie.py + video/frame-slider display
     ├── accumulate.py   # h5_accumulate_fast_gmd.py + live partial image
-    ├── centroid.py     # config.toml form editor + Picasso run
+    ├── centroid.py     # automatically saved fields + explicit Picasso CLI arguments
     ├── binning.py      # vmi_histogram_gmd_bins.py form + bins PNG
     ├── circularize.py  # circularization.py CLI form
     ├── pes.py          # process_gmd_bins.py form + result PNG gallery

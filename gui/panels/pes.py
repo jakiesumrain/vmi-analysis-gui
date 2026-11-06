@@ -1,20 +1,19 @@
 """Panel: process_gmd_bins.py — GMD bins → PES + betas."""
 
 import sys
-import tomllib
 from pathlib import Path
 
 from nicegui import ui
 
 from ..jobs import Job, JobManager
 from .. import theme
+from ..settings import centroid_settings, output_dir as centroid_output_dir
 from .common import (JobView, REPO_ROOT, file_url, open_folder_button,
                      path_input, persist, zoomable_image)
 
 CIRC_DIR = REPO_ROOT / "circularization"
 SCRIPT = CIRC_DIR / "process_gmd_bins.py"
 CENTROID_DIR = REPO_ROOT / "centroiding"
-CONFIG_PATH = CENTROID_DIR / "config.toml"
 PBASEX_GDATA = (REPO_ROOT / "pbasex-matlab" / "examples"
                 / "G_r512_k512_l10.h5")
 CALIBRATION_FILES = [
@@ -33,12 +32,8 @@ def default_output_dir(suffix: str, backend: str, method: str) -> Path:
 
 
 def _default_bin_dir() -> str:
-    """Centroiding output dir from config.toml (falls back to centroiding/)."""
-    try:
-        cfg = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        return str(CENTROID_DIR / cfg["vmi_picasso"]["output_dir"])
-    except Exception:
-        return str(CENTROID_DIR)
+    """Use the saved centroiding output directory as the initial default."""
+    return str(centroid_output_dir(centroid_settings()))
 
 
 def build(jobs: JobManager) -> None:

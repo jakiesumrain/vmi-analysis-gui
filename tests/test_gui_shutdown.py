@@ -20,7 +20,11 @@ import socketio
 # These routes exist only in the isolated test server, never in gui.app.
 SERVER_CODE = """
 import sys
+import os
+from pathlib import Path
 from nicegui import app
+from gui import settings
+settings.LEGACY_CONFIG = Path(os.environ['VMI_TEST_CONFIG_PATH'])
 from gui import app as gui
 from gui.jobs import MANAGER, Job
 
@@ -49,13 +53,17 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
             port = listener.getsockname()[1]
         self.url = f"http://127.0.0.1:{port}"
         self.log = tempfile.TemporaryFile()
+        self.storage_folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.storage_folder.cleanup)
         self.clients = []
         self.http = httpx.AsyncClient(timeout=2, trust_env=False)
         self.proc = subprocess.Popen(
             [sys.executable, "-c", SERVER_CODE],
             cwd=Path(__file__).resolve().parents[1],
             env=dict(os.environ, VMI_GUI_PORT=str(port), VMI_GUI_NO_SHOW="1",
-                     PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8"),
+                     PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8",
+                     NICEGUI_STORAGE_PATH=self.storage_folder.name,
+                     VMI_TEST_CONFIG_PATH=str(Path(self.storage_folder.name) / "absent.toml")),
             stdout=self.log, stderr=subprocess.STDOUT,
         )
         self.addAsyncCleanup(self.cleanup_server)
