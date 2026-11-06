@@ -10,7 +10,7 @@ from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
                      open_folder_button, path_input, persist, render_image,
-                     zoomable_image)
+                     zoomable_image, delete_outputs)
 
 
 
@@ -93,12 +93,9 @@ def _clear_output(out_dir, method) -> None:
     dlg.open()
 
     def do_delete():
-        failed = []
-        for p in existing:
-            try:
-                p.unlink()
-            except OSError as e:
-                failed.append(f"{p.name}: {e}")
+        failed = delete_outputs(existing)
+        if failed is None:
+            return
         dlg.close()
         if failed:
             ui.notify("Could not delete: " + "; ".join(failed),
@@ -119,7 +116,7 @@ def _results(job: Job):
              f"std={data.std():.1f}, min={data.min():.0f}, "
              f"max={data.max():.0f}").classes("vmi-subtitle")
     open_folder_button(npy)
-    png = render_image(data, GENERATED / "dark_frame.png",
+    png = render_image(data, GENERATED / f"dark_frame_{job.id}.png",
                        cmap="gray", log=False, vmin_pct=0, vmax_pct=99.9)
     zoomable_image(file_url(png)).classes("w-full max-w-2xl")
     info = Path(job.extra["info"])

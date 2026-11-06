@@ -13,7 +13,7 @@ from .. import theme
 from ..centroid_plots import COLORMAPS, PLOT_HEIGHT, tuning_figure, summary_figure, plot_options
 from ..settings import centroid_settings, storage_key, output_dir as _output_dir
 from .common import (JobView, REPO_ROOT, file_url, open_folder_button,
-                     path_input, persist, zoomable_image)
+                     path_input, persist, zoomable_image, delete_outputs)
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
 
@@ -227,12 +227,9 @@ def _clear_outputs() -> None:
         doomed = list(existing)
         if with_checkpoint and has_checkpoint:
             doomed.append(checkpoint)
-        failed = []
-        for p in doomed:
-            try:
-                p.unlink()
-            except OSError as e:
-                failed.append(f"{p.name}: {e}")
+        failed = delete_outputs(doomed)
+        if failed is None:
+            return
         dlg.close()
         if failed:
             ui.notify("Could not delete: " + "; ".join(failed),

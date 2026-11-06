@@ -25,7 +25,7 @@ def wait_for(predicate, timeout=8.0):
 
 class JobShutdownTests(unittest.TestCase):
     def setUp(self):
-        self.manager = JobManager()
+        self.manager = JobManager(max_concurrent=1)
         self.addCleanup(self.manager.shutdown)
 
     def sleeping_job(self, name="sleep"):
@@ -41,7 +41,7 @@ class JobShutdownTests(unittest.TestCase):
         self.assertEqual(queued.status, "cancelled")
         self.assertIsNone(queued.started)
         self.assertIsNotNone(proc.poll())
-        self.assertIsNone(self.manager.current())
+        self.assertEqual(self.manager.running(), [])
         self.manager.shutdown()  # repeated shutdown is safe
         with self.assertRaises(RuntimeError):
             self.manager.submit(self.sleeping_job())

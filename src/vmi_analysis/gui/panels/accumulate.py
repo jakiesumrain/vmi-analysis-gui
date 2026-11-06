@@ -15,7 +15,7 @@ from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
                      open_folder_button, path_input, persist,
-                     zoomable_image)
+                     zoomable_image, delete_outputs)
 
 
 def build(jobs: JobManager) -> None:
@@ -152,12 +152,9 @@ def _clear_output(output_path) -> None:
         return
 
     def do_delete():
-        failed = []
-        for p in existing:
-            try:
-                p.unlink()
-            except OSError as e:
-                failed.append(f"{p}: {e}")
+        failed = delete_outputs(existing)
+        if failed is None:
+            return
         dlg.close()
         if failed:
             ui.notify("Could not delete: " + "; ".join(failed),

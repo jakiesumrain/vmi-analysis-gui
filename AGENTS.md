@@ -165,7 +165,15 @@ Rules for GUI-related changes:
   (no machine-specific paths — data locations always come from the user).
 - The GUI runs scripts as subprocesses (isolation + cancellation), never
   imports them into the web process.
-- One job at a time (the sequential MATLAB constraint and disk bandwidth).
+- Jobs can run concurrently up to the saved `jobs.max_concurrent` limit (default
+  2, any positive integer). One active job per panel; each retains its Stop,
+  progress, logs and reconnect state. Lowering the limit does not kill jobs.
+- `gui/resources.py` declares file reads/writes from submitted module commands.
+  Keep these declarations in sync with CLI interfaces. Block overlapping writes
+  and producer/reader conflicts; shared reads are allowed. Pipeline reservations
+  cover all stages for the whole run. MATLAB/CPBASEX stays mutually exclusive.
+- Clear-output handlers must use `delete_outputs`, which checks reservations
+  atomically. Shutdown must cancel and join every running job's process tree.
 
 ## Source layout
 

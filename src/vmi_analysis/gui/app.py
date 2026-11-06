@@ -11,7 +11,7 @@ from . import theme
 from .jobs import MANAGER
 from .panels import (accumulate, binning, centroid, circularize, dark,
                      gmd_map, movie, pes, pipeline)
-from .panels.common import init_zoom_overlay
+from .panels.common import init_zoom_overlay, num_input
 
 _shutdown_task: asyncio.Task | None = None
 
@@ -77,16 +77,30 @@ def index() -> None:
         with ui.row().classes("items-baseline gap-3"):
             ui.label("VMI Analysis").classes("vmi-title vmi-title-md")
             ui.label("photoelectron imaging toolbox").classes("vmi-subtitle")
-        queue_label = ui.label("").classes("vmi-caption")
+        with ui.row().classes("items-center gap-4"):
+            def change_limit(event):
+                if event.value is None:
+                    return
+                try:
+                    MANAGER.set_max_concurrent(event.value)
+                except ValueError as exc:
+                    ui.notify(str(exc), type="warning")
+                    concurrency.value = MANAGER.max_concurrent
+                    return
+                app.storage.general["jobs.max_concurrent"] = MANAGER.max_concurrent
+
+            concurrency = num_input("Maximum concurrent jobs", MANAGER.max_concurrent,
+                                    step=1, min=1, precision=0).classes("w-52")
+            concurrency.on_value_change(change_limit)
+            concurrency.tooltip("Lowering the limit lets running jobs finish; conflicts remain queued.")
+            queue_label = ui.label("").classes("vmi-caption")
 
     def refresh_queue():
-        cur = MANAGER.current()
+        running = MANAGER.running()
         n_queued = sum(1 for j in MANAGER.jobs() if j.status == "queued")
-        if cur is None:
-            queue_label.text = "idle"
-        else:
-            queue_label.text = (f"running: {cur.name}"
-                                + (f"  ·  {n_queued} queued" if n_queued else ""))
+        queue_label.text = ("running: " + ", ".join(job.name for job in running)) if running else "idle"
+        if n_queued:
+            queue_label.text += f"  ·  {n_queued} queued"
 
     ui.timer(1.0, refresh_queue)
 
@@ -100,7 +114,7 @@ def index() -> None:
 
     with ui.footer().classes("px-6 py-2 items-center justify-between") \
             .style("background: #181715"):
-        ui.label("vmi-analysis-gui — jobs run sequentially; "
+        ui.label("vmi-analysis-gui — independent jobs can run concurrently; "
                  "closing the browser tab stops the server.") \
             .classes("vmi-subtitle").style("color: #a09d96")
         ui.link("Tao (jakiesumrain@163.com)", "mailto:jakiesumrain@163.com") \
@@ -111,6 +125,10 @@ def main() -> None:
     import os
     from vmi_analysis.paths import prepare_workspace
     prepare_workspace()
+    try:
+        MANAGER.set_max_concurrent(app.storage.general.get("jobs.max_concurrent", 2))
+    except ValueError:
+        MANAGER.set_max_concurrent(2)
     init_zoom_overlay()
     ui.run(title="VMI Analysis",
            port=int(os.environ.get("VMI_GUI_PORT", 8090)),

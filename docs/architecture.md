@@ -18,9 +18,13 @@ cancellation, and image/video result display.
   group), and zero coupling between the web process and heavy numerical
   state. All job subprocesses use `sys.executable` — no `uv run` at
   runtime.
-- **One job at a time.** The MATLAB CPBASEX step shares global state
-  (hardcoded `examples/image.txt`), and raw data typically sits on slow
-  drives; a serial `JobManager` queue is the correct concurrency model.
+- **Configurable concurrent jobs.** `JobManager` admits jobs up to a saved
+  positive-integer limit (default 2). Submitted command snapshots declare file
+  reads/writes and exclusive resources in `gui/resources.py`. Shared readers
+  can run together; overlapping writes and producer/reader conflicts wait.
+  MATLAB CPBASEX uses an exclusive lock for its shared `examples/image.txt`.
+  One active job per panel preserves its Run/Stop and reconnect controls.
+  Pipeline stages remain ordered and reserve the union of their resources.
 - **CLI refactors preserve standalone behavior.** Each script's former
   hardcoded config block became argparse arguments whose defaults match the
   old values (or, for data paths, are empty + validated as required — no
@@ -48,7 +52,8 @@ src/vmi_analysis/gui/
 ├── app.py            # entry: theme + tabs + ui.run()
 ├── theme.py          # DESIGN.md tokens -> ui.colors + component helpers
 ├── theme.css         # static CSS mapped from the tokens
-├── jobs.py           # JobManager: subprocess queue, log capture, progress, cancel
+├── jobs.py           # concurrent scheduler, log capture, progress, cancel
+├── resources.py      # command file-access declarations and conflict checks
 ├── settings.py       # saved centroid values, one-time legacy migration, stage inputs
 └── panels/
     ├── common.py       # form helpers + JobView (badge/progress/log/results)
@@ -74,14 +79,19 @@ used. When a job ends, the same control returns to its original Run label.
 
 ## Job plumbing (`src/vmi_analysis/gui/jobs.py`)
 
-- Queue with per-job: id, name, cmd, cwd, env, status
+- Queue with per-job: id, name, cmd, cwd, env, status, resource reservations
   (queued/running/done/failed/cancelled), timestamps, return code.
 - stdout+stderr merged, read on a background thread into a ring buffer;
   tqdm `\r` lines parsed into a progress fraction (last `NN%` match).
 - `cancel()` terminates the process tree (`taskkill /T /F` on Windows;
   a separate process group with SIGTERM/SIGKILL on POSIX).
+- Scheduling can bypass a blocked job for unrelated work. Earlier waiting
+  resource claims prevent later readers from starving a writer. Paths are
+  resolved, case-normalized, and compared by ancestor/descendant overlap.
 - Shutdown prevents queue advancement, cancels queued work, handles a
-  cancellation during subprocess startup, and waits for worker cleanup.
+  cancellation during subprocess startup, and waits for all worker cleanup.
+- GUI output deletion checks queued/running reservations under the scheduler
+  lock. Movie frame dumps use unique per-run directories.
 - The last socket disconnect schedules shutdown after a one-second grace
   period; reconnecting cancels that check. The app shutdown hook also
   cleans up jobs on terminal/server shutdown.

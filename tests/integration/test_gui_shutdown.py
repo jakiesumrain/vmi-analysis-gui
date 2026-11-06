@@ -27,6 +27,7 @@ from vmi_analysis.gui import settings
 settings.LEGACY_CONFIG = Path(os.environ['VMI_TEST_CONFIG_PATH'])
 from vmi_analysis.gui import app as gui
 from vmi_analysis.gui.jobs import MANAGER, Job
+app.storage.general['jobs.max_concurrent'] = 1
 
 @app.post('/_test/jobs')
 def start_jobs(marker: str):
@@ -37,6 +38,14 @@ def start_jobs(marker: str):
 @app.get('/_test/jobs')
 def get_jobs():
     return [{'status': j.status, 'pid': j._proc.pid if j._proc else None} for j in MANAGER.jobs()]
+
+@app.post('/_test/concurrent')
+def start_concurrent(marker: str):
+    MANAGER.set_max_concurrent(3)
+    for i in range(3):
+        MANAGER.submit(Job(name=f'concurrent{i}', cmd=[sys.executable, '-c', 'import time; time.sleep(60)']))
+    MANAGER.submit(Job(name='queued', cmd=[sys.executable, '-c',
+        'from pathlib import Path; import sys; Path(sys.argv[1]).touch()', marker]))
 
 @app.post('/_test/shutdown')
 def stop_server():
@@ -63,6 +72,7 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
             env=dict(os.environ, VMI_GUI_PORT=str(port), VMI_GUI_NO_SHOW="1",
                      PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8",
                      NICEGUI_STORAGE_PATH=self.storage_folder.name,
+                     VMI_WORKSPACE_DIR=self.storage_folder.name,
                      VMI_TEST_CONFIG_PATH=str(Path(self.storage_folder.name) / "absent.toml")),
             stdout=self.log, stderr=subprocess.STDOUT,
         )
@@ -188,6 +198,41 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_server_shutdown_hook_cleans_up_jobs(self):
         await self.check_running_job_cleanup(close_tab=False)
+
+    async def test_last_tab_cleans_up_all_concurrent_jobs(self):
+        client = await self.connect()
+        marker = Path(self.storage_folder.name) / 'must-not-start.txt'
+        response = await self.http.post(self.url + '/_test/concurrent', params={'marker': str(marker)})
+        response.raise_for_status()
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            jobs = (await self.http.get(self.url + '/_test/jobs')).json()
+            if len(jobs) == 4 and all(j['pid'] for j in jobs[:3]):
+                break
+            await asyncio.sleep(.05)
+        self.assertEqual([j['status'] for j in jobs], ['running'] * 3 + ['queued'])
+        handles = []
+        if sys.platform == 'win32':
+            kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+            kernel.OpenProcess.restype = ctypes.c_void_p
+            kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+            kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+            handles = [kernel.OpenProcess(0x00100000, False, j['pid']) for j in jobs[:3]]
+            self.assertTrue(all(handles))
+        try:
+            await client.disconnect()
+            await self.wait_stopped()
+            self.assertFalse(marker.exists())
+            for handle in handles:
+                self.assertEqual(kernel.WaitForSingleObject(handle, 1000), 0)
+            if not handles:
+                for job in jobs[:3]:
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(job['pid'], 0)
+            self.assertNotIn('cleanup error', self.logs())
+        finally:
+            for handle in handles:
+                kernel.CloseHandle(handle)
 
 
 if __name__ == "__main__":
