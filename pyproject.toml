@@ -18,9 +18,25 @@ dependencies = [
     "pyyaml>=6.0.0",
     "scikit-image>=0.26.0",
     "scipy>=1.14.0",
+    "scienceplots>=2.1.1",
     "tomlkit>=0.15.2",
     "tqdm>=4.66.0",
 ]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+vmi-analysis = "vmi_analysis.gui.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["vmi_analysis*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+"vmi_analysis.gui.assets" = ["*.css", "*.js"]
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"

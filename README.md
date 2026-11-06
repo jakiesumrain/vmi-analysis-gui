@@ -16,11 +16,11 @@ runs the whole chain in order.
   (without it the tool writes a GIF instead).
 - Optional: **MATLAB** — only for the MATLAB inversion backend in the PES
   stage. The default backend (PyAbel) is pure Python and needs nothing
-  extra. The CPBASEX code is bundled at `pbasex-matlab/` (MIT,
-  Elio Gilbert Champenois — see `pbasex-matlab/LICENSE.txt`), so no
+  extra. The CPBASEX code is bundled at `vendor/pbasex-matlab/` (MIT,
+  Elio Gilbert Champenois — see `vendor/pbasex-matlab/LICENSE.txt`), so no
   separate checkout is needed. **Before the first MATLAB run you must
   generate the basis data once**: in MATLAB, `cd` to
-  `pbasex-matlab/examples` and run `save_gData.m`. ⚠ **This is
+  `vendor/pbasex-matlab/examples` and run `save_gData.m`. ⚠ **This is
   time-consuming** (expect tens of minutes) and writes
   `G_r512_k512_l10.h5` next to the script. Set the `CPBASEX_DIR`
   environment variable only to use a different CPBASEX checkout.
@@ -31,9 +31,9 @@ runs the whole chain in order.
 git clone <this-repo-url>
 cd vmi-analysis-gui
 uv sync                          # creates .venv and installs everything
-uv run python -m gui.app         # → http://localhost:8090 (opens a browser)
-                                 # override port: VMI_GUI_PORT=8080 uv run python -m gui.app
-                                 # don't open a browser: VMI_GUI_NO_SHOW=1 uv run python -m gui.app
+uv run vmi-analysis         # → http://localhost:8090 (opens a browser)
+                                 # override port: VMI_GUI_PORT=8080 uv run vmi-analysis
+                                 # don't open a browser: VMI_GUI_NO_SHOW=1 uv run vmi-analysis
 ```
 
 The server stops automatically about 1–2 seconds after the last browser tab
@@ -196,26 +196,26 @@ fit_max_px2 = 45000.0
 Every script is standalone; `--help` lists all options. Examples:
 
 ```bash
-uv run python build_gmd_map.py \
+uv run python -m vmi_analysis.gmd.build_gmd_map \
     --h5-dir /path/to/dataset --gmd-path /path/to/current-time-both.txt \
     --output-path gmd_map_all.txt
 
-uv run python centroiding/process_andor_vmi_PICASSO_v5_h5_batch.py \
+uv run python -m vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch \
     --h5-dir /path/to/dataset --output-dir /path/to/results \
     --alpha 0.000731 --fit-xe-4d
 
-uv run python centroiding/vmi_histogram_gmd_bins.py \
+uv run python -m vmi_analysis.centroiding.vmi_histogram_gmd_bins \
     --checkpoint-path /path/to/results/vmi_results_raw.h5 \
     --gmd-map-path /path/to/gmd_map_all.txt --output-dir /path/to/results \
     --weight-mode gmd_norm --no-show
 
-uv run python circularization/process_gmd_bins.py \
+uv run python -m vmi_analysis.circularization.process_gmd_bins \
     --inversion-backend pyabel --pyabel-method daun --no-show
 
-uv run python h5_play_frames_movie.py \
+uv run python -m vmi_analysis.imaging.h5_play_frames_movie \
     --h5-dir /path/to/dataset --headless --save-movie
 
-uv run python h5_accumulate_fast_gmd.py \
+uv run python -m vmi_analysis.imaging.h5_accumulate_fast_gmd \
     --h5-dir /path/to/dataset --output-path accumulated.txt --no-show
 ```
 
@@ -224,27 +224,44 @@ is bundled, so point them at your own files.
 
 ## Repository layout
 
-```
-build_gmd_map.py                      # pipeline stage 1
-h5_play_frames_movie.py               # QC tool
-h5_accumulate_fast_gmd.py             # QC tool
-centroiding/
-├── config.toml                       # optional legacy defaults / one-time GUI migration
-├── process_andor_vmi_PICASSO_v5_h5_batch.py   # stage 2
-└── vmi_histogram_gmd_bins.py         # stage 3
-circularization/
-├── circularization.py                # single-image distortion correction
-└── process_gmd_bins.py               # stage 4 (calls circularization.py)
-pbasex-matlab/                        # bundled CPBASEX (MATLAB backend, own license)
-├── pbasex-MATLAB/                    # the inversion library
-└── examples/                         # new_10.m (run by stage 4), save_gData.m
-gui/                                  # NiceGUI app (see PLAN.md)
-├── app.py  theme.py  theme.css  jobs.py
-└── panels/                           # one module per tab + file picker
+```text
+src/vmi_analysis/       # installed Python package; all application implementations
+  paths.py             # source-independent workspace and resource locations
+  gmd/                 # frame/GMD mapping
+  imaging/             # movie and fast accumulation tools
+  centroiding/         # localization, calibration, binning, dark-frame tools
+  circularization/     # distortion correction and PES processing
+  gui/                 # NiceGUI panels, jobs, settings and plot builders
+    assets/            # packaged CSS and image-overlay JavaScript
+tests/
+  unit/                # plotting and data checks
+  integration/         # CLI, packaging, jobs, calibration and server lifecycle
+  browser/             # Playwright checks and image-overlay fixture
+docs/                  # architecture and design tokens
+examples/              # neutral optional TOML template
+vendor/pbasex-matlab/   # third-party MATLAB backend, with its own license
 ```
 
-Per-dataset analysis outputs (checkpoints, histograms, result folders) are
-gitignored.
+After `uv sync`, launch with `uv run vmi-analysis` or
+`uv run python -m vmi_analysis.gui.app`. The old `uv run python -m gui.app`
+and script paths remain thin compatibility launchers; there is only one
+implementation of each tool. Run the installed command from another directory
+using the environment's `vmi-analysis` executable.
+
+Existing `centroiding/` and `circularization/` directories remain working-data
+locations, including relative output defaults and experiment calibration files.
+No datasets, movies, saved paths, or result folders are moved. The legacy local
+`centroiding/config.toml` is ignored; `examples/config.example.toml` is the
+versioned template. Existing local config files still support explicit
+`--config` inputs and the GUI's one-time read-only migration.
+
+`.nicegui/` retains saved settings. Disposable GUI previews now use the ignored
+`.cache/vmi-analysis/`, outside application source. A checkout uses its repository
+root as the workspace; an installed wheel uses the launch directory.
+`VMI_WORKSPACE_DIR` explicitly selects a different workspace, and
+`NICEGUI_STORAGE_PATH` can still override settings storage. For a wheel install,
+set `CPBASEX_DIR` to a separate CPBASEX checkout if using MATLAB; the Python
+wheel does not include third-party MATLAB code or experiment basis data.
 
 ## Further reading
 
@@ -254,25 +271,25 @@ They use temporary local servers and dummy subprocesses; no dataset is required.
 For browser checks of the shared image overlay, with Playwright CLI installed:
 
 ```bash
-uv run python tests/zoom_fixture.py
-uv run python -m http.server 18765 --bind 127.0.0.1 --directory gui/generated
+uv run python tests/browser/zoom_fixture.py
+uv run python -m http.server 18765 --bind 127.0.0.1 --directory .cache/vmi-analysis
 # In another terminal:
 playwright-cli -s=vmi-area-zoom open http://127.0.0.1:18765/zoom_check.html --browser=chrome
-playwright-cli -s=vmi-area-zoom run-code --filename=tests/zoom_overlay.browser.js
+playwright-cli -s=vmi-area-zoom run-code --filename=tests/browser/zoom_overlay.browser.js
 playwright-cli -s=vmi-area-zoom close
 ```
 
-The fixture and screenshots are generated under the ignored `gui/generated/`
+The fixture and screenshots are generated under the ignored `.cache/vmi-analysis/`
 directory. Stop the temporary HTTP server with Ctrl+C after checking.
 
-- `PLAN.md` — architecture and design decisions (why NiceGUI, why
-  subprocesses, theme mapping from `DESIGN.md`).
-- `DESIGN.md` — the UI design tokens the theme is built from.
+- `docs/architecture.md` — architecture and design decisions (why NiceGUI, why
+  subprocesses, theme mapping from `docs/DESIGN.md`).
+- `docs/DESIGN.md` — the UI design tokens the theme is built from.
 - `AGENTS.md` — contributor/agent guidance: pipeline details, constraints
-  (sequential MATLAB step, cwd-relative config), git workflow.
+  (sequential MATLAB step, legacy path compatibility), git workflow.
 
 ## License
 
-MIT — see `LICENSE`. The bundled CPBASEX code under `pbasex-matlab/` is
+MIT — see `LICENSE`. The bundled CPBASEX code under `vendor/pbasex-matlab/` is
 third-party software, also MIT, copyright Elio Gilbert Champenois (2017);
-see `pbasex-matlab/LICENSE.txt`.
+see `vendor/pbasex-matlab/LICENSE.txt`.
