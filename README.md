@@ -31,8 +31,8 @@ runs the whole chain in order.
 git clone <this-repo-url>
 cd vmi-analysis-gui
 uv sync                          # creates .venv and installs everything
-uv run vmi-analysis         # → http://localhost:8090 (opens a browser)
-                                 # override port: VMI_GUI_PORT=8080 uv run vmi-analysis
+uv run vmi-analysis         # → http://localhost:3157 (opens a browser)
+                                 # override port: VMI_GUI_PORT=3158 uv run vmi-analysis
                                  # don't open a browser: VMI_GUI_NO_SHOW=1 uv run vmi-analysis
 ```
 
