@@ -58,8 +58,8 @@ def _shutdown_after_last_client(client) -> None:
 TABS = [
     ("GMD Map", gmd_map),
     ("Movie", movie),
-    ("Accumulate", accumulate),
     ("Dark Frame", dark),
+    ("Accumulate", accumulate),
     ("Centroiding", centroid),
     ("Binning", binning),
     ("Circularize", circularize),
