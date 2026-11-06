@@ -69,6 +69,14 @@ job shows **Cancel queued**, and cancellation in progress shows disabled
 Reloading the page restores controls for that panel's active job. Other queued
 jobs still run in order; stopping one job does not shut down the server.
 
+Click an output image to open the inspection overlay. Choose **Select area**,
+drag a rectangle over the region you want to inspect, and release to magnify
+and center it. The overlay returns to **Pan** afterward; you can drag to move
+the image, use the mouse wheel or +/− to zoom, or select another region.
+**reset** restores the whole image. Escape cancels an active selection; when
+not selecting, Escape closes the overlay. Selection changes only the view,
+without cropping or modifying the saved image.
+
 ## What you need to bring
 
 The repository contains **no data**. You need:
@@ -216,6 +224,20 @@ gitignored.
 
 Run the shutdown regression checks with `uv run python -m unittest discover -s tests -v`.
 They use temporary local servers and dummy subprocesses; no dataset is required.
+
+For browser checks of the shared image overlay, with Playwright CLI installed:
+
+```bash
+uv run python tests/zoom_fixture.py
+uv run python -m http.server 18765 --bind 127.0.0.1 --directory gui/generated
+# In another terminal:
+playwright-cli -s=vmi-area-zoom open http://127.0.0.1:18765/zoom_check.html --browser=chrome
+playwright-cli -s=vmi-area-zoom run-code --filename=tests/zoom_overlay.browser.js
+playwright-cli -s=vmi-area-zoom close
+```
+
+The fixture and screenshots are generated under the ignored `gui/generated/`
+directory. Stop the temporary HTTP server with Ctrl+C after checking.
 
 - `PLAN.md` — architecture and design decisions (why NiceGUI, why
   subprocesses, theme mapping from `DESIGN.md`).
