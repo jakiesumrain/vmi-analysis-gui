@@ -134,7 +134,7 @@ def main() -> None:
         MANAGER.set_max_concurrent(2)
     init_zoom_overlay()
     ui.run(title="VMI Analysis",
-           port=int(os.environ.get("VMI_GUI_PORT", 8090)),
+           port=int(os.environ.get("VMI_GUI_PORT", 3157)),
            reconnect_timeout=1.0,
            reload=False,
            show=os.environ.get("VMI_GUI_NO_SHOW", "") != "1")

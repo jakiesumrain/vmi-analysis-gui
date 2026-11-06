@@ -132,9 +132,8 @@ no-direct-push rule is enforced by convention.
 
 `src/vmi_analysis/gui/` — NiceGUI app, one tab per script plus a pipeline tab, themed by
 `docs/DESIGN.md`. See `docs/architecture.md` for the architecture. Launch:
-`uv run vmi-analysis` → http://localhost:8090
-(8080 was avoided: it falls in a Windows reserved port range on some
-machines, causing WinError 10013 on bind; `VMI_GUI_PORT` overrides,
+`uv run vmi-analysis` → http://localhost:3157
+(`VMI_GUI_PORT` overrides the port,
 `VMI_GUI_NO_SHOW=1` suppresses the browser auto-open). The server shuts
 itself down once the last browser client is gone (checked after NiceGUI's
 one-second reconnect grace period; faster reloads survive). Shutdown stops
