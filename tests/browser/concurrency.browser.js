@@ -28,9 +28,12 @@ async page => {
     await page.getByRole('button', {name: 'Run', exact: true}).waitFor();
   };
   await page.setViewportSize({width: 1440, height: 1000});
-  const limit = page.getByRole('spinbutton', {name: 'Maximum concurrent jobs'});
-  await limit.fill('3');
-  await limit.press('Tab');
+  const limit = page.getByRole('combobox', {name: 'Maximum concurrent jobs'});
+  const chooseLimit = async value => {
+    await limit.click();
+    await page.getByRole('option', {name: String(value), exact: true}).click();
+  };
+  await chooseLimit(3);
   await waitState(s => s.limit === 3);
   await page.request.post(endpoint('/_test/start'));
   await waitState(s => s.jobs.filter(j => j.status === 'running').length === 3);
@@ -48,8 +51,7 @@ async page => {
   await waitState(s => status(s, 'Accumulate') === 'running');
   await show('Accumulate', 'Fast Accumulate');
   await page.getByRole('button', {name: 'Stop', exact: true}).waitFor();
-  await limit.fill('1');
-  await limit.press('Tab');
+  await chooseLimit(1);
   await waitState(s => s.limit === 1);
   await page.request.post(endpoint('/_test/add-map'));
   s = await state();

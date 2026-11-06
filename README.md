@@ -63,7 +63,7 @@ render underneath it. Every path field has a folder button that browses
 your local disks — no typing of paths needed.
 
 **Maximum concurrent jobs** in the header controls how many jobs may run at
-once (default 2, any positive whole number). Changes apply immediately and
+once (default 2, dropdown choices 1–9, one active job per panel). Changes apply immediately and
 survive restart. Increasing the limit opens more slots; lowering it lets
 existing jobs finish and delays new starts. CPU worker counts inside individual
 panels still apply, so choose a limit appropriate for your RAM and disk speed.

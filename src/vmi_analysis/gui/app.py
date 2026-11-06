@@ -11,7 +11,7 @@ from . import theme
 from .jobs import MANAGER
 from .panels import (accumulate, binning, centroid, circularize, dark,
                      gmd_map, movie, pes, pipeline)
-from .panels.common import init_zoom_overlay, num_input
+from .panels.common import init_zoom_overlay
 
 _shutdown_task: asyncio.Task | None = None
 
@@ -89,8 +89,11 @@ def index() -> None:
                     return
                 app.storage.general["jobs.max_concurrent"] = MANAGER.max_concurrent
 
-            concurrency = num_input("Maximum concurrent jobs", MANAGER.max_concurrent,
-                                    step=1, min=1, precision=0).classes("w-52")
+            limits = list(range(1, len(TABS) + 1))
+            if MANAGER.max_concurrent not in limits:
+                limits.append(MANAGER.max_concurrent)
+            concurrency = ui.select(limits, label="Maximum concurrent jobs", value=MANAGER.max_concurrent) \
+                .classes("w-52").props("outlined dense")
             concurrency.on_value_change(change_limit)
             concurrency.tooltip("Lowering the limit lets running jobs finish; conflicts remain queued.")
             queue_label = ui.label("").classes("vmi-caption")
