@@ -2,7 +2,7 @@
 async page => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  const names = ['GMD Map', 'Movie', 'Accumulate', 'Dark Frame', 'Centroiding',
+  const names = ['GMD Map', 'Movie', 'Dark Frame', 'Accumulate', 'Centroiding',
                  'Binning', 'Circularize', 'PES', 'Pipeline'];
   const titles = {'Movie': 'Frame Movie', 'Accumulate': 'Fast Accumulate',
                   'Centroiding': 'Picasso Centroiding', 'Binning': 'GMD Binning', 'PES': 'PES / Abel Inversion'};
