@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 
 from nicegui import ui
@@ -11,7 +12,7 @@ from ..jobs import Job, JobManager, TERMINAL
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
                      open_folder_button, path_input, persist, serve_dir,
-                     zoomable_image)
+                     zoomable_image, delete_outputs)
 
 # In-page movie player: steps the dumped frame PNGs in place at the playback
 # interval, loops over the available frames (like the matplotlib pop-up did)
@@ -101,10 +102,8 @@ def build(jobs: JobManager) -> None:
             w.bind_enabled_from(save_movie, "value")
 
         def run():
-            frames_dir = GENERATED / "movie_frames"
+            frames_dir = GENERATED / "movie_frames" / uuid.uuid4().hex
             frames_dir.mkdir(parents=True, exist_ok=True)
-            for old in frames_dir.glob("frame_*.png"):
-                old.unlink()  # stale frames would confuse the live view
             live_label.visible = False
             live_row.visible = False
             live_img.visible = False
@@ -211,7 +210,7 @@ def _clear_outputs(movie_dir, h5_dir) -> None:
             if p.exists():
                 targets.append(p)
     frames_dir = GENERATED / "movie_frames"
-    frame_pngs = (sorted(frames_dir.glob("frame_*.png"))
+    frame_pngs = (sorted(frames_dir.rglob("frame_*.png"))
                   if frames_dir.exists() else [])
     if not targets and not frame_pngs:
         ui.notify("Nothing to delete.", type="info")
@@ -230,12 +229,9 @@ def _clear_outputs(movie_dir, h5_dir) -> None:
     dlg.open()
 
     def do_delete():
-        failed = []
-        for p in targets + frame_pngs:
-            try:
-                p.unlink()
-            except OSError as e:
-                failed.append(f"{p.name}: {e}")
+        failed = delete_outputs(targets + frame_pngs)
+        if failed is None:
+            return
         if frame_pngs:
             try:
                 frames_dir.rmdir()

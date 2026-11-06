@@ -9,7 +9,7 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (JobView, REPO_ROOT, num_input, open_folder_button,
-                     path_input, persist)
+                     path_input, persist, delete_outputs)
 
 
 def build(jobs: JobManager) -> None:
@@ -76,11 +76,12 @@ def _clear_output(output_path) -> None:
     dlg.open()
 
     def do_delete():
-        try:
-            target.unlink()
-        except OSError as e:
+        failed = delete_outputs([target])
+        if failed is None:
+            return
+        if failed:
             dlg.close()
-            ui.notify(f"Could not delete {target}: {e}", type="negative")
+            ui.notify("Could not delete: " + "; ".join(failed), type="negative")
             return
         dlg.close()
         ui.notify(f"Deleted {target}", type="positive")

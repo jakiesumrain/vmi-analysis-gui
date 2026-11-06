@@ -57,17 +57,32 @@ That is the whole setup. The app starts with one tab per script:
 | PES | `vmi_analysis.circularization.process_gmd_bins` | per-bin chain → Abel inversion → spectra + betas |
 | Pipeline | all four pipeline stages | GMD map → centroiding → binning → PES, in one job |
 
-Jobs run one at a time as subprocesses; logs stream live into the dark
+Jobs run as independent subprocesses; logs stream live into the dark
 console at the bottom of each panel, and results (images, movies, spectra)
 render underneath it. Every path field has a folder button that browses
 your local disks — no typing of paths needed.
+
+**Maximum concurrent jobs** in the header controls how many jobs may run at
+once (default 2, any positive whole number). Changes apply immediately and
+survive restart. Increasing the limit opens more slots; lowering it lets
+existing jobs finish and delays new starts. CPU worker counts inside individual
+panels still apply, so choose a limit appropriate for your RAM and disk speed.
+
+Read-only inputs can be shared. Jobs wait when another job writes an overlapping
+file or directory, or reads something they need to overwrite. Waiting jobs show
+the reason; unrelated jobs can use free slots. One job per panel runs at once.
+Pipeline stages stay sequential and reserve their inputs/outputs for the whole
+pipeline run. MATLAB/CPBASEX jobs also share an exclusive lock because their
+temporary files are shared. Clear-output actions respect these reservations.
+The protection covers jobs launched by this GUI, including its Pipeline panel.
 
 Each panel uses a single action button: **Run** changes to **Stop** while
 processing. Click Stop to terminate that job and its subprocess tree. A queued
 job shows **Cancel queued**, and cancellation in progress shows disabled
 **Stopping…**. The button returns to Run when the job finishes or stops.
 Reloading the page restores controls for that panel's active job. Other queued
-jobs still run in order; stopping one job does not shut down the server.
+jobs start when their slots and resources are available; stopping one job leaves
+other running panels alone. Closing the last browser tab stops all jobs.
 
 Click an output image to open the inspection overlay. Choose **Crop area**,
 drag a rectangle over the region you want to inspect, and release. The overlay

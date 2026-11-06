@@ -120,7 +120,7 @@ class RunStopButtonTests(ButtonFixture):
 
 class RealStopButtonTests(ButtonFixture):
     def setUp(self):
-        self.manager = JobManager()
+        self.manager = JobManager(max_concurrent=1)
         self.addCleanup(self.manager.shutdown)
 
     def sleeping_job(self, name):
@@ -151,6 +151,22 @@ class RealStopButtonTests(ButtonFixture):
         self.assertEqual(queued.status, "cancelled")
         self.assertIsNone(queued.started)
         self.assertIsNone(running._proc.poll())
+
+    def test_stopping_one_concurrent_panel_leaves_the_other_running(self):
+        self.manager.set_max_concurrent(2)
+        first = self.manager.submit(self.sleeping_job("Centroiding"))
+        second = self.manager.submit(self.sleeping_job("Dark frame"))
+        wait_for(lambda: first._proc is not None and second._proc is not None)
+        view, click = self.make_view(self.manager, Mock(), "Centroiding")
+        other, _ = self.make_view(self.manager, Mock(), "Dark frame")
+        self.assertEqual(view.action_button.text, "Stop")
+        self.assertEqual(other.action_button.text, "Stop")
+        click()
+        wait_for(lambda: first.status == "cancelled")
+        self.assertEqual(second.status, "running")
+        self.assertIsNone(second._proc.poll())
+        other.refresh()
+        self.assertEqual(other.action_button.text, "Stop")
 
 
 if __name__ == "__main__":

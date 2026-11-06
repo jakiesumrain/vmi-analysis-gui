@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from nicegui import app, ui
 
-from ..jobs import Job, JobManager
+from ..jobs import Job, JobManager, MANAGER, ResourceBusyError
 from .. import theme
 
 from importlib.resources import files
@@ -219,6 +219,22 @@ def persist(widget, key: str):
     return widget
 
 
+def delete_outputs(paths):
+    """Delete only when no running/queued job reads or writes these files."""
+    try:
+        with MANAGER.write_access(paths):
+            failed = []
+            for path in paths:
+                try:
+                    Path(path).unlink(missing_ok=True)
+                except OSError as exc:
+                    failed.append(f"{path}: {exc}")
+            return failed
+    except ResourceBusyError as exc:
+        ui.notify(str(exc), type="warning")
+        return None
+
+
 def text_area(label: str, value: str = "") -> ui.input:
     return ui.input(label, value=value).classes("w-full").props("outlined dense")
 
@@ -255,6 +271,8 @@ class JobView:
                 .classes("grow").props("color=primary track-color=grey-4")
             self.progress.visible = False
         self.log = None
+        self.wait_label = ui.label("").classes("vmi-subtitle")
+        self.wait_label.visible = False
         self.results = None
         self._interval = interval
 
@@ -316,6 +334,8 @@ class JobView:
                 return
         j = self.job
         self._sync_button()
+        self.wait_label.visible = j is not None and j.status == "queued"
+        self.wait_label.text = j.wait_reason if j is not None else ""
         if j is None:
             theme.set_badge(self.badge, "idle")
             return

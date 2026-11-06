@@ -1,13 +1,13 @@
 """Subprocess job manager for the VMI GUI.
 
-One job at a time (the MATLAB CPBASEX step uses shared global state, and the
-network drive does not benefit from parallel readers). Jobs are subprocesses:
-isolation, real cancellation, and streamed logs for free.
+Jobs run concurrently within a configurable limit and file/resource reservations.
+Each job retains its own subprocess tree, log, progress and cancellation state.
 """
 
 from __future__ import annotations
 
 import os
+import math
 import re
 import signal
 import subprocess
@@ -18,6 +18,9 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+from contextlib import contextmanager
+
+from .resources import Access, canonical_path, job_access
 
 TERMINAL = {"done", "failed", "cancelled"}
 _PROGRESS_RE = re.compile(r"(\d{1,3})%\s*\|")
@@ -50,6 +53,11 @@ class Job:
     progress: float | None = None  # 0..1, or None if unknown
     log: deque = field(default_factory=lambda: deque(maxlen=5000))
     extra: dict = field(default_factory=dict)
+    reads: list[str] = field(default_factory=list)
+    writes: list[str] = field(default_factory=list)
+    exclusive: list[str] = field(default_factory=list)
+    wait_reason: str = ""
+    _access: Access = field(default_factory=Access, repr=False)
     _proc: subprocess.Popen | None = field(default=None, repr=False)
     _cancel_requested: bool = field(default=False, repr=False)
     _termination_thread: threading.Thread | None = field(default=None, repr=False)
@@ -59,37 +67,75 @@ class Job:
         return self._cancel_requested
 
 
-class JobManager:
-    """Serial queue of subprocess jobs with log streaming and cancellation."""
+class ResourceBusyError(RuntimeError):
+    pass
 
-    def __init__(self):
+
+class JobManager:
+    """Bounded concurrent jobs with conservative file and shared-resource locks."""
+
+    def __init__(self, max_concurrent=2):
         self._jobs: dict[str, Job] = {}
         self._queue: deque[str] = deque()
-        self._current_id: str | None = None
         self._lock = threading.Lock()
         self._stopping = False
-        self._worker: threading.Thread | None = None
+        self._workers: dict[str, threading.Thread] = {}
+        self._max_concurrent = self._validate_limit(max_concurrent)
 
     # ------------------------------------------------------------------ API
 
     def submit(self, job: Job) -> Job:
+        access = job_access(job)
         with self._lock:
             if self._stopping:
                 raise RuntimeError("The job manager is shutting down")
+            if job.id in self._jobs:
+                raise ValueError("This job has already been submitted")
+            job._access = access
             self._jobs[job.id] = job
             self._queue.append(job.id)
-            if self._current_id is None:
-                self._start_next_locked()
+            self._schedule_locked()
         return job
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
 
     def jobs(self) -> list[Job]:
-        return sorted(self._jobs.values(), key=lambda j: j.created)
+        with self._lock:
+            return sorted(self._jobs.values(), key=lambda j: j.created)
 
-    def current(self) -> Job | None:
-        return self._jobs.get(self._current_id) if self._current_id else None
+    def running(self) -> list[Job]:
+        with self._lock:
+            return [self._jobs[job_id] for job_id in self._workers]
+
+    @staticmethod
+    def _validate_limit(value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 1 or value != int(value):
+            raise ValueError("Maximum concurrent jobs must be a positive whole number")
+        return int(value)
+
+    @property
+    def max_concurrent(self):
+        with self._lock:
+            return self._max_concurrent
+
+    def set_max_concurrent(self, value):
+        limit = self._validate_limit(value)
+        with self._lock:
+            self._max_concurrent = limit
+            self._schedule_locked()
+
+    @contextmanager
+    def write_access(self, paths):
+        """Keep GUI output deletion atomic with job submission and scheduling."""
+        access = Access(writes=frozenset(canonical_path(p) for p in paths))
+        with self._lock:
+            for job in self._jobs.values():
+                if job.status in ("running", "queued"):
+                    conflict = access.conflict(job._access)
+                    if conflict:
+                        raise ResourceBusyError(f"Files are reserved by {job.name}: {conflict}")
+            yield
 
     def cancel(self, job_id: str) -> None:
         with self._lock:
@@ -97,6 +143,7 @@ class JobManager:
             if job is None or job.status in TERMINAL:
                 return
             self._cancel_locked(job)
+            self._schedule_locked()
 
     def begin_shutdown(self) -> None:
         """Stop queue advancement and request cancellation without blocking the UI."""
@@ -110,9 +157,10 @@ class JobManager:
         """Cancel all work and wait for process cleanup; call outside the UI loop."""
         self.begin_shutdown()
         with self._lock:
-            worker = self._worker
-        if worker is not None:
-            worker.join(timeout=15.0)
+            workers = list(self._workers.values())
+        deadline = time.monotonic() + 15.0
+        for worker in workers:
+            worker.join(timeout=max(0, deadline - time.monotonic()))
             if worker.is_alive():
                 raise RuntimeError("Job process cleanup did not finish within 15 seconds")
 
@@ -173,22 +221,31 @@ class JobManager:
 
     # -------------------------------------------------------------- internals
 
-    def _start_next_locked(self) -> None:
+    def _schedule_locked(self) -> None:
         if self._stopping:
-            self._current_id = None
             return
-        while self._queue:
-            job_id = self._queue.popleft()
+        waiting = []
+        for job_id in list(self._queue):
             job = self._jobs[job_id]
-            if job.status == "cancelled":
+            blockers = [self._jobs[key] for key in self._workers] + waiting
+            blocker = next(((other, reason) for other in blockers
+                            if (reason := job._access.conflict(other._access))), None)
+            if blocker:
+                other, reason = blocker
+                job.wait_reason = f"Waiting for {other.name}: {reason}"
+                waiting.append(job)
                 continue
-            self._current_id = job_id
+            if len(self._workers) >= self._max_concurrent:
+                job.wait_reason = "Waiting for a concurrent job slot"
+                waiting.append(job)
+                continue
+            self._queue.remove(job_id)
+            job.wait_reason = ""
             job.status = "running"
             job.started = time.time()
-            self._worker = threading.Thread(target=self._run, args=(job,), daemon=True)
-            self._worker.start()
-            return
-        self._current_id = None
+            worker = threading.Thread(target=self._run, args=(job,), daemon=True)
+            self._workers[job_id] = worker
+            worker.start()
 
     def _run(self, job: Job) -> None:
         try:
@@ -200,16 +257,17 @@ class JobManager:
         except Exception as e:  # defensive: a GUI job must never die silently
             job.log.append(f"[gui] job runner error: {e}")
             job.returncode = -1
-        job.finished = time.time()
-        if job._cancel_requested:
-            job.status = "cancelled"
-        elif job.returncode == 0:
-            job.status = "done"
-            job.progress = 1.0
-        else:
-            job.status = "failed"
         with self._lock:
-            self._start_next_locked()
+            job.finished = time.time()
+            if job._cancel_requested:
+                job.status = "cancelled"
+            elif job.returncode == 0:
+                job.status = "done"
+                job.progress = 1.0
+            else:
+                job.status = "failed"
+            self._workers.pop(job.id)
+            self._schedule_locked()
 
     def _run_pipeline(self, job: Job) -> None:
         n = len(job.stages)
