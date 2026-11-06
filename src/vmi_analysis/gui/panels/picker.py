@@ -11,11 +11,28 @@ import string
 from pathlib import Path
 
 from nicegui import ui
+from ..jobs import MANAGER, ResourceBusyError
 
 _DRIVES = [f"{d}:/" for d in string.ascii_uppercase if os.path.exists(f"{d}:/")]
 _MAX_ENTRIES = 1000
 
 _TITLES = {"file": "Select file", "dir": "Select folder", "save": "Save as"}
+
+
+def _create_directory(parent: Path, name: str) -> Path:
+    """Create one named child, without replacing an existing file or folder."""
+    name = name.strip()
+    if (not name or name in (".", "..") or name.endswith(".")
+            or any(c in '<>:"/\\|?*' or ord(c) < 32 for c in name)):
+        raise ValueError("Enter a folder name without path separators or special characters.")
+    stem = name.split(".", 1)[0].upper()
+    if stem in {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+                *(f"LPT{i}" for i in range(1, 10))}:
+        raise ValueError("This folder name is reserved by Windows.")
+    target = parent / name
+    with MANAGER.write_access([target]):
+        target.mkdir()
+    return target
 
 
 def _nearest_dir(start) -> Path:
@@ -53,6 +70,8 @@ class LocalFilePicker(ui.dialog):
             self.entries = ui.list().props("bordered separator") \
                 .classes("w-full h-72 overflow-auto")
             with ui.row().classes("w-full items-center justify-end gap-2"):
+                ui.button("New folder", icon="create_new_folder", on_click=self._new_folder) \
+                    .props("flat color=primary").classes("mr-auto")
                 if mode == "save":
                     self.name_input = ui.input("File name", value=default_name) \
                         .props("outlined dense").classes("grow")
@@ -66,6 +85,31 @@ class LocalFilePicker(ui.dialog):
         self._refresh()
 
     # -- navigation -------------------------------------------------------
+
+    def _new_folder(self):
+        parent = self.path
+        with ui.dialog() as dialog, ui.card().classes("w-96 max-w-[95vw] gap-3"):
+            ui.label("New folder").classes("vmi-caption")
+            ui.label(str(parent)).classes("vmi-subtitle").style("word-break: break-all")
+            name = ui.input("Folder name").props("outlined dense autofocus").classes("w-full")
+
+            def create():
+                try:
+                    target = _create_directory(parent, name.value or "")
+                except FileExistsError:
+                    ui.notify("A file or folder with this name already exists.", type="warning")
+                    return
+                except (ValueError, OSError, ResourceBusyError) as exc:
+                    ui.notify(f"Could not create folder: {exc}", type="warning")
+                    return
+                self._nav(target)
+                dialog.close()
+
+            name.on("keydown.enter", create)
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Create", icon="create_new_folder", on_click=create).props("unelevated color=primary")
+                ui.button("Cancel", on_click=dialog.close).props("flat")
+        dialog.open()
 
     def _up(self):
         parent = self.path.parent
