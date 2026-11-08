@@ -171,7 +171,12 @@ the original downloadable/croppable figure, and standalone PNG export is unchang
 Accumulate uses the same interactive controls for its live preview and final
 image, with equal pixel scales and original counts on hover. The final view
 reads the saved `.txt` array directly; **View saved result** opens existing
-outputs without rerunning. Its Viridis log color range matches the standalone
+outputs without rerunning. **Frame histogram**, beside the Threshold field,
+renders the pixel-value distribution of one frame — enter a 0-based index or
+leave it blank for a random frame — with the current threshold marked and the
+share of pixels above it, before and after the 2×2 denoise, so the threshold
+can be chosen from the data. When a dark frame is set, the preview is
+dark-subtracted exactly like the accumulation run. Its Viridis log color range matches the standalone
 script, and the original PNG remains available under **Saved PNG**.
 The **Colormap** dropdown above the image changes colors immediately without
 rerunning or resetting the zoom, and remembers the selection for future views.
