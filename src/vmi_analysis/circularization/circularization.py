@@ -414,9 +414,14 @@ def save_image_txt(path, image):
     np.savetxt(path, image, fmt="%.18e")
 
 
-def parse_extracted_txt(path):
+def parse_extracted_text(text, source="<text>"):
     """
-    Parse the Gascooke software export in extracted.txt.
+    Parse the text of a Gascooke / clean-room trig-fit export.
+
+    A file holds one block per fitted ring; every block starts with the
+    quoted parameter header. Lines starting with '#' are comments (used for
+    provenance by the clean-room builder) and are ignored, as is anything
+    before the first header.
 
     Returns
     -------
@@ -425,7 +430,6 @@ def parse_extracted_txt(path):
         - "radius", "radius_sigma"
         - "A1", "A1_sigma", "B1", "B1_sigma", ...
     """
-    text = Path(path).read_text(encoding="utf-8")
     lines = [line.strip() for line in text.splitlines()]
 
     header = '"Parameter" "Value" "+-" "Uncertainty (1 std dev)"'
@@ -435,7 +439,7 @@ def parse_extracted_txt(path):
     trig_pattern = re.compile(r'^Trig Term (sin|cos)\((\d+)\*theta\)$')
 
     for line in lines:
-        if not line:
+        if not line or line.startswith("#"):
             continue
 
         if line == header:
@@ -461,8 +465,11 @@ def parse_extracted_txt(path):
             continue
 
         name = tokens[0]
-        value = float(tokens[1])
-        sigma = float(tokens[3])
+        try:
+            value = float(tokens[1])
+            sigma = float(tokens[3])
+        except ValueError:
+            continue
 
         if name == "Gaussian Centre":
             current["radius"] = value
@@ -481,9 +488,14 @@ def parse_extracted_txt(path):
         blocks.append(current)
 
     if not blocks:
-        raise ValueError(f"No fit blocks found in {path}")
+        raise ValueError(f"No fit blocks found in {source}")
 
     return blocks
+
+
+def parse_extracted_txt(path):
+    """Parse a Gascooke-style extracted trig-fit file from disk."""
+    return parse_extracted_text(Path(path).read_text(encoding="utf-8"), source=str(path))
 
 
 def build_fit_dataset(blocks, max_trig_n=None):
