@@ -186,6 +186,14 @@ class OutputTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pf.validate_block_text("not a block")
 
+    def test_existing_radii_ignores_empty_and_comment_only_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "extracted.txt"
+            path.write_text("", encoding="utf-8")
+            self.assertEqual(pf.existing_radii(path), [])
+            path.write_text("# just a comment\n", encoding="utf-8")
+            self.assertEqual(pf.existing_radii(path), [])
+
     def test_session_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "session.json"

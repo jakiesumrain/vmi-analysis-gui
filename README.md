@@ -58,6 +58,7 @@ That is the whole setup. The app starts with one tab per script:
 | Centroiding | `vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch` | Picasso localization → checkpoint + 2D VMI histogram |
 | Binning | `vmi_analysis.centroiding.vmi_histogram_gmd_bins` | split events into GMD bins, one 2D histogram per bin |
 | Circularize | `vmi_analysis.circularization.circularization` | correct radial distortion of a single image |
+| Trig Calibration | `vmi_analysis.circularization.polar_fit` (interactive tool) | build the extracted trig-fit file: polar remap, divide by r, radial filter, Hansen–Law Abel, mouse-select a ring and fit its ridge |
 | PES | `vmi_analysis.circularization.process_gmd_bins` | per-bin chain → Abel inversion → spectra + betas |
 | Pipeline | all four pipeline stages | GMD map → centroiding → binning → PES, in one job |
 
@@ -114,7 +115,10 @@ The repository contains **no data**. You need:
    `circularization/`: `extracted-FOC100eV-20260710.txt` (trig-fit
    coefficients) and `reassignment-FOC100eV-20260710.txt` (radial
    reassignment map; an identity map is valid). These are per-experiment
-   inputs; the PES panel warns while they are missing.
+   inputs; the **Trig Calibration** tab can build the extracted file
+   clean-room (polar remap → divide by r → radial filter → Hansen–Law Abel →
+   mouse-select a ring and fit its ridge), and the PES panel warns while they
+   are missing.
 
 ## A first end-to-end run
 
@@ -127,8 +131,9 @@ The repository contains **no data**. You need:
    Produces a checkpoint `.h5` and a 2D histogram in the output directory.
 3. **Binning tab** — choose the checkpoint, GMD map, and output directory; Run produces one
    GMD-binned 2D histogram `.npy` per bin.
-4. **PES tab** — drop the two calibration files into `circularization/`,
-   keep the PyAbel backend, Run. Produces energy spectra, betas, and an
+4. **PES tab** — build or drop the two calibration files into
+   `circularization/` (the Trig Calibration tab can produce the extracted
+   file), keep the PyAbel backend, Run. Produces energy spectra, betas, and an
    `.npz` with everything under `circularization/gmd_bins_results_*/`.
 
 Or press **Run pipeline** on the Pipeline tab after step 1 — it chains

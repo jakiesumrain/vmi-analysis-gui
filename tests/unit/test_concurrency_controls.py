@@ -20,7 +20,8 @@ class ConcurrencyControlsTests(unittest.TestCase):
                     control = next(e for e in client.elements.values()
                                    if getattr(e, 'label', None) == 'Maximum concurrent jobs')
                     self.assertEqual(control.__class__.__name__, 'Select')
-                    self.assertEqual(control.options, list(range(1, 10)))
+                    self.assertEqual(control.options,
+                                     list(range(1, len(gui.TABS) + 1)))
                     self.assertEqual(control.value, manager.max_concurrent)
                     control.value = value
                     self.assertEqual(manager.max_concurrent, value)

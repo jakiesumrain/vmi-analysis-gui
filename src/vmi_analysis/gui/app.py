@@ -10,8 +10,8 @@ from nicegui import app, background_tasks, ui
 from . import theme
 from .jobs import MANAGER
 from .startup import startup_port
-from .panels import (accumulate, binning, centroid, circularize, dark,
-                     gmd_map, movie, pes, pipeline)
+from .panels import (accumulate, binning, calibration, centroid, circularize,
+                     dark, gmd_map, movie, pes, pipeline)
 from .panels.common import init_zoom_overlay
 
 _shutdown_task: asyncio.Task | None = None
@@ -64,6 +64,7 @@ TABS = [
     ("Centroiding", centroid),
     ("Binning", binning),
     ("Circularize", circularize),
+    ("Trig Calibration", calibration),
     ("PES", pes),
     ("Pipeline", pipeline),
 ]
