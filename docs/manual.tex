@@ -770,7 +770,8 @@ the method leaves the other method's files in place.
 image, optionally weighting each frame by GMD pulse energy. This is a
 quick-look tool; the Picasso path in Centroiding is the precise one. The
 panel launches \code{vmi\_\allowbreak{}analysis.\allowbreak{}imaging.\allowbreak{}h5\_\allowbreak{}accumulate\_\allowbreak{}fast\_\allowbreak{}gmd}, and
-also hosts the frame-histogram preview for choosing the threshold
+also provides interactive histograms for a single frame and for an average
+of frames from randomly selected files
 (Section~\ref{sec:framepreview}).
 
 \begin{center}
@@ -783,8 +784,8 @@ Field & Type and default & Saved key & CLI flag & Meaning \\
 \bottomrule
 \endfoot
 \emph{HDF5 directory} & folder, empty & \code{accumulate.\allowbreak{}h5\_\allowbreak{}dir} &
-\emph{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir} & Folder of \code{*.\allowbreak{}h5} files, sorted by name; every frame
-is used. Also read by \emph{Histogram frame}. Required. \\
+\emph{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir} & Required folder of \code{*.\allowbreak{}h5} files. Accumulation uses
+every frame. Both histogram previews read from this folder. \\
 \addlinespace
 \code{Output image (.txt)} & save, empty & \code{accumulate.\allowbreak{}output\_\allowbreak{}path} &
 \emph{-\allowbreak{}-\allowbreak{}output-\allowbreak{}path} & Accumulated matrix (text) and the base name for the
@@ -808,9 +809,25 @@ Ignored in simple-sum mode. \\
 \emph{-\allowbreak{}-\allowbreak{}simple-\allowbreak{}sum} & Sums all frames unchanged: no threshold, no denoise.
 Dark subtraction and GMD weighting still apply. \\
 \addlinespace
+\code{Dark frame .npy (optional)} & file, empty & \code{accumulate.\allowbreak{}dark\_\allowbreak{}path} &
+\emph{-\allowbreak{}-\allowbreak{}dark-\allowbreak{}path} & Subtracts the dark frame before thresholding and
+weighting. Both histogram previews also subtract it when supplied. \\
+\addlinespace
+\emph{Histogram X min} & number, blank & \code{accumulate.\allowbreak{}histogram\_\allowbreak{}x\_\allowbreak{}min} &
+none (GUI preview) & Lower bound in pixel counts. Blank uses the data range. \\
+\addlinespace
+\emph{Histogram X max} & number, blank & \code{accumulate.\allowbreak{}histogram\_\allowbreak{}x\_\allowbreak{}max} &
+none (GUI preview) & Upper bound in pixel counts. Blank uses the data range. \\
+\addlinespace
+\emph{Bin width (counts)} & number, blank & \code{accumulate.\allowbreak{}histogram\_\allowbreak{}bin\_\allowbreak{}width} &
+none (GUI preview) & Width of each bin in pixel counts. Blank uses 160 bins. \\
+\addlinespace
 \emph{Frame index (0-\allowbreak{}based)} & number, blank & -- &
-none (GUI preview) & Global 0-based frame for the histogram preview; blank
-chooses a random frame. Not saved and not sent to the accumulation job. \\
+none (GUI preview) & Global 0-based index for a single frame. Blank chooses
+a random frame. The field resets on page reload. \\
+\addlinespace
+\emph{Files to average} & whole number, 1 & \code{accumulate.\allowbreak{}histogram\_\allowbreak{}file\_\allowbreak{}count} &
+none (GUI preview) & Number of distinct HDF5 files to sample for the average. \\
 \addlinespace
 \emph{GMD weighting} & checkbox, off & \code{accumulate.\allowbreak{}enable\_\allowbreak{}gmd} &
 \emph{-\allowbreak{}-\allowbreak{}enable-\allowbreak{}gmd} & Enables per-frame GMD weights. The map and weight
@@ -829,10 +846,6 @@ the GMD Map panel. Only the frame index and GMD value 1 columns are used. \\
 filter is active when \emph{either} bound is above 0, so the default pair
 \code{does} filter. Set both to 0 to disable filtering. \\
 \addlinespace
-\code{Dark frame .npy (optional)} & file, empty & \code{accumulate.\allowbreak{}dark\_\allowbreak{}path} &
-\emph{-\allowbreak{}-\allowbreak{}dark-\allowbreak{}path} & Subtracted from every frame before thresholding and
-weighting; also used by the histogram preview. \\
-\addlinespace
 \emph{Colormap} & select, Viridis & \code{accumulate.\allowbreak{}colormap} &
 none (display) & Colour scale for the interactive image and live preview.
 Two selects (above the live figure and above a saved result) share this one
@@ -841,8 +854,8 @@ saved key. \\
 \end{center}
 
 \textbf{Buttons.} \emph{Run}/\emph{Stop} submits job \emph{Accumulate}.
-\code{Histogram frame} renders the single-frame histogram described in
-Section~\ref{sec:framepreview}. \emph{View saved result} re-renders the file
+\emph{Histogram frame} and \emph{Histogram average} open the previews
+described in Section~\ref{sec:framepreview}. \emph{View saved result} re-renders the file
 at the current output path without rerunning. \emph{Clear output} deletes the
 \code{.txt} and its \code{.\allowbreak{}png} so the next run recomputes.
 \code{open containing folder} and a \emph{Saved PNG} expansion appear with
@@ -866,41 +879,35 @@ with \emph{First N files} silently leaves later frames unweighted. Threshold
 units are raw ADC counts unless a dark frame is set, in which case they apply
 to dark-subtracted values.
 
-\subsubsection{The frame histogram preview}
+\subsubsection{Histogram previews}
 \label{sec:framepreview}
 
-The \emph{Frame index (0-based)} field and \emph{Histogram frame} button sit
-directly under the threshold row. Clicking the button reads one raw frame and
-plots its pixel-value histogram; it does not start a job, write a file, or
-take a concurrency slot.
+Both previews use interactive histograms with a logarithmic count axis.
+Hover over a bar for its pixel-value interval and pixel count, or drag to zoom.
 
 \begin{itemize}
-  \item \textbf{Frame selection.} Leave the index blank for a uniformly
-        random frame, or enter a global 0-based index. Frames are enumerated
-        across all \code{*.\allowbreak{}h5} files, sorted by file name, in file order,
-        exactly like the Movie tool. The caption shows
-        \emph{Frame k of N - file frame i (0-based index j)}. An out-of-range
-        index is reported as an error.
-  \item \textbf{What is plotted.} A 160-bin histogram of the frame's pixel
-        values with a logarithmic count axis and a dashed line at the current
-        \emph{Threshold} value. The x axis is \emph{Pixel value (counts)}.
-  \item \textbf{Readouts.} The summary gives the number and percentage of
-        pixels at or above the threshold, the frame median and maximum, and,
-        when \emph{Denoise (2$\times$2 opening)} is checked, the number of pixels
-        that survive the actual 2$\times$2 opening. That last number is the most
-        useful one: it is how much signal the combination of threshold and
-        denoise keeps per frame.
-  \item \textbf{Dark frames.} When a dark \code{.\allowbreak{}npy} is set on the panel,
-        the preview subtracts it before computing the statistics, exactly like
-        the accumulation run, and the caption says \emph{dark-subtracted}.
-  \item \textbf{Refresh.} Change the threshold or the frame and click again.
-        \emph{Hide} collapses the histogram.
+  \item \textbf{Single frame.} Enter a global 0-based index, or leave it blank
+        to choose a frame uniformly at random. The index follows file name
+        order, then frame order within each file. Click \emph{Histogram frame}.
+        The caption identifies the file and frame.
+  \item \textbf{Average.} Set \emph{Files to average} and click
+        \emph{Histogram average}. The preview randomly chooses that many
+        distinct files and calculates a pixel-by-pixel mean across every
+        frame in them. Each frame contributes equally. The caption reports
+        the file and frame counts.
+  \item \textbf{Dark subtraction.} Select a dark \code{.\allowbreak{}npy} above the
+        histogram controls to subtract it from either preview. The plots
+        retain negative pixel values after subtraction.
+  \item \textbf{Range and binning.} Both previews use the same X limits and bin
+        width. Pixels outside the chosen X range are excluded from the
+        histogram. A custom bin width may leave a narrower final bin at X max.
+        Click the corresponding histogram button again to apply changes.
+        \emph{Hide} collapses that plot.
+  \item \textbf{Console.} The Accumulate console reports when each preview
+        starts, its source and elapsed time on completion, and any errors.
 \end{itemize}
 
-The preview always applies the threshold statistic, even when
-\code{Simple sum} is checked; the checkbox only affects the accumulation job.
-The frame index is not part of the saved settings and resets when the page is
-reloaded.
+Thresholding, denoising, and GMD weighting apply only to the accumulation job.
 
 \subsection{Centroiding}
 \label{sec:centroiding}
@@ -1878,8 +1885,9 @@ backend, for example \code{Agg}. \\
   \item[Changing parameters does nothing.] Some stages resume from existing
     outputs. Accumulate skips the computation when the output text file
     exists; Centroiding skips localisation when the checkpoint exists; the
-    Pipeline skips stages whose outputs exist. Delete the output (or untick
-    the checkpoint in Clear outputs) to force a recomputation.
+    Pipeline skips stages whose outputs exist. Delete the relevant output to
+    force recomputation. In Centroiding, leave \emph{Also delete checkpoint}
+    checked in \emph{Clear outputs} to rerun localisation.
   \item[GMD weighting has no effect.] The map may be missing, partial, or all
     weights are 1.0. A map built with \emph{First N files} only covers those
     files; frames outside it silently keep weight 1.0.

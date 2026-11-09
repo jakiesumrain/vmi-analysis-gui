@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 import time
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -14,9 +15,9 @@ from ..accumulate_plot import (ACCUMULATE_HEIGHT, COLORMAPS,
                                FRAME_HISTOGRAM_HEIGHT, accumulation_figure,
                                frame_histogram_figure)
 from ..centroid_plots import plot_options
-from ..frame_preview import (frame_statistics, list_raw_frames,
-                             load_raw_frame, pick_frame)
-from ..jobs import Job, JobManager
+from ..frame_preview import (average_raw_frames, list_raw_frames, load_raw_frame,
+                             pick_frame, subtract_dark)
+from ..jobs import Job, JobManager, ResourceBusyError
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
                      open_folder_button, path_input, persist,
@@ -77,81 +78,112 @@ def build(jobs: JobManager) -> None:
             simple_sum = persist(ui.checkbox("Simple sum (no threshold)",
                                              value=False),
                                  "accumulate.simple_sum")
+        dark_path = persist(path_input("Dark frame .npy (optional)", "",
+                                       browse="file", filters=[".npy"]),
+                            "accumulate.dark_path")
         with ui.row().classes("gap-3 items-end flex-wrap"):
-            frame_index = num_input("Frame index (0-based)",
-                                    None).classes("w-56") \
+            histogram_x_min = persist(
+                num_input("Histogram X min", None, step="any").classes("w-36")
+                .props('placeholder="Auto"'), "accumulate.histogram_x_min")
+            histogram_x_max = persist(
+                num_input("Histogram X max", None, step="any").classes("w-36")
+                .props('placeholder="Auto"'), "accumulate.histogram_x_max")
+            histogram_bin_width = persist(
+                num_input("Bin width (counts)", None, step="any").classes("w-36")
+                .props('placeholder="Auto"'), "accumulate.histogram_bin_width")
+        with ui.row().classes("gap-3 items-end flex-wrap"):
+            frame_index = num_input("Frame index (0-based)", None).classes("w-56") \
                 .props('placeholder="blank = random"')
-            histogram_button = ui.button("Histogram frame", icon="bar_chart") \
-                .props("flat color=primary")
-        histogram_area = ui.column().classes("w-full gap-1")
-        histogram_area.visible = False
+            frame_button = ui.button("Histogram frame", icon="bar_chart").props("flat color=primary")
+            file_count = persist(num_input("Files to average", 1, step=1).classes("w-36"),
+                                 "accumulate.histogram_file_count")
+            average_button = ui.button("Histogram average", icon="bar_chart").props("flat color=primary")
+        frame_area = ui.column().classes("w-full gap-1")
+        average_area = ui.column().classes("w-full gap-1")
+        frame_area.visible = average_area.visible = False
 
-        def hide_histogram():
-            histogram_area.clear()
-            histogram_area.visible = False
+        def hide_histogram(area):
+            area.clear()
+            area.visible = False
 
-        async def show_histogram():
+        def histogram_data(folder, dark, selection, average, limits):
+            paths = [folder, dark] if dark is not None else [folder]
+            with jobs.preview_read_access(paths) as stopping:
+                if average:
+                    values, count = average_raw_frames(folder, selection, stopping=stopping)
+                    caption = f"{count:,} frames from {selection:,} distinct HDF5 files"
+                    title = "Average frame histogram"
+                    x_label = "Mean pixel value per frame (counts)"
+                else:
+                    refs = list_raw_frames(folder)
+                    ref = pick_frame(refs, selection)
+                    values = load_raw_frame(ref)
+                    caption = (f"Frame {ref.global_index + 1} of {len(refs)} · "
+                               f"{ref.file_name} frame {ref.frame_index} "
+                               f"(0-based index {ref.global_index})")
+                    kind = "Raw frame" if dark is None else "Frame"
+                    title = f"{kind} histogram · {ref.file_name} frame {ref.frame_index}"
+                    x_label = "Raw pixel value (counts)"
+                if dark is not None:
+                    values = subtract_dark(values, dark)
+                    caption += f" · dark-subtracted ({dark.name})"
+                    x_label = ("Dark-subtracted mean pixel value per frame (counts)" if average
+                               else "Dark-subtracted pixel value (counts)")
+            return frame_histogram_figure(values, title=title, x_label=x_label, **limits), caption
+
+        async def show_histogram(average):
+            preview = "Histogram average" if average else "Histogram frame"
             folder = (h5_dir.value or "").strip()
             if not folder:
-                ui.notify("Set the HDF5 directory first.", type="warning")
+                message = "Set the HDF5 directory first."
+                view.log.push(f"[{preview}] {message}")
+                ui.notify(message, type="warning")
                 return
-            histogram_button.disable()
-            histogram_button.props("loading")
+            area, button = (average_area, average_button) if average else (frame_area, frame_button)
+            button.disable()
+            button.props("loading")
+            started = time.monotonic()
             try:
-                raw_index = frame_index.value
-                index = None if raw_index is None else int(raw_index)
-                refs = await asyncio.to_thread(list_raw_frames, folder)
-                ref = pick_frame(refs, index)
-                values = await asyncio.to_thread(load_raw_frame, ref)
-                dark = None
-                dark_file = (dark_path.value or "").strip()
-                if dark_file:
-                    dark = await asyncio.to_thread(_load_dark_npy, dark_file,
-                                                   values.shape)
-                if dark is not None:
-                    values = values.astype(np.float64) - dark
-                threshold = (float(im_threshold.value)
-                             if im_threshold.value is not None else 5.0)
-                stats = await asyncio.to_thread(
-                    frame_statistics, values, threshold,
-                    denoise=bool(do_denoise.value))
-            except (OSError, ValueError, KeyError, IndexError) as exc:
+                selection = file_count.value if average else frame_index.value
+                if average and (selection is None or selection < 1 or not float(selection).is_integer()):
+                    raise ValueError("Files to average must be a positive whole number.")
+                if not average and selection is not None and not float(selection).is_integer():
+                    raise ValueError("Frame index must be a whole number.")
+                selection = None if selection is None else int(selection)
+                if average:
+                    source = f"{selection:,} distinct HDF5 files"
+                else:
+                    source = "a random frame" if selection is None else f"frame index {selection:,}"
+                view.log.push(f"[{preview}] Reading {source} from {folder}…")
+                dark = (dark_path.value or "").strip()
+                limits = dict(x_min=histogram_x_min.value, x_max=histogram_x_max.value,
+                              bin_width=histogram_bin_width.value)
+                figure, caption = await asyncio.to_thread(
+                    histogram_data, REPO_ROOT / Path(folder).expanduser(),
+                    REPO_ROOT / Path(dark).expanduser() if dark else None,
+                    selection, average, limits)
+            except (OSError, ValueError, KeyError, IndexError, ResourceBusyError) as exc:
+                view.log.push(f"[{preview}] Error: {exc}")
                 ui.notify(str(exc), type="negative")
                 return
             finally:
-                histogram_button.props(remove="loading")
-                histogram_button.enable()
+                button.props(remove="loading")
+                button.enable()
 
-            caption = (f"Frame {ref.global_index + 1} of {len(refs)} · "
-                       f"{ref.file_name} frame {ref.frame_index} "
-                       f"(0-based index {ref.global_index})")
-            if dark is not None:
-                caption += " · dark-subtracted"
-            percent = 100.0 * stats["above"] / stats["n_pixels"]
-            summary = (f"threshold {threshold:g}: {stats['above']:,} px above "
-                       f"({percent:.3g}%) · median {stats['median']:.6g}, "
-                       f"max {stats['maximum']:.6g}")
-            after = stats["after_denoise"]
-            if after is not None:
-                summary += (f" · {after:,} px after 2×2 denoise "
-                            f"({100.0 * after / stats['n_pixels']:.3g}%)")
-
-            histogram_area.clear()
-            with histogram_area:
+            area.clear()
+            with area:
                 with ui.row().classes("w-full items-center justify-between"):
                     ui.label(caption).classes("vmi-caption")
                     ui.button("Hide", icon="visibility_off",
-                              on_click=hide_histogram) \
+                              on_click=partial(hide_histogram, area)) \
                         .props("flat dense color=secondary")
-                ui.label(summary).classes("vmi-subtitle")
-                figure = frame_histogram_figure(
-                    values, threshold,
-                    title=f"{ref.file_name} · frame {ref.frame_index}")
                 ui.plotly(plot_options(figure)).classes("w-full") \
                     .style(f"height: {FRAME_HISTOGRAM_HEIGHT}px")
-            histogram_area.visible = True
+            area.visible = True
+            view.log.push(f"[{preview}] Plotted in {time.monotonic() - started:.1f}s · {caption}")
 
-        histogram_button.on_click(show_histogram)
+        frame_button.on_click(partial(show_histogram, False))
+        average_button.on_click(partial(show_histogram, True))
         with ui.row().classes("gap-4 flex-wrap"):
             enable_gmd = persist(ui.checkbox("GMD weighting", value=False),
                                  "accumulate.enable_gmd")
@@ -162,9 +194,6 @@ def build(jobs: JobManager) -> None:
                                 "accumulate.gmd_w_min")
             gmd_w_max = persist(num_input("Weight max", 4.0, step=0.5),
                                 "accumulate.gmd_w_max")
-        dark_path = persist(path_input("Dark frame .npy (optional)", "",
-                                       browse="file", filters=[".npy"]),
-                            "accumulate.dark_path")
 
         def run():
             job_id_hint = str(time.time_ns())[-8:]
@@ -213,15 +242,6 @@ def build(jobs: JobManager) -> None:
 
     view.place_console()
     live_area.move()
-
-
-def _load_dark_npy(path: str, shape) -> np.ndarray:
-    """Load a dark-frame .npy and reject a shape mismatch early."""
-    dark = np.load(path, allow_pickle=False)
-    if dark.shape != tuple(shape):
-        raise ValueError(f"Dark frame shape {dark.shape} does not match "
-                         f"frame shape {tuple(shape)}")
-    return dark
 
 
 def _clear_output(output_path) -> None:
