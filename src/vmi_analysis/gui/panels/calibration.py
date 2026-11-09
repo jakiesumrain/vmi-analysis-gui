@@ -51,16 +51,14 @@ FILTER_FIELDS = [
 ]
 
 
-def _render_polar_png(polar, out_path, cmap="viridis", *, log_scale=False, vmin=None, vmax=None):
+def _render_polar_png(polar, out_path, cmap="viridis", *, log_scale=False,
+                      vmin_pct=None, vmax_pct=None):
     """Write the polar image at exactly one pixel per bin (x=r, y=theta)."""
     polar = np.asarray(polar, dtype=float)
-    limits = [float(value) for value in (vmin, vmax) if value is not None]
-    if not all(np.isfinite(limits)):
-        raise ValueError("Color limits must be finite.")
-    if log_scale and any(value <= 0 for value in limits):
-        raise ValueError("Log color limits must be positive.")
-    if len(limits) == 2 and limits[0] >= limits[1]:
-        raise ValueError("The minimum intensity must be below the maximum.")
+    lower = 1.0 if vmin_pct is None else float(vmin_pct)
+    upper = 99.5 if vmax_pct is None else float(vmax_pct)
+    if not 0 <= lower < upper <= 100:
+        raise ValueError("Enter percentiles from 0 to 100 with vmin below vmax.")
     valid = np.isfinite(polar)
     if log_scale:
         valid &= polar > 0
@@ -69,13 +67,10 @@ def _render_polar_png(polar, out_path, cmap="viridis", *, log_scale=False, vmin=
     values = polar[valid]
     scaled = np.zeros(polar.shape)
     if values.size:
-        low = float(np.percentile(values, 1)) if vmin is None else float(vmin)
-        high = float(np.percentile(values, 99.5)) if vmax is None else float(vmax)
+        low, high = np.percentile(values, [lower, upper])
         if high > low:
             norm = LogNorm if log_scale else Normalize
             scaled[valid] = norm(vmin=low, vmax=high, clip=True)(values)
-        elif limits:
-            raise ValueError("The minimum intensity must be below the maximum.")
     rgb = (colormaps[cmap.lower()](scaled)[..., :3] * 255).astype(np.uint8)
     Image.fromarray(rgb).save(out_path, format="PNG")
     return out_path
@@ -288,18 +283,17 @@ def build(jobs=None, *, use_calibration=None) -> None:
                  "onion_peeling"], value="hansenlaw",
                 label="Abel method").props("outlined dense"),
                 "calibration.abel_method")
-            widgets["placement"] = persist(ui.select(
-                ["post_abel", "pre_abel", "raw", "off"], value="post_abel",
-                label="Display filter placement").props("outlined dense"),
-                "calibration.placement")
+        with ui.row().classes("gap-4 flex-wrap items-center"):
             widgets["mode"] = persist(ui.select(
                 list(pf.ENHANCE_MODES), value="bandpass",
-                label="Display enhancement").props("outlined dense"),
+                label="Display enhancement").props("outlined dense").classes("w-44"),
                 "calibration.enhance_mode")
+            widgets["placement"] = persist(ui.select(
+                {"raw": "Raw polar", "pre_abel": "Before Abel inversion",
+                 "post_abel": "After Abel inversion", "off": "Off"},
+                value="post_abel", label="Display filter placement")
+                .props("outlined dense").classes("w-56"), "calibration.placement")
             apply_button = ui.button("Apply processing", icon="tune")
-            widgets["show_raw"] = persist(
-                ui.checkbox("Show raw polar", value=False),
-                "calibration.show_raw")
         with ui.expansion("Filter parameters", icon="tune").classes("w-full"):
             with ui.row().classes("gap-3 flex-wrap"):
                 for key, label, value, step in FILTER_FIELDS:
@@ -319,20 +313,24 @@ def build(jobs=None, *, use_calibration=None) -> None:
                         ui.select(list(COLORMAPS), value="Viridis", label="Colormap")
                         .props("outlined dense").classes("w-36"), "calibration.colormap")
                     color_min = persist(
-                        num_input("Min intensity (vmin)", None, step="any")
-                        .props('placeholder="Auto" debounce=200').classes("w-44"), "calibration.color_min")
+                        num_input("Lower percentile (vmin)", None, step="any")
+                        .props('placeholder="1" debounce=200').classes("w-48"), "calibration.color_min_pct")
                     color_max = persist(
-                        num_input("Max intensity (vmax)", None, step="any")
-                        .props('placeholder="Auto" debounce=200').classes("w-44"), "calibration.color_max")
+                        num_input("Upper percentile (vmax)", None, step="any")
+                        .props('placeholder="99.5" debounce=200').classes("w-48"), "calibration.color_max_pct")
                 color_status = ui.label("").classes("vmi-subtitle")
                 color_status.visible = False
-                ui.label("Blank limits are automatic. In Log mode, enter positive intensity limits.") \
+                ui.label("Percentiles use each visible image separately. Log scale uses positive pixels.") \
                     .classes("vmi-subtitle")
-                polar_image = ui.interactive_image(
-                    "", on_mouse=lambda e: _on_mouse(e),
-                    events=["mousedown", "mousemove", "mouseup", "mouseleave"],
-                    sanitize=False,
-                ).classes("w-full").style("height: clamp(220px, 38vh, 360px); border: 1px solid #e0ddd6")
+                polar_images = {}
+                for key, label in (("raw", "Raw polar"), ("display", "Processed polar")):
+                    ui.label(label).classes("vmi-subtitle")
+                    polar_images[key] = ui.interactive_image(
+                        "", on_mouse=lambda e: _on_mouse(e),
+                        events=["mousedown", "mousemove", "mouseup", "mouseleave"],
+                        sanitize=False,
+                    ).classes("w-full").style(
+                        "height: clamp(220px, 38vh, 360px); border: 1px solid #e0ddd6")
                 widgets["tool"] = ui.toggle(
                     {"band": "Select band", "mask": "Mask"}, value="band")
                 with ui.row().classes("gap-2 items-center"):
@@ -463,7 +461,9 @@ def build(jobs=None, *, use_calibration=None) -> None:
         mask_label.text = f"Masks: {len(state['masks'])}"
 
     def _update_overlay():
-        polar_image.content = _overlay_svg(state)
+        overlay = _overlay_svg(state)
+        for image in polar_images.values():
+            image.content = overlay
         _update_labels()
 
     def _reset_view():
@@ -472,7 +472,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         _refresh_view()
 
     def _refresh_view():
-        if not state["ready"]:
+        if not state["ready"] or state["display"] is None:
             return
         view = state["view"]
         theta, r = state["theta"], state["r"]
@@ -482,21 +482,23 @@ def build(jobs=None, *, use_calibration=None) -> None:
                             & (r <= view["r1"] + 1e-12))
         if ti.size < 2 or ri.size < 2:
             return
-        source = state["raw"] if widgets["show_raw"].value else state["display"]
-        if source is None:
-            return
-        patch = source[np.ix_(ti, ri)]
-        try:
-            _render_polar_png(patch, VIEW_PNG, cmap=colormap.value,
-                              log_scale=color_scale.value == "Log",
-                              vmin=color_min.value, vmax=color_max.value)
-            color_status.visible = False
-        except ValueError as exc:
-            color_status.text = f"{exc} Showing automatic linear colors."
-            color_status.visible = True
-            _render_polar_png(patch, VIEW_PNG, cmap=colormap.value)
+        indices = np.ix_(ti, ri)
+        raw_path = VIEW_PNG.with_stem(f"{VIEW_PNG.stem}_raw")
+        warnings = []
+        for key, path, label in (("raw", raw_path, "Raw polar"),
+                                 ("display", VIEW_PNG, "Processed polar")):
+            patch = state[key][indices]
+            try:
+                _render_polar_png(patch, path, cmap=colormap.value,
+                                  log_scale=color_scale.value == "Log",
+                                  vmin_pct=color_min.value, vmax_pct=color_max.value)
+            except ValueError as exc:
+                warnings.append(f"{label} uses automatic linear colors. {exc}")
+                _render_polar_png(patch, path, cmap=colormap.value)
+            polar_images[key].set_source(file_url(path))
+        color_status.text = " ".join(warnings)
+        color_status.visible = bool(warnings)
         state["img_size"] = (int(ri.size), int(ti.size))
-        polar_image.set_source(file_url(VIEW_PNG))
         _update_overlay()
 
     def _zoom_band():
@@ -863,7 +865,6 @@ def build(jobs=None, *, use_calibration=None) -> None:
     accept_button.on_click(_accept_clicked)
     widgets["tool"].on_value_change(
         lambda e: state.__setitem__("tool", e.value or "band"))
-    widgets["show_raw"].on_value_change(lambda e: _refresh_view())
     for control in (color_scale, colormap, color_min, color_max):
         control.on_value_change(lambda _: _refresh_view())
     use_circ_button.on_click(_use_circularize_input)

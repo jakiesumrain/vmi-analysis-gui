@@ -76,25 +76,37 @@ class PanelHelperTests(unittest.TestCase):
             with Image.open(path) as image:
                 self.assertEqual(image.size, (100, 360))
 
-    def test_live_color_limits_apply_linear_or_log_mapping_to_display(self):
+    def test_percentile_limits_apply_linear_or_log_mapping(self):
         from PIL import Image
 
         data = np.array([[-1., 1., 10., 100., np.nan]])
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "polar.png"
-            calibration._render_polar_png(data, path, "Gray", vmin=1, vmax=100)
+            calibration._render_polar_png(data, path, "Gray", vmin_pct=0, vmax_pct=100)
             with Image.open(path) as image:
                 linear = np.array(image)[0, :, 0]
-            calibration._render_polar_png(data, path, "Gray", log_scale=True, vmin=1, vmax=100)
+            calibration._render_polar_png(data, path, "Gray", log_scale=True,
+                                          vmin_pct=0, vmax_pct=100)
             with Image.open(path) as image:
                 log = np.array(image)[0, :, 0]
             self.assertLess(linear[2], 30)
             self.assertGreater(log[2], 120)
             self.assertEqual(log[[0, 1, 3, 4]].tolist(), [0, 0, 255, 0])
-            with self.assertRaisesRegex(ValueError, "positive"):
-                calibration._render_polar_png(data, path, log_scale=True, vmin=0)
-            with self.assertRaisesRegex(ValueError, "below the maximum"):
-                calibration._render_polar_png(data, path, vmin=10, vmax=1)
+            for lower, upper in ((-1, 100), (0, 101), (90, 10), (np.nan, 100)):
+                with self.subTest(lower=lower, upper=upper), \
+                        self.assertRaisesRegex(ValueError, "Enter percentiles"):
+                    calibration._render_polar_png(data, path, vmin_pct=lower, vmax_pct=upper)
+
+    def test_percentile_limits_follow_each_images_intensity_distribution(self):
+        from PIL import Image
+
+        data = np.array([[0, 25, 50, 75, 100]])
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "polar.png"
+            for values in (data, 3 * data - 100):
+                calibration._render_polar_png(values, path, "Gray", vmin_pct=25, vmax_pct=75)
+                with Image.open(path) as image:
+                    self.assertEqual(np.array(image)[0, :, 0].tolist(), [0, 0, 128, 255, 255])
 
 
 class PanelBuildTests(unittest.TestCase):
@@ -143,6 +155,8 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                         calibration.build(use_calibration=use_calibration)
                     with patch.object(pf, "remap_polar", wraps=pf.remap_polar) as remap:
                         await callbacks["Load image & remap"]()
+                    self.assertTrue((Path(tmp) / "polar_raw.png").is_file())
+                    self.assertTrue((Path(tmp) / "polar.png").is_file())
                     np.testing.assert_array_equal(remap.call_args.args[0], image)
                     self.assertEqual(remap.call_args.args[1], (10, 4))
                     lines = [line.text for element in client.elements.values()

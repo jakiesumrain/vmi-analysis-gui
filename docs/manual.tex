@@ -1629,8 +1629,10 @@ Hansen--Law (the method used by the reference software); Dasch three-point,
 two-point and onion-peeling are available for comparison. \\
 \addlinespace
 \emph{Display filter placement} & select, \code{post\_\allowbreak{}abel} & \code{calibration.\allowbreak{}placement} &
-Filter after Abel, filter before Abel, show filtered raw polar data, or
-show the fit image with filtering off. \\
+\emph{Raw polar} filters the remap alone. \emph{Before Abel inversion}
+filters the remap, then inverts it if enabled. \emph{After Abel inversion}
+filters the inversion result, or the remap if inversion is disabled.
+\emph{Off} displays the unfiltered fit image. \\
 \addlinespace
 \emph{Display enhancement} & select, \code{bandpass} & \code{calibration.\allowbreak{}enhance\_\allowbreak{}mode} &
 Choose \code{none}, \code{bandpass}, \code{ridge}, \code{unsharp} or \code{clahe}. \\
@@ -1639,9 +1641,6 @@ Choose \code{none}, \code{bandpass}, \code{ridge}, \code{unsharp} or \code{clahe
 Editable defaults: smooth $\theta$ 1.0, smooth $r$ 0.8; bandpass low $r$ 2.0
 and high $r$ 20.0; ridge background 8.0/25.0 and ridge $\sigma$ 1.2; unsharp
 blur 6.0/18.0; CLAHE clip 0.02 and kernel 24/96. \\
-\addlinespace
-\emph{Show raw polar} & checkbox, off & \code{calibration.\allowbreak{}show\_\allowbreak{}raw} &
-Display the polar image before inverse Abel or enhancement. \\
 \addlinespace
 \emph{Select band} / \emph{Mask} & toggle & --- & Drag with the left mouse button:
 a band (blue) selects the fit region, a mask (red) excludes interference. \\
@@ -1680,15 +1679,16 @@ accepted ring fits. \\
 For Centroiding data, use its raw output \code{vmi\_2d\_raw.npy}. The console
 reports the brightest pixel as \emph{Center X} (column) and \emph{Center Y}
 (row). The polar remap uses this origin on the original grid.
-(2) Adjust the processing chain and press
-\emph{Apply processing}. Use the display to choose the band and masks.
-The same region is fitted on unenhanced data.
+(2) Set inverse Abel and the display filter on their separate rows, then
+press \emph{Apply processing}. The processed preview appears directly below
+the raw polar remap. Both show the same band and masks. The fit uses the
+selected region of the unenhanced fit image.
 (3) With \emph{Select band} active, drag a rectangle around one ring.
 \emph{Zoom to band} zooms along the radius while keeping the angular view fixed.
-\emph{Color scale}, \emph{Colormap}, and the intensity limits update the polar
-preview as you edit them. Leave a limit blank for automatic scaling. Log
-scaling uses positive intensities and expects limits in the original
-intensity units. These controls affect the polar preview only.
+\emph{Color scale}, \emph{Colormap}, and the lower and upper percentiles
+update both previews as you edit them. Enter percentiles from 0 to 100.
+Blank fields use the 1st and 99.5th percentiles. Each preview computes its
+limits from the visible pixels. Log scaling uses only positive pixels.
 (4) Switch
 to \emph{Mask} and drag rectangles over overlapping rings, hot spots or bad
 sectors. \emph{Clear masks} removes all of them. (5) Press \emph{Fit selection}.
@@ -1702,7 +1702,7 @@ session file can be saved at any point and loaded later. After exporting the
 rings, click \emph{Use in Circularize} to pass the NumPy image and calibration
 file to Circularize.
 
-\textbf{Results.} The panel shows the polar image with band, masks and fitted
+\textbf{Results.} The panel shows both polar previews with band, masks and fitted
 ridge overlays, a fit comparison, the parameter table, the accepted-ring
 table, and the $a_n,b_n$ preview. The parameter table reports local
 least-squares errors. These estimates do not account for correlations between
