@@ -135,9 +135,10 @@ no-direct-push rule is enforced by convention.
 `uv run vmi-analysis` → http://localhost:3157
 (`VMI_GUI_PORT` overrides the port,
 `VMI_GUI_NO_SHOW=1` suppresses the browser auto-open). The server shuts
-itself down once the last browser client is gone, unless the header's global
-**Keep running on disconnect** option (`server.keep_alive_while_jobs`, default
-on) is set and a job is running or queued; then it keeps the jobs alive and
+itself down once the last browser client is gone, unless the header
+**Settings** panel's global **Keep running on disconnect** option
+(`server.keep_alive_while_jobs`, default on) is set and a job is running or
+queued; then it keeps the jobs alive and
 exits after the queue becomes idle and no page reconnects. The idle shutdown
 grace is `VMI_GUI_SHUTDOWN_GRACE` (default 2 s); the NiceGUI/Engine.IO
 reconnect window, ping interval and ping timeout derive from

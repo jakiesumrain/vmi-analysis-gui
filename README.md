@@ -40,8 +40,9 @@ If the requested port is unavailable, startup exits with a clear error and
 prints PowerShell commands using a checked alternative port. The app does not
 switch ports automatically; run the suggested commands to relaunch it.
 
-The **Keep running on disconnect** checkbox in the header (on by default,
-applies to every panel) decides what happens when the last page disconnects.
+The **Keep running on disconnect** option in the header **Settings** panel
+(on by default, applies to every panel) decides what happens when the last
+page disconnects.
 When it is on and a job is running or queued, the server and the jobs stay
 alive, so closing the tab, an Edge sleeping tab, a locked screen or a network
 drop does not kill a long job; the server exits after the queue is idle and no
@@ -75,9 +76,10 @@ The picker's **New folder** button creates a named folder in the directory
 you are viewing and opens it, ready to select or save into. Existing files
 and folders are never overwritten.
 
-**Maximum concurrent jobs** in the header controls how many jobs may run at
-once (default 2, dropdown choices 1–9, one active job per panel). Changes apply immediately and
-survive restart. Increasing the limit opens more slots; lowering it lets
+The header **Settings** button opens a settings panel containing
+**Maximum concurrent jobs**, which controls how many jobs may run at once
+(default 2, dropdown choices 1–9, one active job per panel), and
+**Keep running on disconnect**. Changes apply immediately and survive restart. Increasing the limit opens more slots; lowering it lets
 existing jobs finish and delays new starts. CPU worker counts inside individual
 panels still apply, so choose a limit appropriate for your RAM and disk speed.
 

@@ -38,6 +38,10 @@ class ConcurrencyControlsTests(unittest.TestCase):
             try:
                 with client:
                     gui.index()
+                self.assertTrue(any(
+                    element.__class__.__name__ == 'Button'
+                    and getattr(element, 'text', '') == 'Settings'
+                    for element in client.elements.values()))
                 toggle = next(element for element in client.elements.values()
                               if element.__class__.__name__ == 'Checkbox'
                               and 'Keep running' in getattr(element, 'text', ''))

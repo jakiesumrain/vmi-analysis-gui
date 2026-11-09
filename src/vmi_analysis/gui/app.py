@@ -122,44 +122,55 @@ TABS = [
 def index() -> None:
     theme.apply_theme()
 
+    def change_limit(event):
+        if event.value is None:
+            return
+        try:
+            MANAGER.set_max_concurrent(event.value)
+        except ValueError as exc:
+            ui.notify(str(exc), type="warning")
+            concurrency.value = MANAGER.max_concurrent
+            return
+        app.storage.general["jobs.max_concurrent"] = MANAGER.max_concurrent
+
+    def change_keep_alive(event):
+        app.storage.general[KEEP_ALIVE_KEY] = bool(event.value)
+
+    with ui.dialog() as settings_dialog, ui.card().classes("w-96 gap-3"):
+        ui.label("Settings").classes("text-lg font-semibold")
+        ui.separator()
+        keep_alive = ui.checkbox(
+            "Keep running on disconnect",
+            value=_keep_alive_enabled(),
+        ).props("dense").classes("vmi-caption")
+        keep_alive.tooltip(
+            "Applies to every panel. While a job is running, keep this server "
+            "and the job alive when the page disconnects (closed tab, Edge "
+            "sleeping tab, locked screen, network loss). Turn off to stop the "
+            "server and cancel jobs when the last page closes.")
+        keep_alive.on_value_change(change_keep_alive)
+        limits = list(range(1, len(TABS) + 1))
+        if MANAGER.max_concurrent not in limits:
+            limits.append(MANAGER.max_concurrent)
+        concurrency = ui.select(
+            limits, label="Maximum concurrent jobs",
+            value=MANAGER.max_concurrent,
+        ).classes("w-full").props("outlined dense")
+        concurrency.on_value_change(change_limit)
+        concurrency.tooltip("Lowering the limit lets running jobs finish; "
+                            "conflicts remain queued.")
+        with ui.row().classes("w-full justify-end"):
+            ui.button("Close", on_click=lambda: settings_dialog.close()).props("flat")
+
     with ui.header().classes("items-center justify-between px-6 py-3") \
             .style("background: #faf9f5; border-bottom: 1px solid #e6dfd8"):
-        with ui.row().classes("items-center gap-8"):
-            with ui.row().classes("items-baseline gap-3"):
-                ui.label("VMI Analysis").classes("vmi-title vmi-title-md vmi-title-bold")
-                ui.label("photoelectron imaging toolbox").classes("vmi-subtitle")
-            keep_alive = ui.checkbox(
-                "Keep running on disconnect",
-                value=_keep_alive_enabled(),
-            ).props("dense").classes("vmi-caption")
-            keep_alive.tooltip(
-                "Applies to every panel. While a job is running, keep this server "
-                "and the job alive when the page disconnects (closed tab, Edge "
-                "sleeping tab, locked screen, network loss). Turn off to stop the "
-                "server and cancel jobs when the last page closes.")
-            keep_alive.on_value_change(
-                lambda event: app.storage.general.__setitem__(
-                    KEEP_ALIVE_KEY, bool(event.value)))
+        with ui.row().classes("items-baseline gap-3"):
+            ui.label("VMI Analysis").classes("vmi-title vmi-title-md vmi-title-bold")
+            ui.label("photoelectron imaging toolbox").classes("vmi-subtitle")
         with ui.row().classes("items-center gap-4"):
-            def change_limit(event):
-                if event.value is None:
-                    return
-                try:
-                    MANAGER.set_max_concurrent(event.value)
-                except ValueError as exc:
-                    ui.notify(str(exc), type="warning")
-                    concurrency.value = MANAGER.max_concurrent
-                    return
-                app.storage.general["jobs.max_concurrent"] = MANAGER.max_concurrent
-
-            limits = list(range(1, len(TABS) + 1))
-            if MANAGER.max_concurrent not in limits:
-                limits.append(MANAGER.max_concurrent)
-            concurrency = ui.select(limits, label="Maximum concurrent jobs", value=MANAGER.max_concurrent) \
-                .classes("w-52").props("outlined dense")
-            concurrency.on_value_change(change_limit)
-            concurrency.tooltip("Lowering the limit lets running jobs finish; conflicts remain queued.")
             queue_label = ui.label("").classes("vmi-caption")
+            ui.button("Settings", icon="settings",
+                      on_click=lambda: settings_dialog.open()).props("outline dense")
 
     def refresh_queue():
         running = MANAGER.running()

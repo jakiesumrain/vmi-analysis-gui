@@ -267,9 +267,10 @@ panel-specific fields are in Section~\ref{sec:panels}.
 \label{sec:tabs}
 
 The header shows the title \emph{VMI Analysis}, the subtitle
-\code{photoelectron imaging toolbox}, the global \emph{Keep running on
-disconnect} checkbox, and the \emph{Maximum concurrent jobs} selector. The
-checkbox applies to every panel. Below it is one row of tabs, in this order:
+\code{photoelectron imaging toolbox}, and a \emph{Settings} button. The button
+opens a settings panel with two global controls: \emph{Maximum concurrent
+jobs} and \emph{Keep running on disconnect}. Both apply to every panel. Below
+the header is one row of tabs, in this order:
 \code{GMD Map}, \emph{Movie}, \emph{Dark Frame}, \emph{Accumulate},
 \code{Centroiding}, \emph{Binning}, \emph{Circularize}, \emph{PES},
 \code{Pipeline}.
@@ -304,9 +305,9 @@ A job that had already finished before the reload is not restored.
 \subsection{Job queue, concurrency and file reservations}
 \label{sec:queue}
 
-Jobs from all panels share one FIFO queue. The header selector
-\code{Maximum concurrent jobs} sets how many may run at once; the default is
-2 and the dropdown offers 1--9. Lowering the limit never kills running jobs:
+Jobs from all panels share one FIFO queue. The \emph{Settings} panel, opened
+from the button in the header, contains \code{Maximum concurrent jobs}; it
+sets how many may run at once, with default 2 and choices 1--9. Lowering the limit never kills running jobs:
 they finish, and new jobs start more slowly. The value is saved and survives
 a restart.
 
@@ -418,8 +419,8 @@ Launch the application with \code{uv run vmi-\allowbreak{}analysis}; it serves
 port is unavailable the program prints an error plus a ready-to-paste
 suggestion for a free port; it does not switch ports on its own.
 
-What happens when the last browser client disconnects is controlled by the
-global \emph{Keep running on disconnect} checkbox in the header (on by
+What happens when the last browser client disconnects is controlled by
+\emph{Keep running on disconnect} in the header \emph{Settings} panel (on by
 default). When it is on and any job is running or queued, the server and the
 jobs survive the disconnect: a closed tab, an Edge sleeping tab, a locked
 screen or a network drop does not terminate a long job. The server exits after
