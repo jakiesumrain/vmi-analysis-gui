@@ -256,7 +256,7 @@ def enhance_polar(image, mode="bandpass", params=None):
     return out
 
 
-def process_options(abel=True, abel_method="hansenlaw", enhancement=None):
+def process_options(abel=True, abel_method="hansenlaw", enhancement=None, fit_filtered=False):
     """Build a normalised processing-options dictionary."""
     enhancement = dict(enhancement or {})
     placement = enhancement.get("placement", "off")
@@ -270,19 +270,21 @@ def process_options(abel=True, abel_method="hansenlaw", enhancement=None):
     return {
         "abel": bool(abel),
         "abel_method": str(abel_method),
+        "fit_filtered": bool(fit_filtered),
         "enhancement": {"placement": placement, "mode": mode, "params": params},
     }
 
 
 def describe_processing(options):
     """One-line human-readable description used in provenance comments."""
-    options = process_options(**{k: options[k] for k in ("abel", "abel_method",
-                                                          "enhancement")})
+    options = process_options(**{k: options[k] for k in ("abel", "abel_method", "enhancement")},
+                              fit_filtered=options.get("fit_filtered", False))
     enh = options["enhancement"]
     parts = ["fit=point-sampled",
              f"abel={'none' if not options['abel'] else options['abel_method']}"]
+    filter_name = "fit_filter" if options["fit_filtered"] else "display_filter"
     if enh["placement"] == "off" or enh["mode"] == "none":
-        parts.append("display_filter=none")
+        parts.append(f"{filter_name}=none")
     else:
         p = enh["params"]
         if enh["mode"] == "bandpass":
@@ -293,13 +295,15 @@ def describe_processing(options):
             detail = f"blur={p['blur_theta']},{p['blur_r']}"
         else:
             detail = f"clip={p['clip_limit']},kernel={p['kernel_theta']},{p['kernel_r']}"
-        parts.append(f"display_filter={enh['mode']}({enh['placement']}:{detail})")
+        parts.append(f"{filter_name}={enh['mode']}({enh['placement']}:{detail})")
     return " ".join(parts)
 
 
-def process_polar(polar, dr, *, abel=True, abel_method="hansenlaw", enhancement=None):
+def process_polar(polar, dr, *, abel=True, abel_method="hansenlaw", enhancement=None,
+                  fit_filtered=False):
     """Return the fit image, display image and processing options."""
-    options = process_options(abel=abel, abel_method=abel_method, enhancement=enhancement)
+    options = process_options(abel=abel, abel_method=abel_method, enhancement=enhancement,
+                              fit_filtered=fit_filtered)
     enh = options["enhancement"]
     raw = np.asarray(polar, dtype=float)
     fit = inverse_abel(raw, dr=dr, method=abel_method) if abel else raw
@@ -310,7 +314,7 @@ def process_polar(polar, dr, *, abel=True, abel_method="hansenlaw", enhancement=
     display = enhance_polar(source, enh["mode"], enh["params"])
     if placement == "pre_abel" and abel:
         display = inverse_abel(display, dr=dr, method=abel_method)
-    return fit, display, options
+    return (display if fit_filtered else fit), display, options
 
 
 # ---------------------------------------------------------------------------

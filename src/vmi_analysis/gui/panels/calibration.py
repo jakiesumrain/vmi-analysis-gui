@@ -182,7 +182,7 @@ def _fit_comparison_figure(polar, theta, r, fit):
     finite = np.concatenate([data[np.isfinite(data)], model[np.isfinite(model)]])
     if not finite.size:
         return None
-    fig = make_subplots(rows=1, cols=2, subplot_titles=("Data used for fit", "Fitted model"),
+    fig = make_subplots(rows=1, cols=2, subplot_titles=("Processed band used for fit", "Fitted model"),
                         horizontal_spacing=0.1, shared_yaxes="all")
     degrees = np.degrees(angles)
     for col, values in enumerate((data, model), 1):
@@ -219,7 +219,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
     ).classes("vmi-caption")
 
     state = {
-        "raw": None, "fit_image": None, "display": None, "theta": None, "r": None, "dr": None,
+        "raw": None, "processed": None, "theta": None, "r": None, "dr": None,
         "options": None, "view": None, "img_size": (0, 0),
         "tool": "band", "drag_start": None, "drag_now": None,
         "drag_rect": None, "band": None, "masks": [], "last_fit": None,
@@ -286,13 +286,25 @@ def build(jobs=None, *, use_calibration=None) -> None:
         with ui.row().classes("gap-4 flex-wrap items-center"):
             widgets["mode"] = persist(ui.select(
                 list(pf.ENHANCE_MODES), value="bandpass",
-                label="Display enhancement").props("outlined dense").classes("w-44"),
+                label="Enhancement").props("outlined dense").classes("w-44"),
                 "calibration.enhance_mode")
             widgets["placement"] = persist(ui.select(
                 {"raw": "Raw polar", "pre_abel": "Before Abel inversion",
                  "post_abel": "After Abel inversion", "off": "Off"},
-                value="post_abel", label="Display filter placement")
+                value="post_abel", label="Filter placement")
                 .props("outlined dense").classes("w-56"), "calibration.placement")
+
+            def _update_filter_placement(preferred):
+                abel = widgets["abel"].value
+                active = "post_abel" if abel else "raw"
+                label = "After Abel inversion" if abel else "Raw polar"
+                widgets["placement"].set_options(
+                    {active: label, "off": "Off"},
+                    value="off" if preferred == "off" else active,
+                )
+
+            widgets["abel"].on_value_change(lambda _: _update_filter_placement(widgets["placement"].value))
+            _update_filter_placement(widgets["placement"].value)
             apply_button = ui.button("Apply processing", icon="tune")
         with ui.expansion("Filter parameters", icon="tune").classes("w-full"):
             with ui.row().classes("gap-3 flex-wrap"):
@@ -337,7 +349,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 ui.label("Percentiles use each visible image separately. Log scale uses positive pixels.") \
                     .classes("vmi-subtitle")
                 polar_images = {}
-                for key, label in (("raw", "Raw polar"), ("display", "Processed polar")):
+                for key, label in (("raw", "Raw polar"), ("processed", "Processed polar")):
                     ui.label(label).classes("vmi-subtitle")
                     polar_images[key] = ui.interactive_image(
                         "", on_mouse=lambda e: _on_mouse(e),
@@ -382,8 +394,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 accept_button = ui.button("Accept ring (append to file)",
                                            icon="save").disable()
         ui.label(
-            "Enhancement helps you select a band and masks. The fit uses "
-            "unenhanced data with inverse Abel applied if enabled."
+            "The fit uses the selected band from Processed polar, including any applied filter."
         ).classes("vmi-caption")
         fit_preview = ui.column().classes("w-full")
 
@@ -438,6 +449,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         return pf.process_options(
             abel=bool(widgets["abel"].value),
             abel_method=widgets["abel_method"].value,
+            fit_filtered=True,
             enhancement={"placement": widgets["placement"].value,
                          "mode": widgets["mode"].value,
                          "params": params},
@@ -464,7 +476,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 ui.label(issue).classes("text-negative")
             if not fit.converged:
                 ui.label(f"Optimizer did not converge. {fit.message}").classes("text-warning")
-            figure = _fit_comparison_figure(state["fit_image"], state["theta"], state["r"], fit)
+            figure = _fit_comparison_figure(state["processed"], state["theta"], state["r"], fit)
             if figure is not None:
                 ui.label("Grey areas are excluded. The yellow line marks the fitted ridge.").classes("vmi-subtitle")
                 ui.plotly(plot_options(figure)).classes("w-full").style("height: 450px")
@@ -494,7 +506,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         _refresh_view()
 
     def _refresh_view():
-        if not state["ready"] or state["display"] is None:
+        if not state["ready"] or state["processed"] is None:
             return
         view = state["view"]
         theta, r = state["theta"], state["r"]
@@ -506,7 +518,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
             return
         indices = np.ix_(ti, ri)
         warnings = []
-        for key, label in (("raw", "Raw polar"), ("display", "Processed polar")):
+        for key, label in (("raw", "Raw polar"), ("processed", "Processed polar")):
             patch = state[key][indices]
             try:
                 image = _render_polar_image(patch, cmap=colormap.value,
@@ -609,20 +621,19 @@ def build(jobs=None, *, use_calibration=None) -> None:
         if not state["ready"]:
             ui.notify("Load an image first.", type="warning")
             return
-        state["fit_image"] = state["display"] = None
+        state["processed"] = None
         _show_fit(None)
         try:
             options = _options()
-            fit_image, display, options = await asyncio.to_thread(
+            processed, _, options = await asyncio.to_thread(
                 pf.process_polar, state["raw"], state["dr"], **options)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             _notify_error(exc)
             return
-        state["fit_image"] = fit_image
-        state["display"] = display
+        state["processed"] = processed
         state["options"] = options
         _refresh_view()
-        remap_status.text = (f"{display.shape[1]} radial × {display.shape[0]} angular bins")
+        remap_status.text = (f"{processed.shape[1]} radial × {processed.shape[0]} angular bins")
 
     async def _load_image(saved_center=None):
         path = widgets["image"].value
@@ -671,14 +682,14 @@ def build(jobs=None, *, use_calibration=None) -> None:
                             "brightest_center": auto_center,
                             "n_r": n_r, "n_theta": n_theta, "r_max": r_max},
                      band=None, masks=[], selection_history=[], last_fit=None,
-                     fit_image=None, display=None,
+                     processed=None,
                      rings=[], view={"r0": 0.0, "r1": float(r[-1]),
                                      "theta0": 0.0, "theta1": float(pf.TWO_PI)})
         rings_table.rows = []
         coefficients_table.rows = []
         remap_status.text = "processing…"
         await _apply_processing()
-        if state["fit_image"] is None:
+        if state["processed"] is None:
             state["ready"] = False
         param_table.rows = []
         fit_status.text = "No fit yet."
@@ -688,7 +699,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         if not state["ready"]:
             ui.notify("Load an image first.", type="warning")
             return
-        if state["fit_image"] is None:
+        if state["processed"] is None:
             ui.notify("Apply processing before fitting.", type="warning")
             return
         if state["band"] is None:
@@ -697,7 +708,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         fit_button.disable()
         _show_fit(None)
         fit_status.text = "fitting…"
-        image, theta, radii = state["fit_image"], state["theta"], state["r"]
+        image, theta, radii = state["processed"], state["theta"], state["r"]
         band, masks = state["band"], tuple(state["masks"])
         try:
             fit = await asyncio.to_thread(
@@ -712,7 +723,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
             return
         finally:
             fit_button.enable()
-        if image is not state["fit_image"] or band != state["band"] or masks != tuple(state["masks"]):
+        if image is not state["processed"] or band != state["band"] or masks != tuple(state["masks"]):
             return
         _show_fit(fit)
         _update_overlay()
@@ -774,7 +785,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
             widgets["abel_method"].value = processing.get("abel_method",
                                                           "hansenlaw")
             enh = processing.get("enhancement", {})
-            widgets["placement"].value = enh.get("placement", "post_abel")
+            _update_filter_placement(enh.get("placement", "post_abel"))
             widgets["mode"].value = enh.get("mode", "bandpass")
             for key, value in (enh.get("params") or {}).items():
                 if f"param.{key}" in widgets:
@@ -789,6 +800,10 @@ def build(jobs=None, *, use_calibration=None) -> None:
             state["masks"] = [pf.Rect(*item) for item in payload.get("masks", [])]
             state["rings"] = pf.session_rings(payload)
             fit_data = payload.get("fit")
+            if fit_data and fit_data.get("processing") != state["options"]:
+                ui.notify("Processing changed since this fit was saved. Fit the selected band again.",
+                          type="warning")
+                fit_data = None
             _show_fit(None if fit_data is None else pf.RingFit.from_dict(fit_data))
             rings_table.rows = _ring_rows()
             _refresh_view()

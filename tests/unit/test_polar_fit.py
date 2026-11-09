@@ -106,6 +106,20 @@ class EnhancementTests(unittest.TestCase):
                     self.assertFalse(np.allclose(display, expected))
                     self.assertEqual(options["enhancement"]["placement"], placement)
 
+    def test_fit_can_use_processed_polar_data_with_and_without_abel(self):
+        polar, _, _ = make_polar_ridge(n_theta=24, n_r=60)
+        for abel, placement in ((False, "raw"), (True, "post_abel")):
+            base = pf.inverse_abel(polar) if abel else polar
+            for selected in (placement, "off"):
+                with self.subTest(abel=abel, placement=selected):
+                    data, display, options = pf.process_polar(
+                        polar, 1.0, abel=abel, fit_filtered=True,
+                        enhancement={"placement": selected, "mode": "bandpass"})
+                    expected = base if selected == "off" else pf.enhance_polar(base, "bandpass")
+                    self.assertIs(data, display)
+                    np.testing.assert_array_equal(data, expected)
+                    self.assertIn("fit_filter=", pf.describe_processing(options))
+
 
 class SelectionTests(unittest.TestCase):
     def test_full_angle_band_and_mask(self):

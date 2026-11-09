@@ -1581,7 +1581,7 @@ coordinates ($x$ = radius, $y$ = angle, the orientation of the Gascooke
 \emph{Theta vs r} image) and optionally applies inverse Abel to each
 constant-angle line. The remap samples detector intensity at each polar
 coordinate and preserves that intensity without a $1/r$ correction.
-The fitter uses the unenhanced data to estimate a Gaussian ridge whose centre varies as
+The fitter uses the processed polar data to estimate a Gaussian ridge whose centre varies as
 $r_g(\theta)=r_0+\sum_n[A_n\sin(n\theta)+B_n\cos(n\theta)]$. Accepted rings are
 appended to a trig-fit file in the format consumed by the Circularize and PES
 panels. This tab is an interactive tool: it submits no job and launches no
@@ -1628,13 +1628,12 @@ images this is a ridge-finding approximation. \\
 Hansen--Law (the method used by the reference software); Dasch three-point,
 two-point and onion-peeling are available for comparison. \\
 \addlinespace
-\emph{Display filter placement} & select, \code{post\_\allowbreak{}abel} & \code{calibration.\allowbreak{}placement} &
-\emph{Raw polar} filters the remap alone. \emph{Before Abel inversion}
-filters the remap, then inverts it if enabled. \emph{After Abel inversion}
-filters the inversion result, or the remap if inversion is disabled.
-\emph{Off} displays the unfiltered fit image. \\
+\emph{Filter placement} & select, \code{post\_\allowbreak{}abel} & \code{calibration.\allowbreak{}placement} &
+With inverse Abel enabled, choose \emph{After Abel inversion} or \emph{Off}.
+With inverse Abel disabled, choose \emph{Raw polar} or \emph{Off}.
+\emph{Off} skips filtering. \\
 \addlinespace
-\emph{Display enhancement} & select, \code{bandpass} & \code{calibration.\allowbreak{}enhance\_\allowbreak{}mode} &
+\emph{Enhancement} & select, \code{bandpass} & \code{calibration.\allowbreak{}enhance\_\allowbreak{}mode} &
 Choose \code{none}, \code{bandpass}, \code{ridge}, \code{unsharp} or \code{clahe}. \\
 \addlinespace
 \emph{Filter parameters} & expansion & \code{calibration.\allowbreak{}param.\allowbreak{}*} &
@@ -1682,7 +1681,7 @@ reports the brightest pixel as \emph{Center X} (column) and \emph{Center Y}
 (2) Set inverse Abel and the display filter on their separate rows, then
 press \emph{Apply processing}. The processed preview appears directly below
 the raw polar remap. Both show the same band and masks. The fit uses the
-selected region of the unenhanced fit image.
+selected region of the processed image, including any applied filter.
 (3) With \emph{Select band} active, drag a rectangle around one ring.
 \emph{Zoom to band} zooms along the radius while keeping the angular view fixed.
 \emph{Color scale}, \emph{Colormap}, and the percentile sliders update both
@@ -1695,7 +1694,7 @@ sectors. \emph{Undo selection} reverses the last band or mask edit on both
 previews. Use \emph{Clear band} to remove the blue band or \emph{Clear masks}
 to remove all red masks. Undo also reverses either clear action.
 (5) Press \emph{Fit selection}.
-The comparison shows the fitted band and model with shared axes and intensity
+The comparison shows the processed band used for the fit and the model with shared axes and intensity
 scale. Grey regions mark excluded pixels, and the yellow line shows
 $r_g(\theta)$. Review the images before accepting the ring.
 (6) Press \emph{Accept ring} to append one block to the
@@ -1718,8 +1717,8 @@ If the data cannot determine some parameters, widen the selected angular
 range or reduce \emph{Trig terms N} and refit. The panel blocks export when
 the model is underdetermined or has nonfinite parameters.
 
-\textbf{Pitfalls.} Enhancement can move an apparent ridge in the display.
-Use the unenhanced fit image to check the fitted ridge against the data.
+\textbf{Pitfalls.} Enhancement can move the fitted ridge. Use consistent
+processing settings for the rings in a calibration.
 Refit rings saved by the earlier fitting pipeline and export them to a new
 calibration file. Calibrate in the same orientation and centre frame as the
 images you will correct: PES rotates and centres each bin before it applies the
