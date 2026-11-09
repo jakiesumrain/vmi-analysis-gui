@@ -80,6 +80,15 @@ def build(jobs: JobManager) -> None:
             frame_index = num_input("Frame index (0-based)",
                                     None).classes("w-56") \
                 .props('placeholder="blank = random"')
+            histogram_x_min = persist(
+                num_input("Histogram X min", None, step="any").classes("w-36")
+                .props('placeholder="Auto"'), "accumulate.histogram_x_min")
+            histogram_x_max = persist(
+                num_input("Histogram X max", None, step="any").classes("w-36")
+                .props('placeholder="Auto"'), "accumulate.histogram_x_max")
+            histogram_bin_width = persist(
+                num_input("Bin width (counts)", None, step="any").classes("w-36")
+                .props('placeholder="Auto"'), "accumulate.histogram_bin_width")
             histogram_button = ui.button("Histogram frame", icon="bar_chart") \
                 .props("flat color=primary")
         histogram_area = ui.column().classes("w-full gap-1")
@@ -99,11 +108,15 @@ def build(jobs: JobManager) -> None:
             try:
                 raw_index = frame_index.value
                 index = None if raw_index is None else int(raw_index)
+                x_min = histogram_x_min.value
+                x_max = histogram_x_max.value
+                bin_width = histogram_bin_width.value
                 refs = await asyncio.to_thread(list_raw_frames, folder)
                 ref = pick_frame(refs, index)
                 values = await asyncio.to_thread(load_raw_frame, ref)
                 figure = await asyncio.to_thread(
                     frame_histogram_figure, values,
+                    x_min=x_min, x_max=x_max, bin_width=bin_width,
                     title=f"Raw frame histogram · {ref.file_name} frame {ref.frame_index}")
             except (OSError, ValueError, KeyError, IndexError) as exc:
                 ui.notify(str(exc), type="negative")

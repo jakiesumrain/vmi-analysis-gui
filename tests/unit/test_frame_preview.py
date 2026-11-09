@@ -73,6 +73,29 @@ class FramePreviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             frame_histogram_figure(np.array([]))
 
+    def test_histogram_limits_and_bin_width_include_a_partial_last_bin(self):
+        values = np.array([0, 2, 3, 4, 5, 6, 7, 8, 9])
+        figure = frame_histogram_figure(values, x_min=2, x_max=8, bin_width=2.5)
+        self.assertEqual(figure.layout.xaxis.range, (2, 8))
+        np.testing.assert_array_equal(figure.data[0].y, [3, 2, 2])
+        np.testing.assert_allclose(figure.data[0].width, [2.5, 2.5, 1])
+
+    def test_histogram_defaults_missing_limits_and_width(self):
+        values = np.array([0, 1, 2, 3, 4])
+        figure = frame_histogram_figure(values, x_max=2, bins=2)
+        self.assertEqual(figure.layout.xaxis.range, (0, 2))
+        np.testing.assert_array_equal(figure.data[0].y, [1, 2])
+        constant = frame_histogram_figure(np.zeros(4), bin_width=1)
+        np.testing.assert_array_equal(constant.data[0].y, [4])
+
+    def test_histogram_rejects_invalid_limits_and_bin_width(self):
+        values = np.array([0, 10])
+        for options in ({"x_min": 5, "x_max": 5}, {"x_max": np.inf},
+                        {"bin_width": 0}, {"bin_width": -1},
+                        {"bin_width": np.nan}, {"bin_width": 0.00001}):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                frame_histogram_figure(values, **options)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,7 @@ from .centroid_plots import COLORMAPS, _heatmap, _image_axes, _style
 
 ACCUMULATE_HEIGHT = 800
 FRAME_HISTOGRAM_HEIGHT = 380
+MAX_FRAME_HISTOGRAM_BINS = 65_536
 
 
 def accumulation_figure(values, *, title="Accumulated image", revision=None, colormap="Viridis"):
@@ -31,24 +32,51 @@ def accumulation_figure(values, *, title="Accumulated image", revision=None, col
 
 
 def frame_histogram_figure(values, *, title="Raw frame histogram",
-                           bins=160, log_y=True):
+                           bins=160, log_y=True, x_min=None, x_max=None,
+                           bin_width=None):
     """Plot the pixel-value distribution of one raw frame."""
     values = np.asarray(values, dtype=float).ravel()
     values = values[np.isfinite(values)]
     if values.size == 0:
         raise ValueError("Frame contains no finite pixels")
 
-    counts, edges = np.histogram(values, bins=int(bins))
-    centers = (edges[1:] + edges[:-1]) / 2
+    lower, upper = float(values.min()), float(values.max())
+    if lower == upper:
+        lower -= 0.5
+        upper += 0.5
+    lower = lower if x_min is None else float(x_min)
+    upper = upper if x_max is None else float(x_max)
+    span = upper - lower
+    if not np.isfinite(span) or span <= 0:
+        raise ValueError("Histogram X min must be less than X max, with a finite range.")
+
+    if bin_width is not None:
+        width = float(bin_width)
+        if not np.isfinite(width) or width <= 0:
+            raise ValueError("Histogram bin width must be positive and finite.")
+        bin_count = span / width
+        if bin_count > MAX_FRAME_HISTOGRAM_BINS:
+            raise ValueError(f"Increase the bin width or narrow the X range "
+                             f"to use at most {MAX_FRAME_HISTOGRAM_BINS:,} bins.")
+        left_edges = lower + width * np.arange(max(1, int(np.ceil(bin_count))))
+        bins = np.append(left_edges[left_edges < upper], upper)
+        if np.any(np.diff(bins) <= 0):
+            raise ValueError("Histogram bin width is too small for the selected X range.")
+
+    counts, edges = np.histogram(values, bins=bins, range=(lower, upper))
+    widths = np.diff(edges)
+    centers = edges[:-1] + widths / 2
     fig = make_subplots(rows=1, cols=1)
     fig.add_trace(go.Bar(
-        x=centers, y=counts, width=np.diff(edges),
+        x=centers, y=counts, width=widths,
         marker_color="#cc785c", marker_line_width=0,
         customdata=np.column_stack([edges[:-1], edges[1:]]),
         hovertemplate="Pixel value %{customdata[0]:.4g}–%{customdata[1]:.4g}"
                       "<br>%{y} pixels<extra></extra>"), row=1, col=1)
     fig.update_xaxes(title_text="Raw pixel value (counts)", showgrid=False,
                      zeroline=False)
+    if x_min is not None or x_max is not None:
+        fig.update_xaxes(range=[lower, upper])
     fig.update_yaxes(title_text="Pixels", type="log" if log_y else "linear")
     _style(fig, title)
     fig.update_layout(height=FRAME_HISTOGRAM_HEIGHT,

@@ -175,6 +175,8 @@ outputs without rerunning. Its Viridis log color range matches the standalone
 script, and the original PNG remains available under **Saved PNG**.
 **Histogram frame** plots the raw pixel values of one HDF5 frame. Enter a
 0-based frame index or leave it blank to pick a random frame.
+Set **Histogram X min**, **Histogram X max**, or **Bin width (counts)** to
+control the range and binning. Blank fields use automatic values.
 The **Colormap** dropdown above the image changes colors immediately without
 rerunning or resetting the zoom, and remembers the selection for future views.
 
