@@ -132,13 +132,17 @@ def build(jobs: JobManager) -> None:
             return frame_histogram_figure(values, title=title, x_label=x_label, **limits), caption
 
         async def show_histogram(average):
+            preview = "Histogram average" if average else "Histogram frame"
             folder = (h5_dir.value or "").strip()
             if not folder:
-                ui.notify("Set the HDF5 directory first.", type="warning")
+                message = "Set the HDF5 directory first."
+                view.log.push(f"[{preview}] {message}")
+                ui.notify(message, type="warning")
                 return
             area, button = (average_area, average_button) if average else (frame_area, frame_button)
             button.disable()
             button.props("loading")
+            started = time.monotonic()
             try:
                 selection = file_count.value if average else frame_index.value
                 if average and (selection is None or selection < 1 or not float(selection).is_integer()):
@@ -146,6 +150,11 @@ def build(jobs: JobManager) -> None:
                 if not average and selection is not None and not float(selection).is_integer():
                     raise ValueError("Frame index must be a whole number.")
                 selection = None if selection is None else int(selection)
+                if average:
+                    source = f"{selection:,} distinct HDF5 files"
+                else:
+                    source = "a random frame" if selection is None else f"frame index {selection:,}"
+                view.log.push(f"[{preview}] Reading {source} from {folder}…")
                 dark = (dark_path.value or "").strip()
                 limits = dict(x_min=histogram_x_min.value, x_max=histogram_x_max.value,
                               bin_width=histogram_bin_width.value)
@@ -154,6 +163,7 @@ def build(jobs: JobManager) -> None:
                     REPO_ROOT / Path(dark).expanduser() if dark else None,
                     selection, average, limits)
             except (OSError, ValueError, KeyError, IndexError, ResourceBusyError) as exc:
+                view.log.push(f"[{preview}] Error: {exc}")
                 ui.notify(str(exc), type="negative")
                 return
             finally:
@@ -170,6 +180,7 @@ def build(jobs: JobManager) -> None:
                 ui.plotly(plot_options(figure)).classes("w-full") \
                     .style(f"height: {FRAME_HISTOGRAM_HEIGHT}px")
             area.visible = True
+            view.log.push(f"[{preview}] Plotted in {time.monotonic() - started:.1f}s · {caption}")
 
         frame_button.on_click(partial(show_histogram, False))
         average_button.on_click(partial(show_histogram, True))
