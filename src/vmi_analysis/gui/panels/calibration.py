@@ -356,7 +356,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                         events=["mousedown", "mousemove", "mouseup", "mouseleave"],
                         sanitize=False,
                     ).classes("w-full").style(
-                        "height: clamp(220px, 38vh, 360px); border: 1px solid #e0ddd6")
+                        "height: calc(clamp(220px, 38vh, 360px) * 2 / 3); border: 1px solid #e0ddd6")
                 widgets["tool"] = ui.toggle(
                     {"band": "Select band", "mask": "Mask"}, value="band")
                 with ui.row().classes("gap-2 items-center"):
