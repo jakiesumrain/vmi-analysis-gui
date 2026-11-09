@@ -61,24 +61,15 @@ ENHANCE_PLACEMENTS = ("off", "raw", "pre_abel", "post_abel")
 
 
 def load_image(path):
-    """Load a 2D image from .npy or whitespace-separated .txt."""
+    """Load a 2D NumPy detector image."""
     path = Path(path)
-    if path.suffix.lower() == ".npy":
-        image = np.load(path, allow_pickle=False)
-    else:
-        image = np.loadtxt(path)
+    if path.suffix.lower() != ".npy":
+        raise ValueError("Choose a NumPy detector image (.npy).")
+    image = np.load(path, allow_pickle=False)
     image = np.asarray(image, dtype=float)
     if image.ndim != 2 or min(image.shape) < 8:
         raise ValueError(f"Expected a 2D image, got shape {image.shape}")
     return image
-
-
-def rotate_image(image, quarter_turns=0):
-    """Rotate by a multiple of 90 degrees (counter-clockwise)."""
-    turns = int(quarter_turns) % 4
-    if turns not in (0, 1, 2, 3):
-        raise ValueError("quarter_turns must be an integer number of 90 degree steps")
-    return np.rot90(np.asarray(image, dtype=float), k=turns)
 
 
 def polar_grid(image_shape, center, n_r=512, n_theta=720, r_max=None):

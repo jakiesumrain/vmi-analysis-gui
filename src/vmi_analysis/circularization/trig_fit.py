@@ -22,12 +22,9 @@ def build_parser():
         description="Fit distorted VMI rings in a polar image and append "
                     "Gascooke-compatible trig-fit blocks.")
     parser.add_argument("--image", required=True,
-                        help="2D image (.npy or whitespace .txt)")
+                        help="2D NumPy detector image (.npy)")
     parser.add_argument("--center", nargs=2, type=float, metavar=("X", "Y"),
-                        help="image center in pixels (default for .npy: brightest pixel)")
-    parser.add_argument("--rotation", type=int, default=0,
-                        choices=[0, 90, 180, 270],
-                        help="rotate a legacy text image counterclockwise first")
+                        help="image center in pixels (default: brightest pixel)")
     parser.add_argument("--n-r", type=int, default=512,
                         help="number of radial bins (default 512)")
     parser.add_argument("--n-theta", type=int, default=720,
@@ -73,17 +70,13 @@ def build_parser():
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
-    raw_grid = Path(args.image).suffix.lower() == ".npy"
-    if raw_grid and args.rotation:
-        parser.error("NumPy input uses the original detector orientation. Use --rotation 0.")
-    if not raw_grid and args.center is None:
-        parser.error("--center is required for text images")
+    if Path(args.image).suffix.lower() != ".npy":
+        parser.error("--image must be a NumPy detector image (.npy)")
     image = pf.load_image(args.image)
-    if args.center is None:
+    auto_center = args.center is None
+    if auto_center:
         row, col = brightest_pixel(image)
         args.center = (col, row)
-    if args.rotation:
-        image = pf.rotate_image(image, args.rotation)
     polar, theta, r, dr, _valid = pf.remap_polar(
         image, args.center, n_r=args.n_r, n_theta=args.n_theta,
         r_max=args.r_max)
@@ -113,7 +106,7 @@ def main(argv=None):
     if args.session:
         session = {
             "image": {"path": str(args.image), "center": list(args.center),
-                      "rotation": args.rotation, "n_r": args.n_r,
+                      "brightest_center": auto_center, "n_r": args.n_r,
                       "n_theta": args.n_theta, "r_max": args.r_max},
             "processing": options,
             "masks": [[m.r0, m.r1, m.theta0, m.theta1] for m in masks],

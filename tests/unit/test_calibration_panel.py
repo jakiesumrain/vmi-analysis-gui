@@ -115,7 +115,7 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
             image[4, 10] = 30
             np.save(path, image)
             store = {"calibration.image": str(path), "calibration.abel": False,
-                     "calibration.rotation": 90, "calibration.brightest_center": False,
+                     "calibration.rotation": 90, "calibration.brightest_center": True,
                      "calibration.output": str(Path(tmp) / "extracted.txt"),
                      "calibration.n_r": 16, "calibration.n_theta": 24}
             callbacks = {}
@@ -151,6 +151,27 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(cmd[cmd.index("--input") + 1], str(path))
                     self.assertEqual(cmd[cmd.index("--extracted") + 1], store["calibration.output"])
                     self.assertTrue({"--shape", "--center", "--polar-dr"}.isdisjoint(cmd))
+
+                    auto = [element for element in client.elements.values()
+                            if isinstance(element, ui.checkbox)
+                            and element.text == "Use brightest pixel as center"][-1]
+                    x, y = [element for element in client.elements.values()
+                            if isinstance(element, ui.number)
+                            and element._props.get("label") in ("Centre X", "Centre Y")]
+                    self.assertTrue(auto.enabled)
+                    self.assertFalse(x.enabled or y.enabled)
+                    auto.value = False
+                    self.assertTrue(x.enabled and y.enabled)
+                    x.value, y.value = 8.5, 5.5
+                    with patch.object(pf, "remap_polar", wraps=pf.remap_polar) as remap:
+                        await callbacks["Load image & remap"]()
+                    self.assertEqual(remap.call_args.args[1], (8.5, 5.5))
+                    callbacks["Use in Circularize"]()
+                    with patch.object(circularize.JobView, "attach"):
+                        callbacks["Run"]()
+                    cmd = manager.submit.call_args.args[0].cmd
+                    self.assertEqual(cmd[cmd.index("--center") + 1:cmd.index("--center") + 3], ["8.5", "5.5"])
+                    self.assertTrue({"--shape", "--polar-dr"}.isdisjoint(cmd))
             finally:
                 client.delete()
 

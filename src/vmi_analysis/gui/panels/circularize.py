@@ -38,10 +38,12 @@ def build(jobs: JobManager):
                               "circularize.shape_y")
             shape_x = persist(num_input("Shape NX", 1023, step=1),
                               "circularize.shape_x")
-            center_x = persist(num_input("Center X", 511.0, step=1),
+            center_x = persist(num_input("Center X", 511.0, step="any"),
                                "circularize.center_x")
-            center_y = persist(num_input("Center Y", 511.0, step=1),
+            center_y = persist(num_input("Center Y", 511.0, step="any"),
                                "circularize.center_y")
+            brightest_center = persist(ui.checkbox("Use brightest pixel as center", value=True),
+                                       "circularize.brightest_center")
         extracted = persist(path_input(
             "Extracted trig-fit file",
             str(CIRC_DIR / "extracted-FOC100eV-20260710.txt"),
@@ -74,17 +76,22 @@ def build(jobs: JobManager):
             "Plot output dir", str(CIRC_DIR / "trig_fit_plots"),
             browse="dir"), "circularize.plot_dir")
 
-        ui.label("NumPy input keeps its original grid and uses the brightest pixel as the center.") \
+        ui.label("NumPy input keeps its original grid. Use the same center as Trig Calibration.") \
             .classes("vmi-subtitle")
 
         def raw_input():
             return Path(inp.value or "").suffix.lower() == ".npy"
 
         def update_geometry():
-            for field in (shape_y, shape_x, center_x, center_y, polar_dr):
-                field.set_enabled(not raw_input())
+            raw = raw_input()
+            for field in (shape_y, shape_x, polar_dr):
+                field.set_enabled(not raw)
+            for field in (center_x, center_y):
+                field.set_enabled(not raw or not brightest_center.value)
+            brightest_center.set_visibility(raw)
 
         inp.on_value_change(lambda _: update_geometry())
+        brightest_center.on_value_change(lambda _: update_geometry())
         update_geometry()
 
         def run():
@@ -98,8 +105,12 @@ def build(jobs: JobManager):
                    "--plot-dir", plot_dir.value]
             if not raw_input():
                 cmd += ["--shape", str(int(shape_y.value)), str(int(shape_x.value)),
-                        "--center", str(center_x.value), str(center_y.value),
                         "--polar-dr", str(polar_dr.value)]
+            if not raw_input() or not brightest_center.value:
+                if center_x.value is None or center_y.value is None:
+                    ui.notify("Enter both Center X and Center Y.", type="warning")
+                    return
+                cmd += ["--center", str(center_x.value), str(center_y.value)]
             if max_trig_n.value:
                 cmd += ["--max-trig-n", str(int(max_trig_n.value))]
             if reassign.value:
@@ -120,10 +131,13 @@ def build(jobs: JobManager):
 
     view.place_console()
 
-    def use_calibration(extracted_path, image_path=None):
+    def use_calibration(extracted_path, image_path=None, manual_center=None):
         extracted.value = extracted_path
         if image_path is not None:
             inp.value = image_path
+            brightest_center.value = manual_center is None
+            if manual_center is not None:
+                center_x.value, center_y.value = manual_center
 
     return use_calibration
 

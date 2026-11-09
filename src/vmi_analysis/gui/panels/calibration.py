@@ -234,20 +234,18 @@ def build(jobs=None, *, use_calibration=None) -> None:
     with theme.panel_card():
         with ui.row().classes("gap-4 flex-wrap items-end w-full"):
             widgets["image"] = persist(path_input(
-                "VMI image (.npy or .txt)", str(output_dir(centroid_settings()) / "vmi_2d_raw.npy"),
-                browse="file", filters=[".npy", ".txt"]), "calibration.image")
-            widgets["rotation"] = persist(ui.select(
-                [0, 90, 180, 270], value=0,
-                label="Rotation (ccw)").props("outlined dense"), "calibration.rotation")
+                "VMI image (.npy)", str(output_dir(centroid_settings()) / "vmi_2d_raw.npy"),
+                browse="file", filters=[".npy"]), "calibration.image")
             widgets["brightest_center"] = persist(
                 ui.checkbox("Use brightest pixel as center", value=True),
                 "calibration.brightest_center")
-            widgets["cx"] = persist(num_input("Centre X", 511.0, step=1.0),
+            widgets["cx"] = persist(num_input("Centre X", 511.0, step="any"),
                                     "calibration.center_x")
-            widgets["cy"] = persist(num_input("Centre Y", 511.0, step=1.0),
+            widgets["cy"] = persist(num_input("Centre Y", 511.0, step="any"),
                                     "calibration.center_y")
             widgets["n_r"] = persist(num_input("Radial bins", 512, step=1),
                                      "calibration.n_r")
+            widgets["n_r"].tooltip("Number of equally spaced radial samples, including 0 and the maximum radius.")
             widgets["n_theta"] = persist(num_input("Angular bins", 720, step=1),
                                          "calibration.n_theta")
             widgets["r_max"] = persist(num_input("Max radius (0 = auto)", 0.0,
@@ -258,17 +256,13 @@ def build(jobs=None, *, use_calibration=None) -> None:
                                         icon="content_copy").props("flat")
             remap_status = ui.label("").classes("vmi-caption")
 
-        ui.label("NumPy input uses the original detector grid and its brightest pixel.") \
+        ui.label("Centre X and Y are the zero-based detector column and row.") \
             .classes("vmi-subtitle")
 
         def update_geometry():
-            raw_grid = Path(widgets["image"].value or "").suffix.lower() == ".npy"
-            widgets["rotation"].set_enabled(not raw_grid)
-            widgets["brightest_center"].set_enabled(not raw_grid)
             for key in ("cx", "cy"):
-                widgets[key].set_enabled(not raw_grid and not widgets["brightest_center"].value)
+                widgets[key].set_enabled(not widgets["brightest_center"].value)
 
-        widgets["image"].on_value_change(lambda _: update_geometry())
         widgets["brightest_center"].on_value_change(lambda _: update_geometry())
         update_geometry()
 
@@ -644,30 +638,25 @@ def build(jobs=None, *, use_calibration=None) -> None:
         remap_status.text = "loading and remapping…"
         try:
             path = Path(path).expanduser().resolve()
-            raw_grid = path.suffix.lower() == ".npy"
-            rotation = 0 if raw_grid else int(widgets["rotation"].value or 0)
-            auto_center = raw_grid or bool(widgets["brightest_center"].value)
+            auto_center = bool(widgets["brightest_center"].value)
             center = saved_center
             if center is None and not auto_center:
-                center = (float(widgets["cx"].value), float(widgets["cy"].value))
+                center = (widgets["cx"].value, widgets["cy"].value)
+                if None in center:
+                    raise ValueError("Enter both Centre X and Centre Y.")
             n_r = int(widgets["n_r"].value)
             n_theta = int(widgets["n_theta"].value)
             r_max = float(widgets["r_max"].value or 0.0) or None
             image = await asyncio.to_thread(pf.load_image, path)
-            row, col = await asyncio.to_thread(brightest_pixel, image)
-            console.push(f"[Trig Calibration] Brightest pixel in {Path(path).name} "
-                         f"(zero-based): row={row}, col={col}.")
-            if raw_grid:
+            if auto_center:
+                row, col = await asyncio.to_thread(brightest_pixel, image)
+                console.push(f"[Trig Calibration] Brightest pixel in {path.name} "
+                             f"(zero-based): row={row}, col={col}.")
                 if saved_center is not None and saved_center != (col, row):
                     raise ValueError("The saved fit center differs from the raw detector origin. Refit the rings.")
                 center = (col, row)
-            rotated = pf.rotate_image(image, rotation) if rotation else image
-            if center is None:
-                fit_row, fit_col = ((row, col) if rotation == 0 else
-                                    await asyncio.to_thread(brightest_pixel, rotated))
-                center = (fit_col, fit_row)
             polar, theta, r, dr, _valid = await asyncio.to_thread(
-                pf.remap_polar, rotated, center, n_r=n_r, n_theta=n_theta, r_max=r_max)
+                pf.remap_polar, image, center, n_r=n_r, n_theta=n_theta, r_max=r_max)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             remap_status.text = "remap failed"
             _notify_error(exc)
@@ -675,11 +664,10 @@ def build(jobs=None, *, use_calibration=None) -> None:
         widgets["cx"].value, widgets["cy"].value = center
         console.push(f"[Trig Calibration] Polar fit center for Circularize on the matching grid: "
                      f"Center X={center[0]:g}, Center Y={center[1]:g}.")
-        if rotation:
-            console.push("[Trig Calibration] The fit uses the remapped orientation. "
-                         "Apply its calibration to a grid with that same orientation and center.")
+        console.push(f"[Trig Calibration] {n_r} radial samples from 0 to {r[-1]:g} px "
+                     f"at {dr:.6g} px spacing.")
         state.update(raw=polar, theta=theta, r=r, dr=dr, ready=True,
-                     image={"path": str(path), "center": list(center), "rotation": rotation,
+                     image={"path": str(path), "center": list(center),
                             "brightest_center": auto_center,
                             "n_r": n_r, "n_theta": n_theta, "r_max": r_max},
                      band=None, masks=[], selection_history=[], last_fit=None,
@@ -766,9 +754,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
             _notify_error(exc)
             return
         image = payload.get("image", {})
-        if (Path(image.get("path") or "").suffix.lower() == ".npy"
-                and image.get("rotation", 0)):
-            ui.notify("This session rotated the NumPy image. Refit its rings on the original detector grid.",
+        if Path(image.get("path") or "").suffix.lower() != ".npy" or image.get("rotation", 0):
+            ui.notify("Choose the original NumPy detector image and refit the rings.",
                       type="warning")
             return
         widgets["image"].value = image.get("path", widgets["image"].value)
@@ -776,7 +763,6 @@ def build(jobs=None, *, use_calibration=None) -> None:
         widgets["brightest_center"].value = image.get("brightest_center", False)
         widgets["cx"].value = center[0]
         widgets["cy"].value = center[1]
-        widgets["rotation"].value = image.get("rotation", 0)
         widgets["n_r"].value = image.get("n_r", widgets["n_r"].value)
         widgets["n_theta"].value = image.get("n_theta", widgets["n_theta"].value)
         widgets["r_max"].value = image.get("r_max", 0.0)
@@ -889,10 +875,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
             ui.notify("Set the extracted file first.", type="warning")
             return
         image = state["image"]
-        raw_path = image["path"] if image and Path(image["path"]).suffix.lower() == ".npy" else None
+        raw_path = image["path"] if image else None
+        manual_center = image["center"] if image and not image["brightest_center"] else None
         if use_calibration is None:
             return
-        use_calibration(str(Path(widgets["output"].value).expanduser().resolve()), raw_path)
+        use_calibration(str(Path(widgets["output"].value).expanduser().resolve()), raw_path, manual_center)
         ui.notify("Set the Circularize calibration file and NumPy input." if raw_path else
                   "Set the Circularize calibration file.")
 
