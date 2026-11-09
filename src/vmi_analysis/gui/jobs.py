@@ -80,6 +80,8 @@ class JobManager:
         self._lock = threading.Lock()
         self._stopping = False
         self._workers: dict[str, threading.Thread] = {}
+        self._preview_reads: dict[object, Access] = {}
+        self._stop_previews = threading.Event()
         self._max_concurrent = self._validate_limit(max_concurrent)
 
     # ------------------------------------------------------------------ API
@@ -130,12 +132,25 @@ class JobManager:
         """Keep GUI output deletion atomic with job submission and scheduling."""
         access = Access(writes=frozenset(canonical_path(p) for p in paths))
         with self._lock:
-            for job in self._jobs.values():
-                if job.status in ("running", "queued"):
-                    conflict = access.conflict(job._access)
-                    if conflict:
-                        raise ResourceBusyError(f"Files are reserved by {job.name}: {conflict}")
+            self._check_active_access_locked(access)
             yield
+
+    @contextmanager
+    def preview_read_access(self, paths):
+        """Protect preview inputs without occupying a subprocess job slot."""
+        access = Access(reads=frozenset(canonical_path(p) for p in paths))
+        token = object()
+        with self._lock:
+            if self._stopping:
+                raise ResourceBusyError("The job manager is shutting down")
+            self._check_active_access_locked(access)
+            self._preview_reads[token] = access
+        try:
+            yield self._stop_previews.is_set
+        finally:
+            with self._lock:
+                del self._preview_reads[token]
+                self._schedule_locked()
 
     def cancel(self, job_id: str) -> None:
         with self._lock:
@@ -149,6 +164,7 @@ class JobManager:
         """Stop queue advancement and request cancellation without blocking the UI."""
         with self._lock:
             self._stopping = True
+            self._stop_previews.set()
             for job in self._jobs.values():
                 if job.status not in TERMINAL:
                     self._cancel_locked(job)
@@ -221,6 +237,16 @@ class JobManager:
 
     # -------------------------------------------------------------- internals
 
+    def _check_active_access_locked(self, access):
+        for job in self._jobs.values():
+            if job.status in ("running", "queued"):
+                conflict = access.conflict(job._access)
+                if conflict:
+                    raise ResourceBusyError(f"Files are reserved by {job.name}: {conflict}")
+        for preview in self._preview_reads.values():
+            if conflict := access.conflict(preview):
+                raise ResourceBusyError(f"Files are reserved by a histogram preview: {conflict}")
+
     def _schedule_locked(self) -> None:
         if self._stopping:
             return
@@ -233,6 +259,12 @@ class JobManager:
             if blocker:
                 other, reason = blocker
                 job.wait_reason = f"Waiting for {other.name}: {reason}"
+                waiting.append(job)
+                continue
+            preview_conflict = next((reason for preview in self._preview_reads.values()
+                                     if (reason := job._access.conflict(preview))), None)
+            if preview_conflict:
+                job.wait_reason = f"Waiting for histogram preview: {preview_conflict}"
                 waiting.append(job)
                 continue
             if len(self._workers) >= self._max_concurrent:
