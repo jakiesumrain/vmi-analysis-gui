@@ -218,8 +218,9 @@ every program (Section~\ref{sec:cli}).
         GMD timestamp file, choose an output map path, and Run. The result is
         a frame-to-GMD map.
   \item \textbf{Centroiding.} Choose the same HDF5 folder and an output
-        directory. First tick \emph{Tuning mode only}, set a tuning frame, and
-        Run to inspect the detection; adjust box size or minimum net gradient
+        directory. First tick \emph{Tuning mode only}, enter a tuning frame
+        index or leave it blank for a random frame, and run to inspect
+        detection. Adjust box size or minimum net gradient
         if spots are missed or noise dominates. Then untick it and run the
         full batch. Expect a checkpoint, a 2D histogram, and summary figures.
   \item \textbf{Binning.} Choose the checkpoint, the GMD map, the output
@@ -927,11 +928,11 @@ automatically: each edit is stored immediately, and Run validates a snapshot
 before submitting, so an invalid value blocks the run but stays visible in
 the form.
 
-The form has six groups: \emph{Paths, detection and fitting} (21 fields),
-\code{Processing} (12), \emph{Histogram} (3), \emph{Energy calibration / Xe 4d
-fit} (4), \emph{Summary spectrum plot axes} (4), and \emph{GMD normalization}
-(3). Every field below is also a saved key prefixed with
-\code{centroid.}; the table shows the remainder.
+The form shows \emph{Paths and detection}, \emph{Processing},
+\emph{Histogram}, and \emph{GMD normalization}. Expand \emph{Advanced Options}
+for camera and fitting settings. Expand \emph{Energy Calibration and Spectrum Plot}
+for Xe fitting and spectrum axes. Both sections start collapsed.
+The saved keys below use the prefix \code{centroid.}.
 
 \subsubsection*{Paths, detection and fitting}
 
@@ -1033,9 +1034,10 @@ position change falls below this many pixels. Lower is slower and stricter. \\
 MLE fields; \code{lq} is a faster least-squares fit that ignores them. Both
 discard fits with a width of 0.3 pixels or less. \\
 \addlinespace
-\emph{Tuning frame index} & number, 0 & \code{vmi\_\allowbreak{}picasso.\allowbreak{}tuning\_\allowbreak{}frame\_\allowbreak{}index} &
-\emph{-\allowbreak{}-\allowbreak{}tuning-\allowbreak{}frame-\allowbreak{}index} & Global 0-based frame used by the tuning check;
-clamped to the last available frame. \\
+\emph{Tuning frame index (blank = random)} & number, blank & \code{vmi\_\allowbreak{}picasso.\allowbreak{}tuning\_\allowbreak{}frame\_\allowbreak{}index} &
+\emph{-\allowbreak{}-\allowbreak{}tuning-\allowbreak{}frame-\allowbreak{}index} & Blank picks a random frame from all available
+frames. An explicit global 0-based index past the end uses the last frame.
+The console reports the selected index. \\
 \end{longtable}
 \end{center}
 

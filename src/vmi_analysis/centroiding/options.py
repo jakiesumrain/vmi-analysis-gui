@@ -15,7 +15,7 @@ DEFAULT_CONFIG = {"vmi_picasso": {
     "box_size": 5, "min_net_gradient": 400.0, "camera_baseline": 0.0,
     "camera_sensitivity": 1.0, "camera_gain": 1.0, "camera_qe": 0.9,
     "mle_convergence": 0.1, "mle_max_iterations": 50, "mle_method": "sigma",
-    "fitting_method": "mle", "tuning_frame_index": 0,
+    "fitting_method": "mle", "tuning_frame_index": None,
     "tuning_bins_photons": 40, "tuning_bins_net_gradient": 40, "tuning_bins_precision": 40,
     "processing": {"enable_parallel": True, "num_cores": 6,
                    "enable_dark_subtraction": False, "dark_method": "mean",
@@ -78,7 +78,7 @@ def validate_settings(config, require_input=False):
             continue
         if isinstance(value, (int, float)) and not math.isfinite(value):
             raise ValueError(f"{key} must be finite")
-        if isinstance(default, int) and not isinstance(default, bool):
+        if key == "tuning_frame_index" or (isinstance(default, int) and not isinstance(default, bool)):
             if not isinstance(value, (int, float)) or value != int(value):
                 raise ValueError(f"{key} must be an integer")
     if vmi["box_size"] < 3 or vmi["box_size"] % 2 != 1:
@@ -110,6 +110,8 @@ def parse_centroid_args(argv=None):
             kwargs["choices"] = choices[key]
         if key == "abel_rotation_deg":
             kwargs["help"] = "Counterclockwise rotation after centering and before Abel inversion (default: 0 degrees)"
+        elif key == "tuning_frame_index":
+            kwargs.update(type=int, help="Global tuning frame index (default: random frame)")
         parser.add_argument("--" + flag_name(group, key), **kwargs)
     args = parser.parse_args(argv)
     try:
@@ -136,7 +138,7 @@ def centroid_cli_args(config):
         if isinstance(default, bool):
             result.append("--" + ("" if value else "no-") + flag)
         else:
-            if isinstance(default, int):
+            if key == "tuning_frame_index" or isinstance(default, int):
                 value = int(value)
             result.append("--" + flag + "=" + str(value))
     return result

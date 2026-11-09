@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import sys
 import glob
+from random import randrange
 import pandas as pd
 import numpy as np
 from vmi_analysis.paths import CENTROID_DIR
@@ -136,7 +137,7 @@ FITTING_METHOD = vmi_cfg.get("fitting_method", "mle")
 TUNING_BINS_PHOTONS = vmi_cfg.get("tuning_bins_photons", 50)
 TUNING_BINS_NET_GRADIENT = vmi_cfg.get("tuning_bins_net_gradient", 50)
 TUNING_BINS_PRECISION = vmi_cfg.get("tuning_bins_precision", 50)
-TUNING_FRAME_INDEX = vmi_cfg.get("tuning_frame_index", 10000)
+TUNING_FRAME_INDEX = vmi_cfg["tuning_frame_index"]
 
 # --- PARALLEL PROCESSING ---
 ENABLE_PARALLEL = proc_cfg["enable_parallel"]
@@ -1035,12 +1036,18 @@ Output:
 
 def run_tuning_check(frame_info, dark_frame, flat_field_normalized):
     """Run detection on one frame (from HDF5) to tune parameters"""
+    if not frame_info:
+        raise ValueError("No HDF5 frames are available for the tuning check.")
 
     print("=" * 80)
     print("TUNING CHECK")
     print("=" * 80)
 
-    test_global_idx = min(TUNING_FRAME_INDEX, len(frame_info) - 1)
+    if TUNING_FRAME_INDEX is None:
+        test_global_idx = randrange(len(frame_info))
+        print("[Tuning] Selected a random frame.")
+    else:
+        test_global_idx = min(int(TUNING_FRAME_INDEX), len(frame_info) - 1)
     h5_path, frame_in_h5 = frame_info[test_global_idx]
 
     print(f"[Tuning] Global frame index: {test_global_idx}")

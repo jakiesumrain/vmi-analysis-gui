@@ -213,15 +213,18 @@ class CentroidScriptCalibrationTests(unittest.TestCase):
             raw = np.arange(64, dtype=np.uint16).reshape(8, 8)
             path = Path(folder) / "frame.h5"
             with h5py.File(path, "w") as handle:
-                handle.create_dataset("raw/data", data=raw[None])
-            with patch.dict(self.env, OUTPUT_DIR=folder, TUNING_FRAME_INDEX=0,
+                handle.create_dataset("raw/data", data=np.stack([raw, raw + 100]))
+            output = io.StringIO()
+            with patch.dict(self.env, OUTPUT_DIR=folder, TUNING_FRAME_INDEX=None,
                             _run_picasso_batch=lambda *args: locs,
                             sigma_clipped_stats=lambda *args, **kw: (2., 2., 0.)), \
-                    patch.object(self.env["plt"], "show"), redirect_stdout(io.StringIO()):
-                self.env["run_tuning_check"]([(str(path), 0)], None, None)
+                    patch.dict(self.env, randrange=lambda count: count - 1), \
+                    patch.object(self.env["plt"], "show"), redirect_stdout(output):
+                self.env["run_tuning_check"]([(str(path), 0), (str(path), 1)], None, None)
+            self.assertIn("Global frame index: 1", output.getvalue())
             metadata, arrays = load_plot_data(Path(folder) / TUNING_DATA)
             self.assertEqual(metadata["n_events"], 2)
-            np.testing.assert_array_equal(arrays["frame"], raw.astype(float) - 2)
+            np.testing.assert_array_equal(arrays["frame"], raw.astype(float) + 98)
             np.testing.assert_array_equal(arrays["x"], locs.x)
             np.testing.assert_array_equal(arrays["photons"], locs.photons)
 
