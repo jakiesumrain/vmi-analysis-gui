@@ -313,12 +313,26 @@ def build(jobs=None, *, use_calibration=None) -> None:
                     colormap = persist(
                         ui.select(list(COLORMAPS), value="Viridis", label="Colormap")
                         .props("outlined dense").classes("w-36"), "calibration.colormap")
-                    color_min = persist(
-                        num_input("Lower percentile (vmin)", None, step="any")
-                        .props('placeholder="1" debounce=200').classes("w-48"), "calibration.color_min_pct")
-                    color_max = persist(
-                        num_input("Upper percentile (vmax)", None, step="any")
-                        .props('placeholder="99.5" debounce=200').classes("w-48"), "calibration.color_max_pct")
+                with ui.row().classes("w-full gap-4 flex-wrap"):
+                    with ui.column().classes("w-64 max-w-full gap-0"):
+                        lower_label = ui.label().classes("vmi-subtitle")
+                        color_min = persist(
+                            ui.slider(min=0, max=99.9, step=0.1, value=1)
+                            .props('aria-label="Lower percentile (vmin)"').classes("w-full"),
+                            "calibration.color_min_pct")
+                    with ui.column().classes("w-64 max-w-full gap-0"):
+                        upper_label = ui.label().classes("vmi-subtitle")
+                        color_max = persist(
+                            ui.slider(min=0.1, max=100, step=0.1, value=99.5)
+                            .props('aria-label="Upper percentile (vmax)"').classes("w-full"),
+                            "calibration.color_max_pct")
+                lower = 1 if color_min.value is None else round(color_min.value, 1)
+                upper = 99.5 if color_max.value is None else round(color_max.value, 1)
+                if not 0 <= lower < upper <= 100:
+                    lower, upper = 1, 99.5
+                color_min.value, color_max.value = lower, upper
+                lower_label.bind_text_from(color_min, "value", lambda value: f"Lower percentile (vmin) {value:g}%")
+                upper_label.bind_text_from(color_max, "value", lambda value: f"Upper percentile (vmax) {value:g}%")
                 color_status = ui.label("").classes("vmi-subtitle")
                 color_status.visible = False
                 ui.label("Percentiles use each visible image separately. Log scale uses positive pixels.") \
@@ -518,6 +532,15 @@ def build(jobs=None, *, use_calibration=None) -> None:
         pad = max((band.r1 - band.r0) * 0.25, 2.0)
         state["view"].update(r0=max(band.r0 - pad, 0.0),
                              r1=min(band.r1 + pad, float(state["r"][-1])))
+        _refresh_view()
+
+    def _change_color_limit(slider):
+        if color_min.value >= color_max.value:
+            if slider is color_min:
+                color_min.value = round(color_max.value - 0.1, 1)
+            else:
+                color_max.value = round(color_min.value + 0.1, 1)
+            return
         _refresh_view()
 
     def _set_selection(band, masks):
@@ -883,6 +906,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
     accept_button.on_click(_accept_clicked)
     widgets["tool"].on_value_change(
         lambda e: state.__setitem__("tool", e.value or "band"))
-    for control in (color_scale, colormap, color_min, color_max):
+    for control in (color_scale, colormap):
         control.on_value_change(lambda _: _refresh_view())
+    color_min.on_value_change(lambda _: _change_color_limit(color_min))
+    color_max.on_value_change(lambda _: _change_color_limit(color_max))
     use_circ_button.on_click(_use_circularize_input)
