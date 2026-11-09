@@ -20,7 +20,7 @@ import time
 import numpy as np
 from matplotlib import colormaps
 from matplotlib.colors import LogNorm, Normalize
-from nicegui import app, ui
+from nicegui import ui
 from PIL import Image
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -253,8 +253,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                                                  step=1.0), "calibration.r_max")
         with ui.row().classes("gap-2 items-center"):
             load_button = ui.button("Load image & remap", icon="refresh")
-            use_circ_button = ui.button("Use Circularize input",
-                                        icon="content_copy").props("flat")
+            export_button = ui.button("Export to Circularize", icon="output").props("flat")
             remap_status = ui.label("").classes("vmi-caption")
 
         ui.label("Centre X and Y are the zero-based detector column and row.") \
@@ -411,7 +410,6 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 ui.checkbox("Provenance comments", value=True),
                 "calibration.provenance")
             ui.button("Rebuild file from rings", on_click=lambda: _rebuild_file())
-            ui.button("Use in Circularize", on_click=lambda: _use_in_circularize())
         with ui.row().classes("gap-4 items-end flex-wrap"):
             widgets["order"] = persist(num_input("Slope order", 1, step=1),
                                        "calibration.slope_order")
@@ -879,7 +877,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                          "value": f"{value:.6g} ± {sigma:.3g}"})
         coefficients_table.rows = rows
 
-    def _use_in_circularize():
+    def _export_to_circularize():
         if not widgets["output"].value:
             ui.notify("Set the extracted file first.", type="warning")
             return
@@ -891,11 +889,6 @@ def build(jobs=None, *, use_calibration=None) -> None:
         use_calibration(str(Path(widgets["output"].value).expanduser().resolve()), raw_path, manual_center)
         ui.notify("Set the Circularize calibration file and NumPy input." if raw_path else
                   "Set the Circularize calibration file.")
-
-    def _use_circularize_input():
-        path = app.storage.general.get("circularize.inp")
-        if path:
-            widgets["image"].value = str(CIRC_DIR / Path(path).expanduser())
 
     # ------------------------------------------------------------- wiring
     async def _load_clicked():
@@ -911,4 +904,4 @@ def build(jobs=None, *, use_calibration=None) -> None:
         control.on_value_change(lambda _: _refresh_view())
     color_min.on_value_change(lambda _: _change_color_limit(color_min))
     color_max.on_value_change(lambda _: _change_color_limit(color_max))
-    use_circ_button.on_click(_use_circularize_input)
+    export_button.on_click(_export_to_circularize)

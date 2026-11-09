@@ -63,8 +63,8 @@ TABS = [
     ("Accumulate", accumulate),
     ("Centroiding", centroid),
     ("Binning", binning),
-    ("Circularize", circularize),
     ("Trig Calibration", calibration),
+    ("Circularize", circularize),
     ("PES", pes),
     ("Pipeline", pipeline),
 ]
@@ -113,13 +113,15 @@ def index() -> None:
         with ui.tabs().classes("w-full") as tabs:
             tab_objs = [ui.tab(name) for name, _ in TABS]
         with ui.tab_panels(tabs, value=tab_objs[0]).classes("w-full bg-transparent"):
-            use_calibration = None
+            def export_calibration(extracted_path, image_path, manual_center):
+                use_calibration(extracted_path, image_path, manual_center)
+
             for tab, (_, module) in zip(tab_objs, TABS):
                 with ui.tab_panel(tab):
                     if module is circularize:
                         use_calibration = module.build(MANAGER)
                     elif module is calibration:
-                        module.build(MANAGER, use_calibration=use_calibration)
+                        module.build(MANAGER, use_calibration=export_calibration)
                     else:
                         module.build(MANAGER)
 
