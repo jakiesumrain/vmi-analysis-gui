@@ -201,7 +201,7 @@ def _fit_comparison_figure(polar, theta, r, fit):
     fig.update_yaxes(range=[degrees[-1] + half_angle, degrees[0] - half_angle])
     fig.update_yaxes(title_text="Angle (degrees)", row=1, col=1)
     _style(fig, "Fit comparison")
-    fig.update_layout(height=450, plot_bgcolor="#d8d2ca",
+    fig.update_layout(height=675, plot_bgcolor="#d8d2ca",
                       coloraxis={"colorscale": "Viridis", "cmin": float(finite.min()),
                                  "cmax": float(finite.max()), "colorbar": {"title": "Intensity"}})
     return fig
@@ -479,7 +479,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
             figure = _fit_comparison_figure(state["processed"], state["theta"], state["r"], fit)
             if figure is not None:
                 ui.label("Grey areas are excluded. The yellow line marks the fitted ridge.").classes("vmi-subtitle")
-                ui.plotly(plot_options(figure)).classes("w-full").style("height: 450px")
+                ui.plotly(plot_options(figure)).classes("self-center").style(
+                    f"width: calc(100% * 2 / 3); height: {figure.layout.height}px")
 
     def _update_labels():
         if state["band"] is not None:
