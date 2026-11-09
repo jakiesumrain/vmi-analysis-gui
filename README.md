@@ -173,8 +173,11 @@ image, with equal pixel scales and original counts on hover. The final view
 reads the saved `.txt` array directly; **View saved result** opens existing
 outputs without rerunning. Its Viridis log color range matches the standalone
 script, and the original PNG remains available under **Saved PNG**.
-**Histogram frame** plots the raw pixel values of one HDF5 frame. Enter a
+**Histogram frame** plots the pixel values of one HDF5 frame. Enter a
 0-based frame index or leave it blank to pick a random frame.
+**Histogram average** plots the pixel-by-pixel mean of every frame in the
+specified number of randomly chosen, distinct HDF5 files. Both previews
+subtract the selected dark frame when one is supplied.
 Set **Histogram X min**, **Histogram X max**, or **Bin width (counts)** to
 control the range and binning. Blank fields use automatic values.
 The **Colormap** dropdown above the image changes colors immediately without

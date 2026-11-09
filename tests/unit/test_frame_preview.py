@@ -48,6 +48,25 @@ class FramePreviewTests(unittest.TestCase):
             with self.assertRaises(IndexError):
                 frame_preview.pick_frame(refs, bad)
 
+    def test_average_weights_each_frame_and_samples_distinct_files(self):
+        write_h5(self.folder / "RAW-0001.h5", np.full((1, 8, 8), 2, dtype=np.uint16))
+        write_h5(self.folder / "RAW-0002.h5", np.full((3, 8, 8), 8, dtype=np.uint16))
+        average, count = frame_preview.average_raw_frames(self.folder, 2)
+        self.assertEqual(count, 4)
+        np.testing.assert_array_equal(average, np.full((8, 8), 6.5))
+        with self.assertRaisesRegex(ValueError, "between 1 and 2"):
+            frame_preview.average_raw_frames(self.folder, 3)
+        with self.assertRaises(InterruptedError):
+            frame_preview.average_raw_frames(self.folder, 1, stopping=lambda: True)
+
+    def test_dark_subtraction_preserves_negative_values_and_checks_shape(self):
+        path = self.folder / "dark.npy"
+        np.save(path, np.array([[3, 7]]))
+        values = np.array([[1, 8]], dtype=np.uint16)
+        np.testing.assert_array_equal(frame_preview.subtract_dark(values, path), [[-2, 1]])
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            frame_preview.subtract_dark(values.T, path)
+
     def test_cache_rebuilds_when_a_file_is_added(self):
         self.assertEqual(len(frame_preview.list_raw_frames(self.folder)), 4)
         write_h5(self.folder / "RAW-0003.h5", np.zeros((1, 8, 8), dtype=np.uint16))

@@ -97,6 +97,25 @@ class ConcurrentJobTests(unittest.TestCase):
         self.manager.cancel(writer.id)
         self.ready(reader, later)
 
+    def test_histogram_preview_shares_reads_and_blocks_writes(self):
+        path = self.root / 'dark.npy'
+        self.manager.set_max_concurrent(1)
+        with self.manager.preview_read_access([path]):
+            with self.assertRaisesRegex(ResourceBusyError, 'histogram preview'):
+                with self.manager.write_access([path]):
+                    self.fail('Preview input could be deleted')
+            reader = self.manager.submit(self.job('reader', reads=[str(path)]))
+            self.ready(reader)
+            self.release(reader)
+            writer = self.manager.submit(self.job('writer', writes=[str(path)]))
+            self.assertEqual(writer.status, 'queued')
+            self.assertIn('histogram preview', writer.wait_reason)
+        self.ready(writer)
+        with self.assertRaisesRegex(ResourceBusyError, 'writer'):
+            with self.manager.preview_read_access([path]):
+                self.fail('Preview could read a reserved output')
+        self.release(writer)
+
     def test_relative_aliases_and_same_panel_reserve_the_same_resource(self):
         first = self.manager.submit(self.job('first', cwd=str(self.root), writes=['out/../result.txt']))
         second = self.manager.submit(self.job('second', reads=[str(self.root / 'result.txt')]))
