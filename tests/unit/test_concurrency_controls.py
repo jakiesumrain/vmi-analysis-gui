@@ -17,10 +17,15 @@ class ConcurrencyControlsTests(unittest.TestCase):
                 try:
                     with client:
                         gui.index()
+                    self.assertTrue(any(
+                        element.__class__.__name__ == 'Label'
+                        and getattr(element, 'text', '') == 'Maximum concurrent jobs'
+                        for element in client.elements.values()))
                     control = next(e for e in client.elements.values()
-                                   if getattr(e, 'label', None) == 'Maximum concurrent jobs')
-                    self.assertEqual(control.__class__.__name__, 'Select')
-                    self.assertEqual(control.options, list(range(1, 10)))
+                                   if e.__class__.__name__ == 'Select'
+                                   and 'vmi-setting-concurrency' in getattr(e, '_classes', []))
+                    self.assertEqual(control.options,
+                                     list(range(1, len(gui.TABS) + 1)))
                     self.assertEqual(control.value, manager.max_concurrent)
                     control.value = value
                     self.assertEqual(manager.max_concurrent, value)
@@ -42,9 +47,13 @@ class ConcurrencyControlsTests(unittest.TestCase):
                     element.__class__.__name__ == 'Button'
                     and getattr(element, 'text', '') == 'Settings'
                     for element in client.elements.values()))
+                self.assertTrue(any(
+                    element.__class__.__name__ == 'Label'
+                    and getattr(element, 'text', '') == 'Keep running on disconnect'
+                    for element in client.elements.values()))
                 toggle = next(element for element in client.elements.values()
                               if element.__class__.__name__ == 'Checkbox'
-                              and 'Keep running' in getattr(element, 'text', ''))
+                              and 'vmi-setting-keep-alive' in getattr(element, '_classes', []))
                 self.assertTrue(toggle.value)
                 toggle.value = False
                 self.assertFalse(store[gui.KEEP_ALIVE_KEY])

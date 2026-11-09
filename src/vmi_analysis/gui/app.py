@@ -139,10 +139,11 @@ def index() -> None:
     with ui.dialog() as settings_dialog, ui.card().classes("w-96 gap-3"):
         ui.label("Settings").classes("text-lg font-semibold")
         ui.separator()
-        keep_alive = ui.checkbox(
-            "Keep running on disconnect",
-            value=_keep_alive_enabled(),
-        ).props("dense").classes("vmi-caption")
+        with ui.row().classes("w-full items-center justify-between"):
+            ui.label("Keep running on disconnect").classes("vmi-subtitle")
+            keep_alive = ui.checkbox(
+                value=_keep_alive_enabled(),
+            ).props("dense").classes("vmi-setting-keep-alive")
         keep_alive.tooltip(
             "Applies to every panel. While a job is running, keep this server "
             "and the job alive when the page disconnects (closed tab, Edge "
@@ -152,10 +153,12 @@ def index() -> None:
         limits = list(range(1, len(TABS) + 1))
         if MANAGER.max_concurrent not in limits:
             limits.append(MANAGER.max_concurrent)
-        concurrency = ui.select(
-            limits, label="Maximum concurrent jobs",
-            value=MANAGER.max_concurrent,
-        ).classes("w-full").props("outlined dense")
+        with ui.row().classes("w-full items-center justify-between"):
+            ui.label("Maximum concurrent jobs").classes("vmi-subtitle")
+            concurrency = ui.select(
+                limits, value=MANAGER.max_concurrent,
+            ).props("outlined dense aria-label=Maximum concurrent jobs") \
+                .classes("w-24 vmi-setting-concurrency")
         concurrency.on_value_change(change_limit)
         concurrency.tooltip("Lowering the limit lets running jobs finish; "
                             "conflicts remain queued.")
