@@ -1,12 +1,12 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 
 from vmi_analysis.circularization import polar_fit as pf
-from vmi_analysis.gui.panels import calibration
+from vmi_analysis.gui.panels import calibration, circularize
 from vmi_analysis.imaging.centering import brightest_pixel
 
 
@@ -22,6 +22,22 @@ def make_state():
 
 
 class PanelHelperTests(unittest.TestCase):
+    def test_fit_comparison_uses_shared_scale_and_marks_excluded_pixels(self):
+        theta = np.linspace(0, pf.TWO_PI, 36, endpoint=False)
+        r = np.arange(24, dtype=float)
+        values = np.tile(np.exp(-0.5 * ((r - 12) / 2) ** 2), (theta.size, 1))
+        fit = pf.fit_ring(values, theta, r, pf.Rect(7, 17),
+                          masks=[pf.Rect(9, 11, 0, 0.5)], n_terms=0, use_beta=False)
+        figure = calibration._fit_comparison_figure(values, theta, r, fit)
+        data, model, ridge = figure.data
+        self.assertEqual(data.coloraxis, model.coloraxis)
+        np.testing.assert_array_equal(data.x, model.x)
+        np.testing.assert_array_equal(data.y, model.y)
+        np.testing.assert_array_equal(np.isnan(data.z), np.isnan(model.z))
+        self.assertTrue(np.isnan(data.z[0, 2]))
+        self.assertEqual(ridge.type, "scatter")
+        self.assertEqual(figure.layout.xaxis2.matches, "x")
+
     def test_brightest_pixel_uses_row_column_and_first_finite_maximum(self):
         image = np.array([[np.nan, 1, 8], [8, np.inf, 1]])
         self.assertEqual(brightest_pixel(image), (0, 2))
@@ -88,8 +104,12 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
             image[4, 10] = 30
             np.save(path, image)
             store = {"calibration.image": str(path), "calibration.abel": False,
+                     "calibration.rotation": 90, "calibration.brightest_center": False,
+                     "calibration.output": str(Path(tmp) / "extracted.txt"),
                      "calibration.n_r": 16, "calibration.n_theta": 24}
             callbacks = {}
+            manager = Mock()
+            manager.jobs.return_value = []
 
             def capture(button, callback):
                 callbacks[button.text] = callback
@@ -99,15 +119,24 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                 with client, patch.object(app.storage, "_general", store), \
                         patch.object(calibration, "VIEW_PNG", Path(tmp) / "polar.png"):
                     with patch.object(ui.button, "on_click", capture):
-                        calibration.build()
+                        use_calibration = circularize.build(manager)
+                        calibration.build(use_calibration=use_calibration)
                     with patch.object(pf, "remap_polar", wraps=pf.remap_polar) as remap:
                         await callbacks["Load image & remap"]()
+                    np.testing.assert_array_equal(remap.call_args.args[0], image)
                     self.assertEqual(remap.call_args.args[1], (10, 4))
-                    console = next(element for element in client.elements.values()
-                                   if isinstance(element, ui.log))
-                    lines = [line.text for line in console.default_slot.children]
+                    lines = [line.text for element in client.elements.values()
+                             if isinstance(element, ui.log) for line in element.default_slot.children]
                     self.assertTrue(any("row=4, col=10" in line for line in lines), lines)
                     self.assertTrue(any("Center X=10, Center Y=4" in line for line in lines), lines)
+                    callbacks["Use in Circularize"]()
+                    self.assertEqual(store["circularize.inp"], str(path))
+                    with patch.object(circularize.JobView, "attach"):
+                        callbacks["Run"]()
+                    cmd = manager.submit.call_args.args[0].cmd
+                    self.assertEqual(cmd[cmd.index("--input") + 1], str(path))
+                    self.assertEqual(cmd[cmd.index("--extracted") + 1], store["calibration.output"])
+                    self.assertTrue({"--shape", "--center", "--polar-dr"}.isdisjoint(cmd))
             finally:
                 client.delete()
 

@@ -7,6 +7,8 @@ from scipy.ndimage import map_coordinates
 from scipy.interpolate import PchipInterpolator
 from scipy.optimize import curve_fit
 
+from vmi_analysis.imaging.centering import brightest_pixel
+
 try:
     import matplotlib.pyplot as plt
 except ModuleNotFoundError:
@@ -327,9 +329,8 @@ def circularize_vmi(
 
     Notes
     -----
-    The angle convention matches the paper:
-    - theta is measured anticlockwise from +x
-    - image y increases downward, so we use y_math = yc - y_image
+    The angle matches the Trig Calibration remap. Zero points toward
+    increasing columns, and +pi/2 points toward increasing array rows.
     """
     raw_image = np.asarray(raw_image, dtype=float)
     if raw_image.ndim != 2:
@@ -360,8 +361,12 @@ def circularize_vmi(
 
     r_source_model = r_target_model + delta_r
     r_source = polar_dr * r_source_model
-    x_source = xc + r_source * np.cos(theta)
-    y_source = yc + r_source * np.sin(theta)
+    # Scale the original offsets so an identity map keeps boundary pixels
+    # exactly on the grid, avoiding roundoff from converting back from theta.
+    scale = np.divide(r_source, r_fixed, out=np.ones_like(r_source), where=r_fixed != 0)
+    x_source = x_grid + dx * (scale - 1.0)
+    y_source = y_grid + dy_math * (scale - 1.0)
+    x_source[r_fixed == 0] += r_source[r_fixed == 0]
 
     coords = np.vstack([y_source.ravel(), x_source.ravel()])
     corrected_flat = map_coordinates(
@@ -412,6 +417,24 @@ def load_image_txt(path, shape=None):
 
 def save_image_txt(path, image):
     np.savetxt(path, image, fmt="%.18e")
+
+
+def load_image_and_center(path, shape=None, center=None):
+    """Load a detector array as-is, or retain the legacy text geometry."""
+    path = Path(path)
+    if path.suffix.lower() != ".npy":
+        image = load_image_txt(path, shape=tuple(shape) if shape is not None else (1023, 1023))
+        return image, tuple(center) if center is not None else (511.0, 511.0)
+
+    image = np.load(path, allow_pickle=False)
+    if image.ndim != 2 or not image.size:
+        raise ValueError("Expected a nonempty 2D NumPy detector image.")
+    if shape is not None and tuple(shape) != image.shape:
+        raise ValueError(f"NumPy image shape is {image.shape}. It cannot be reshaped for circularization.")
+    if center is None:
+        row, col = brightest_pixel(image)
+        center = (col, row)
+    return image, tuple(center)
 
 
 def parse_extracted_text(text, source="<text>"):
@@ -779,7 +802,7 @@ def parse_args():
         "--input",
         type=Path,
         default=Path("image.txt"),
-        help="Input text image file.",
+        help="Input detector array (.npy) or legacy text image (.txt).",
     )
     parser.add_argument(
         "--output",
@@ -791,17 +814,15 @@ def parse_args():
         "--shape",
         type=int,
         nargs=2,
-        default=(1023, 1023),
         metavar=("NY", "NX"),
-        help="Image shape if reshaping is needed.",
+        help="Legacy text image shape (default: 1023 1023). NumPy arrays retain their native shape.",
     )
     parser.add_argument(
         "--center",
         type=float,
         nargs=2,
-        default=(511.0, 511.0),
         metavar=("XC", "YC"),
-        help="Fixed center in Python indexing.",
+        help="Zero-based center (column, row). Defaults to the brightest pixel for .npy and (511, 511) for text.",
     )
     parser.add_argument(
         "--interp-order",
@@ -880,7 +901,9 @@ def main():
     if args.summary_only:
         return
 
-    raw_image = load_image_txt(args.input, shape=tuple(args.shape))
+    raw_image, center = load_image_and_center(args.input, args.shape, args.center)
+    print(f"Input grid: NY={raw_image.shape[0]}, NX={raw_image.shape[1]}. "
+          f"Center X={center[0]:g}, Center Y={center[1]:g}.")
     if args.radial_model == "poly":
         fit_params, fit_meta = fit_all_trig_polynomials(
             dataset,
@@ -927,7 +950,7 @@ def main():
 
     corrected = circularize_vmi(
         raw_image,
-        center=tuple(args.center),
+        center=center,
         fit_params=fit_params,
         max_trig_n=args.max_trig_n,
         interp_order=args.interp_order,

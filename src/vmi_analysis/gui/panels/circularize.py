@@ -7,6 +7,7 @@ from nicegui import ui
 
 from ..jobs import Job, JobManager
 from .. import theme
+from ..settings import centroid_settings, output_dir
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
                      open_folder_button, path_input, persist,
                      render_txt_image, serve_dir, zoomable_image)
@@ -14,7 +15,7 @@ from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
 CIRC_DIR = REPO_ROOT / "circularization"
 
 
-def build(jobs: JobManager) -> None:
+def build(jobs: JobManager):
     theme.section_title(
         "Circularize",
         "Correct radial distortion of one VMI image using the Gascooke "
@@ -23,9 +24,9 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, job_name='Circularize', results_builder=_results)
 
     with theme.panel_card():
-        inp = persist(path_input("Input image (.txt)",
-                                 str(CIRC_DIR / "image.txt"),
-                                 browse="file", filters=[".txt"]),
+        inp = persist(path_input("Input image (.npy or .txt)",
+                                 str(output_dir(centroid_settings()) / "vmi_2d_raw.npy"),
+                                 browse="file", filters=[".npy", ".txt"]),
                       "circularize.inp")
         out = persist(path_input("Output image (.txt)",
                                  str(CIRC_DIR / "image_circularized.txt"),
@@ -73,18 +74,32 @@ def build(jobs: JobManager) -> None:
             "Plot output dir", str(CIRC_DIR / "trig_fit_plots"),
             browse="dir"), "circularize.plot_dir")
 
+        ui.label("NumPy input keeps its original grid and uses the brightest pixel as the center.") \
+            .classes("vmi-subtitle")
+
+        def raw_input():
+            return Path(inp.value or "").suffix.lower() == ".npy"
+
+        def update_geometry():
+            for field in (shape_y, shape_x, center_x, center_y, polar_dr):
+                field.set_enabled(not raw_input())
+
+        inp.on_value_change(lambda _: update_geometry())
+        update_geometry()
+
         def run():
             cmd = [sys.executable, "-m", "vmi_analysis.circularization.circularization",
                    "--input", inp.value,
                    "--output", out.value,
-                   "--shape", str(int(shape_y.value)), str(int(shape_x.value)),
-                   "--center", str(center_x.value), str(center_y.value),
                    "--extracted", extracted.value,
                    "--radial-model", radial_model.value,
                    "--poly-order", str(int(poly_order.value)),
                    "--interp-order", str(int(interp_order.value)),
-                   "--polar-dr", str(polar_dr.value),
                    "--plot-dir", plot_dir.value]
+            if not raw_input():
+                cmd += ["--shape", str(int(shape_y.value)), str(int(shape_x.value)),
+                        "--center", str(center_x.value), str(center_y.value),
+                        "--polar-dr", str(polar_dr.value)]
             if max_trig_n.value:
                 cmd += ["--max-trig-n", str(int(max_trig_n.value))]
             if reassign.value:
@@ -104,6 +119,13 @@ def build(jobs: JobManager) -> None:
         view.run_button(on_click=run)
 
     view.place_console()
+
+    def use_calibration(extracted_path, image_path=None):
+        extracted.value = extracted_path
+        if image_path is not None:
+            inp.value = image_path
+
+    return use_calibration
 
 
 def _results(job: Job):

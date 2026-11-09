@@ -113,9 +113,15 @@ def index() -> None:
         with ui.tabs().classes("w-full") as tabs:
             tab_objs = [ui.tab(name) for name, _ in TABS]
         with ui.tab_panels(tabs, value=tab_objs[0]).classes("w-full bg-transparent"):
+            use_calibration = None
             for tab, (_, module) in zip(tab_objs, TABS):
                 with ui.tab_panel(tab):
-                    module.build(MANAGER)
+                    if module is circularize:
+                        use_calibration = module.build(MANAGER)
+                    elif module is calibration:
+                        module.build(MANAGER, use_calibration=use_calibration)
+                    else:
+                        module.build(MANAGER)
 
     with ui.footer().classes("px-6 py-2 items-center justify-between") \
             .style("background: #181715"):

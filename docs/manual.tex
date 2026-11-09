@@ -1470,7 +1470,12 @@ to force that stage to run again.
 image using a Gascooke trig-fit calibration. The panel launches
 \code{vmi\_\allowbreak{}analysis.circularization.circularization} with working
 directory \code{circularization/\allowbreak{}}. It is a standalone tool for inspecting
-the calibration; the PES panel applies the same correction to each GMD bin.
+the calibration. The PES panel applies its correction to each GMD bin.
+
+For a raw detector-grid calibration, open the same \code{vmi\_2d\_raw.npy}
+in Trig Calibration and Circularize. Both use the brightest pixel as the
+origin. The NumPy input keeps its native shape and orientation. Circularize
+applies the radial correction directly and writes the corrected image.
 
 \begin{center}
 \footnotesize
@@ -1481,26 +1486,26 @@ Field & Type and default & Saved key & CLI flag & Meaning \\
 \endhead
 \bottomrule
 \endfoot
-\code{Input image (.txt)} & file, \code{circularization/\allowbreak{}image.\allowbreak{}txt} &
-\emph{circularize.inp} & \code{-\allowbreak{}-\allowbreak{}input} & Text image to correct
-(whitespace-separated values). \\
+\code{Input image (.npy or .txt)} & file, Centroiding raw image &
+\emph{circularize.inp} & \code{-\allowbreak{}-\allowbreak{}input} & NumPy detector array or legacy text image. \\
 \addlinespace
 \code{Output image (.txt)} & save, \code{circularization/\allowbreak{}image\_\allowbreak{}circularized.\allowbreak{}txt} &
 \emph{circularize.out} & \code{-\allowbreak{}-\allowbreak{}output} & Corrected image, written as text
 in scientific notation. \\
 \addlinespace
 \emph{Shape NY} & number, 1023 & \code{circularize.\allowbreak{}shape\_\allowbreak{}y} & \code{-\allowbreak{}-\allowbreak{}shape} (first) &
-Number of rows used to reshape the input. An odd size gives a single-pixel
-centre; the GMD pipeline relies on 1023. \\
+Number of rows for legacy text input. NumPy input uses its native shape. \\
 \addlinespace
 \emph{Shape NX} & number, 1023 & \code{circularize.\allowbreak{}shape\_\allowbreak{}x} & \code{-\allowbreak{}-\allowbreak{}shape} (second) &
-Number of columns, same rules. \\
+Number of columns for legacy text input. \\
 \addlinespace
 \emph{Center X} & number, 511.0 & \code{circularize.\allowbreak{}center\_\allowbreak{}x} & \code{-\allowbreak{}-\allowbreak{}center} (first) &
-Distortion centre, in Python indexing (column, not row). \\
+Zero-based column of the origin for legacy text input. NumPy input uses the
+column of the brightest pixel. \\
 \addlinespace
 \emph{Center Y} & number, 511.0 & \code{circularize.\allowbreak{}center\_\allowbreak{}y} & \code{-\allowbreak{}-\allowbreak{}center} (second) &
-Distortion centre row. \\
+Zero-based row of the origin for legacy text input. NumPy input uses the row
+of the brightest pixel. \\
 \addlinespace
 \emph{Extracted trig-\allowbreak{}fit file} & file,
 \code{circularization/\allowbreak{}extracted-\allowbreak{}FOC100eV-\allowbreak{}20260710.txt} & \code{circularize.\allowbreak{}extracted} &
@@ -1528,7 +1533,8 @@ the coefficients; \code{poly} fits a polynomial that vanishes at the centre. \\
 flag and lets the script infer the order from the file. \\
 \addlinespace
 \emph{Polar dr} & number, 1.0 & \code{circularize.\allowbreak{}polar\_\allowbreak{}dr} &
-\emph{-\allowbreak{}-\allowbreak{}polar-\allowbreak{}dr} & Cartesian pixels per polar radial unit; must be positive. \\
+\emph{-\allowbreak{}-\allowbreak{}polar-\allowbreak{}dr} & Cartesian pixels per polar radial unit for legacy text input.
+NumPy calibration uses detector pixels directly. \\
 \addlinespace
 \emph{No Jacobian} & checkbox, on & \code{circularize.\allowbreak{}no\_\allowbreak{}jacobian} &
 \emph{-\allowbreak{}-\allowbreak{}no-\allowbreak{}jacobian} & Checked skips the Jacobian intensity correction. Note
@@ -1591,16 +1597,17 @@ Field & Type and default & Saved key & Meaning \\
 \endhead
 \bottomrule
 \endfoot
-\code{VMI image} & file, \code{circularization/\allowbreak{}vmi\_\allowbreak{}2d\_\allowbreak{}raw.\allowbreak{}npy} &
+\code{VMI image} & file, Centroiding raw image &
 \code{calibration.\allowbreak{}image} & 2D image to calibrate (\code{.\allowbreak{}npy} or whitespace
 \code{.\allowbreak{}txt}). \\
 \addlinespace
-\emph{Rotation (ccw)} & select, 0 & \code{calibration.\allowbreak{}rotation} & Rotate by
-0, 90, 180 or 270 degrees before remapping. \\
+\emph{Rotation (ccw)} & select, 0 & \code{calibration.\allowbreak{}rotation} & Rotate
+legacy text input before remapping. NumPy input uses its original orientation. \\
 \addlinespace
 \emph{Use brightest pixel as center} & checkbox, on &
 \code{calibration.\allowbreak{}brightest\_\allowbreak{}center} & Use the brightest
-pixel as the polar origin. Clear the checkbox to enter the origin manually. \\
+pixel as the polar origin. For legacy text, clear the checkbox to enter the
+origin manually. NumPy input always uses the brightest pixel. \\
 \addlinespace
 \emph{Centre X}, \emph{Centre Y} & numbers, 511.0 & \code{calibration.\allowbreak{}center\_\allowbreak{}x},
 \code{.\allowbreak{}center\_\allowbreak{}y} & Zero-based column and row of the fit
@@ -1671,27 +1678,36 @@ accepted ring fits. \\
 
 \textbf{Workflow.} (1) Choose the image and click \emph{Load image \& remap}.
 For Centroiding data, use its raw output \code{vmi\_2d\_raw.npy}. The console
-reports the brightest pixel in the original array and the fit origin as
-\emph{Center X} (column) and \emph{Center Y} (row). Use those values in
-Circularize on a grid with the same orientation and pixel scale.
+reports the brightest pixel as \emph{Center X} (column) and \emph{Center Y}
+(row). The polar remap uses this origin on the original grid.
 (2) Adjust the processing chain and press
 \emph{Apply processing}. Use the display to choose the band and masks.
 The same region is fitted on unenhanced data.
 (3) With \emph{Select band} active, drag a rectangle around one ring. (4) Switch
 to \emph{Mask} and drag rectangles over overlapping rings, hot spots or bad
-sectors; \emph{Clear masks} removes all of them. (5) Press \emph{Fit selection};
-the fitted $r_g(\theta)$ is drawn on the image and the parameter table shows
-value and 1-$\sigma$. (6) Press \emph{Accept ring} to append one block to the
+sectors. \emph{Clear masks} removes all of them. (5) Press \emph{Fit selection}.
+The comparison shows the fitted band and model with shared axes and intensity
+scale. Grey regions mark excluded pixels, and the yellow line shows
+$r_g(\theta)$. Review the images before accepting the ring.
+(6) Press \emph{Accept ring} to append one block to the
 output file, then repeat from step 3 for the next ring. (7) After at least two
 rings, \emph{Update a\_n/b\_n preview} shows the through-origin slopes. The
-session file can be saved at any point and loaded later.
+session file can be saved at any point and loaded later. After exporting the
+rings, click \emph{Use in Circularize} to pass the NumPy image and calibration
+file to Circularize.
 
 \textbf{Results.} The panel shows the polar image with band, masks and fitted
-ridge overlays; a parameter table (intensity, $\beta$, offset, Gaussian
-$\sigma$, $r_0$ and each $A_n,B_n$ with uncertainties); the accepted-ring table;
-the $a_n,b_n$ preview; and the appended text file. \emph{Rebuild file from
+ridge overlays, a fit comparison, the parameter table, the accepted-ring
+table, and the $a_n,b_n$ preview. The parameter table reports local
+least-squares errors. These estimates do not account for correlations between
+interpolated pixels. \emph{Rebuild file from
 rings} rewrites the file from the accepted rings and is the recovery path after
 a wrong or duplicate append.
+
+The optimizer can report a warning while still returning a model for review.
+If the data cannot determine some parameters, widen the selected angular
+range or reduce \emph{Trig terms N} and refit. The panel blocks export when
+the model is underdetermined or has nonfinite parameters.
 
 \textbf{Pitfalls.} Enhancement can move an apparent ridge in the display.
 Use the unenhanced fit image to check the fitted ridge against the data.

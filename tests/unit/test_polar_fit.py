@@ -117,6 +117,24 @@ class SelectionTests(unittest.TestCase):
 
 
 class FitTests(unittest.TestCase):
+    def test_one_angle_shows_unconstrained_terms_and_blocks_export(self):
+        polar, theta, r = make_polar_ridge()
+        fit = pf.fit_ring(polar, theta, r, pf.Rect(34, 46, 0, 0.001),
+                          n_terms=2, use_beta=False)
+        self.assertIn("A1", fit.unconstrained)
+        self.assertIn("A2", fit.unconstrained)
+        self.assertTrue(np.isnan(fit.sigmas["A1"]))
+        with self.assertRaisesRegex(ValueError, "cannot determine"):
+            pf.ring_block_text(fit)
+
+    def test_optimizer_warning_does_not_block_identifiable_fit(self):
+        polar, theta, r = make_polar_ridge()
+        fit = pf.fit_ring(polar, theta, r, pf.Rect(34, 46),
+                          n_terms=2, use_beta=False, iterative=False, max_nfev=1)
+        self.assertFalse(fit.converged)
+        self.assertIsNone(fit.export_issue())
+        self.assertIn(pf.EXTRACTED_HEADER, pf.ring_block_text(fit))
+
     def test_fit_recovers_known_trig_terms(self):
         trig = {"A1": 1.0, "B1": -2.0, "A2": 0.5, "B2": 1.2}
         polar, theta, r = make_polar_ridge(n_theta=180, n_r=101, r0=50.0,
@@ -234,6 +252,70 @@ def make_cartesian_rings(size=257, center=128.0, rings=(60.0, 100.0),
 
 
 class EndToEndTests(unittest.TestCase):
+    def test_signed_harmonics_round_trip_through_circularize(self):
+        from vmi_analysis.circularization import circularization as circ
+
+        center = (77, 57)
+        y, x = np.indices((128, 144), dtype=float)
+        dx, dy = x - center[0], y - center[1]
+        theta = np.arctan2(dy, dx)
+        distortion = (.035 * np.sin(theta) - .028 * np.cos(theta)
+                      + .026 * np.sin(2 * theta) + .014 * np.cos(2 * theta))
+        r_true = np.hypot(dx, dy) / (1 + distortion)
+        radii = (27.0, 40.0, 51.0)
+        raw = sum(np.exp(-0.5 * ((r_true - radius) / 1.7) ** 2) for radius in radii)
+
+        def fit_rings(image):
+            polar, angles, r, _, _ = pf.remap_polar(image, center, n_r=229, n_theta=360)
+            return [pf.fit_ring(polar, angles, r, pf.Rect(radius - 5.8, radius + 5.8),
+                                n_terms=2, use_beta=False) for radius in radii]
+
+        before = fit_rings(raw)
+        blocks = circ.parse_extracted_text("".join(pf.ring_block_text(fit) for fit in before))
+        fit_params, _ = circ.build_all_trig_interpolators(circ.build_fit_dataset(blocks))
+        corrected = circ.circularize_vmi(raw, center, fit_params, apply_jacobian=False)
+        self.assertEqual(corrected.shape, raw.shape)
+        for fit, expected_radius in zip(fit_rings(corrected)[:2], radii):
+            self.assertAlmostEqual(fit.params["r0"], expected_radius, delta=.03)
+            for key in ("A1", "B1", "A2", "B2"):
+                self.assertAlmostEqual(fit.params[key], 0.0, delta=.03)
+
+    def test_circularize_cli_keeps_the_original_numpy_detector_grid(self):
+        from contextlib import redirect_stdout
+        import io
+        import sys
+        from unittest.mock import patch
+
+        from vmi_analysis.circularization import circularization
+
+        image = np.arange(12 * 16, dtype=float).reshape(12, 16)
+        image[4, 10] = 300
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "vmi_2d_raw.npy"
+            calibration = root / "extracted.txt"
+            output = root / "corrected.txt"
+            np.save(source, image)
+            calibration.write_text(
+                f'{pf.EXTRACTED_HEADER}\n"Gaussian Centre" 5 +- 0.1\n'
+                '"Trig Term cos(1*theta)" 0 +- 0.1\n', encoding="utf-8")
+            args = ["circularization", "--input", str(source), "--output", str(output),
+                    "--extracted", str(calibration), "--no-plots", "--interp-order", "1"]
+            log = io.StringIO()
+            with patch.object(sys, "argv", args), redirect_stdout(log):
+                circularization.main()
+            self.assertIn("NY=12, NX=16. Center X=10, Center Y=4.", log.getvalue())
+            np.testing.assert_allclose(np.loadtxt(output), image)
+            np.testing.assert_array_equal(np.load(source), image)
+            with self.assertRaisesRegex(ValueError, "cannot be reshaped"):
+                circularization.load_image_and_center(source, shape=(16, 12))
+            legacy = root / "legacy.txt"
+            np.savetxt(legacy, image.ravel())
+            text_image, text_center = circularization.load_image_and_center(
+                legacy, shape=image.shape, center=(7.5, 5.5))
+            np.testing.assert_array_equal(text_image, image)
+            self.assertEqual(text_center, (7.5, 5.5))
+
     def test_cartesian_rings_recover_slopes_through_full_chain(self):
         image = make_cartesian_rings()
         polar, theta, r, dr, _valid = pf.remap_polar(

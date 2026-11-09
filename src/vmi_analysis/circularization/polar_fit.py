@@ -376,16 +376,31 @@ def parameter_names(n_terms, use_beta=True):
     return names
 
 
-def _model_vector(vector, r, theta, names, n_terms, use_beta):
+def _model_vector(vector, r, theta, names, n_terms, use_beta, *, jacobian=False):
     p = dict(zip(names, vector))
-    rg = np.full_like(r, p["r0"], dtype=float)
+    basis = {"r0": np.ones_like(theta)}
     for n in range(1, int(n_terms) + 1):
-        rg += p[f"A{n}"] * np.sin(n * theta) + p[f"B{n}"] * np.cos(n * theta)
-    cos_t = np.cos(theta)
-    amplitude = p["intensity"]
+        basis[f"A{n}"] = np.sin(n * theta)
+        basis[f"B{n}"] = np.cos(n * theta)
+    rg = np.full_like(r, p["r0"], dtype=float)
+    for key, term in basis.items():
+        if key != "r0":
+            rg += p[key] * term
+    p2 = (3.0 * np.cos(theta) ** 2 - 1.0) / 2.0 if use_beta else 0.0
+    angular = 1.0 + p.get("beta", 0.0) * p2
+    scaled = (r - rg) / p["sigma"]
+    gaussian = np.exp(-0.5 * scaled ** 2)
+    signal = p["intensity"] * angular * gaussian
+    if not jacobian:
+        return signal + p["offset"]
+
+    ridge_derivative = signal * scaled / p["sigma"]
+    derivatives = {key: ridge_derivative * term for key, term in basis.items()}
+    derivatives.update(intensity=angular * gaussian, offset=np.ones_like(r),
+                       sigma=ridge_derivative * scaled)
     if use_beta:
-        amplitude = amplitude * (1.0 + p["beta"] * (3.0 * cos_t ** 2 - 1.0) / 2.0)
-    return amplitude * np.exp(-0.5 * ((r - rg) / p["sigma"]) ** 2) + p["offset"]
+        derivatives["beta"] = p["intensity"] * p2 * gaussian
+    return np.column_stack([derivatives[name] for name in names])
 
 
 def auto_guess(polar, theta, r, band, masks=(), n_terms=3, use_beta=True):
@@ -471,6 +486,25 @@ class RingFit:
     message: str = ""
     processing: dict = field(default_factory=dict)
     created: str = ""
+    unconstrained: list[str] | None = None
+
+    def ridge_centers(self, theta):
+        centers = np.full_like(theta, self.params["r0"], dtype=float)
+        for n in range(1, self.n_terms + 1):
+            centers += self.params[f"A{n}"] * np.sin(n * theta)
+            centers += self.params[f"B{n}"] * np.cos(n * theta)
+        return centers
+
+    def export_issue(self):
+        names = parameter_names(self.n_terms, self.use_beta)
+        if any(not np.isfinite(self.params.get(name, np.nan)) for name in names):
+            return "The fit contains missing or nonfinite parameters."
+        if self.unconstrained is None:
+            return "Refit this ring to check which parameters the data constrain."
+        if self.unconstrained:
+            terms = ", ".join(self.unconstrained)
+            return f"The data cannot determine {terms}. Widen the band or reduce the harmonic order."
+        return None
 
     def to_dict(self):
         return {
@@ -489,6 +523,7 @@ class RingFit:
             "message": self.message,
             "processing": self.processing,
             "created": self.created,
+            "unconstrained": self.unconstrained,
         }
 
     @classmethod
@@ -503,7 +538,26 @@ class RingFit:
                    converged=bool(data.get("converged", False)),
                    message=str(data.get("message", "")),
                    processing=dict(data.get("processing", {})),
-                   created=str(data.get("created", "")))
+                   created=str(data.get("created", "")),
+                   unconstrained=data.get("unconstrained"))
+
+
+def fit_comparison(polar, theta, r, fit):
+    """Crop the band and mask both the fit input and model in the same way."""
+    band = selection_mask(theta, r, fit.band)
+    ti = np.flatnonzero(band.any(axis=1))
+    if ti.size:
+        ti = np.arange(ti[0], ti[-1] + 1)
+    ri = np.flatnonzero(band.any(axis=0))
+    selection = np.ix_(ti, ri)
+    angles, radii = theta[ti], r[ri]
+    data = polar[selection]
+    mask = selection_mask(theta, r, fit.band, fit.masks)[selection] & np.isfinite(data)
+    angle_grid, radius_grid = np.meshgrid(angles, radii, indexing="ij")
+    names = parameter_names(fit.n_terms, fit.use_beta)
+    model = _model_vector([fit.params[name] for name in names], radius_grid, angle_grid,
+                          names, fit.n_terms, fit.use_beta)
+    return angles, radii, np.where(mask, data, np.nan), np.where(mask, model, np.nan)
 
 
 def fit_ring(polar, theta, r, band, masks=(), n_terms=3, use_beta=True,
@@ -513,8 +567,8 @@ def fit_ring(polar, theta, r, band, masks=(), n_terms=3, use_beta=True,
     theta = np.asarray(theta, dtype=float)
     r = np.asarray(r, dtype=float)
     mask = selection_mask(theta, r, band, masks) & np.isfinite(polar)
-    if mask.sum() < 20:
-        raise ValueError("The selected band contains too few finite pixels")
+    if not mask.any():
+        raise ValueError("The selected band contains no finite pixels")
     theta_grid, r_grid = np.meshgrid(theta, r, indexing="ij")
     tv = theta_grid[mask]
     rv = r_grid[mask]
@@ -532,7 +586,9 @@ def fit_ring(polar, theta, r, band, masks=(), n_terms=3, use_beta=True,
         n_fitted = sum(1 for name in names if name.startswith("A"))
         return least_squares(
             lambda vec: _model_vector(vec, rv, tv, names, n_fitted, use_beta) - values,
-            x0, bounds=(lower, upper), method="trf", x_scale="jac",
+            x0,
+            jac=lambda vec: _model_vector(vec, rv, tv, names, n_fitted, use_beta, jacobian=True),
+            bounds=(lower, upper), method="trf", x_scale="jac",
             max_nfev=max_nfev,
         )
 
@@ -557,12 +613,19 @@ def fit_ring(polar, theta, r, band, masks=(), n_terms=3, use_beta=True,
     chi2 = float(np.sum(residual ** 2))
     dof = max(int(values.size) - n_params, 1)
     rms = float(np.sqrt(chi2 / values.size))
-    try:
-        jacobian = np.asarray(result.jac, dtype=float)
-        covariance = np.linalg.pinv(jacobian.T @ jacobian) * (chi2 / dof)
-        errors = np.sqrt(np.clip(np.diag(covariance), 0.0, None))
-    except np.linalg.LinAlgError:
+    jacobian = np.asarray(result.jac, dtype=float)
+    norms = np.linalg.norm(jacobian, axis=0)
+    scales = np.where(norms > 0, norms, 1.0)
+    _, singular, vectors = np.linalg.svd(jacobian / scales, full_matrices=values.size < n_params)
+    tolerance = singular[0] * max(jacobian.shape) * np.finfo(float).eps
+    rank = np.count_nonzero(singular > tolerance)
+    if rank < n_params:
+        involved = np.linalg.norm(vectors[rank:], axis=0) > np.sqrt(np.finfo(float).eps)
+        unconstrained = [name for name, present in zip(names, involved) if present]
         errors = np.full(n_params, np.nan)
+    else:
+        unconstrained = []
+        errors = np.linalg.norm(vectors.T / singular, axis=1) * np.sqrt(chi2 / dof) / scales
     params = {name: float(value) for name, value in zip(names, result.x)}
     sigmas = {name: float(value) for name, value in zip(names, errors)}
     return RingFit(
@@ -571,7 +634,7 @@ def fit_ring(polar, theta, r, band, masks=(), n_terms=3, use_beta=True,
         masks=[m.normalised() for m in masks], n_pixels=int(values.size),
         rms=rms, chi2_red=float(chi2 / dof), converged=bool(result.success),
         message=str(result.message), processing=processing or {},
-        created=time.strftime("%Y-%m-%dT%H:%M:%S"),
+        created=time.strftime("%Y-%m-%dT%H:%M:%S"), unconstrained=unconstrained,
     )
 
 
@@ -589,6 +652,8 @@ def _number(value):
 
 def ring_block_text(fit, provenance=True, extra_comments=()):
     """Render one accepted ring as a Gascooke-compatible text block."""
+    if issue := fit.export_issue():
+        raise ValueError(issue)
     lines = []
     if provenance:
         band = fit.band

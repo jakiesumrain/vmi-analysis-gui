@@ -8,8 +8,11 @@ result can be reproduced from a shell.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import numpy as np
+
+from vmi_analysis.imaging.centering import brightest_pixel
 
 from . import polar_fit as pf
 
@@ -20,11 +23,11 @@ def build_parser():
                     "Gascooke-compatible trig-fit blocks.")
     parser.add_argument("--image", required=True,
                         help="2D image (.npy or whitespace .txt)")
-    parser.add_argument("--center", nargs=2, type=float, required=True,
-                        metavar=("X", "Y"), help="image centre in pixels")
+    parser.add_argument("--center", nargs=2, type=float, metavar=("X", "Y"),
+                        help="image center in pixels (default for .npy: brightest pixel)")
     parser.add_argument("--rotation", type=int, default=0,
                         choices=[0, 90, 180, 270],
-                        help="rotate the image counter-clockwise first")
+                        help="rotate a legacy text image counterclockwise first")
     parser.add_argument("--n-r", type=int, default=512,
                         help="number of radial bins (default 512)")
     parser.add_argument("--n-theta", type=int, default=720,
@@ -68,8 +71,19 @@ def build_parser():
 
 
 def main(argv=None):
-    args = build_parser().parse_args(argv)
-    image = pf.rotate_image(pf.load_image(args.image), args.rotation)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    raw_grid = Path(args.image).suffix.lower() == ".npy"
+    if raw_grid and args.rotation:
+        parser.error("NumPy input uses the original detector orientation. Use --rotation 0.")
+    if not raw_grid and args.center is None:
+        parser.error("--center is required for text images")
+    image = pf.load_image(args.image)
+    if args.center is None:
+        row, col = brightest_pixel(image)
+        args.center = (col, row)
+    if args.rotation:
+        image = pf.rotate_image(image, args.rotation)
     polar, theta, r, dr, _valid = pf.remap_polar(
         image, args.center, n_r=args.n_r, n_theta=args.n_theta,
         r_max=args.r_max)
@@ -87,14 +101,13 @@ def main(argv=None):
                               use_beta=not args.no_beta,
                               iterative=not args.one_shot,
                               processing=options)
+            block = pf.ring_block_text(fit, provenance=args.provenance)
         except ValueError as exc:
             failures += 1
             print(f"band {r0}-{r1}: {exc}")
             continue
         fits.append(fit)
-        pf.append_ring_block(args.output,
-                             pf.ring_block_text(fit,
-                                                provenance=args.provenance))
+        pf.append_ring_block(args.output, block)
         print(f"ring r0={fit.params['r0']:.4f} sigma={fit.params['sigma']:.4f} "
               f"rms={fit.rms:.4g} converged={fit.converged} -> {args.output}")
     if args.session:

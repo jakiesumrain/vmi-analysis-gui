@@ -12,19 +12,22 @@ library module with unit tests); this module only renders and handles input.
 from __future__ import annotations
 
 import asyncio
-from operator import not_
 from pathlib import Path
 import time
 
 import numpy as np
 from matplotlib import colormaps
-from nicegui import ui
+from nicegui import app, ui
 from PIL import Image
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from vmi_analysis.circularization import polar_fit as pf
 from vmi_analysis.imaging.centering import brightest_pixel
 
 from .. import theme
+from ..centroid_plots import _style, plot_options
+from ..settings import centroid_settings, output_dir
 from .common import (GENERATED, REPO_ROOT, file_url, num_input, path_input,
                      persist)
 
@@ -125,10 +128,7 @@ def _overlay_svg(state):
     if fit is not None:
         theta = np.linspace(state["view"]["theta0"], state["view"]["theta1"],
                             max(2, int(height)))
-        rg = np.full_like(theta, fit.params["r0"])
-        for n in range(1, fit.n_terms + 1):
-            rg += fit.params[f"A{n}"] * np.sin(n * theta)
-            rg += fit.params[f"B{n}"] * np.cos(n * theta)
+        rg = fit.ridge_centers(theta)
         segments = []
         current = []
         for t, radius in zip(theta, rg):
@@ -157,11 +157,41 @@ def _parameter_rows(fit):
         value = fit.params[name]
         sigma = fit.sigmas.get(name, float("nan"))
         rows.append({"parameter": name, "value": f"{value:.6g}",
-                     "sigma": f"{sigma:.3g}"})
+                     "sigma": f"{sigma:.3g}" if np.isfinite(sigma) else "—"})
     return rows
 
 
-def build(jobs=None) -> None:
+def _fit_comparison_figure(polar, theta, r, fit):
+    angles, radii, data, model = pf.fit_comparison(polar, theta, r, fit)
+    finite = np.concatenate([data[np.isfinite(data)], model[np.isfinite(model)]])
+    if not finite.size:
+        return None
+    fig = make_subplots(rows=1, cols=2, subplot_titles=("Data used for fit", "Fitted model"),
+                        horizontal_spacing=0.1, shared_yaxes="all")
+    degrees = np.degrees(angles)
+    for col, values in enumerate((data, model), 1):
+        fig.add_trace(go.Heatmap(
+            x=radii, y=degrees, z=values, coloraxis="coloraxis", hoverongaps=False,
+            hovertemplate="Radius %{x:.2f} px<br>Angle %{y:.1f}°<br>Intensity %{z:.4g}<extra></extra>",
+        ), row=1, col=col)
+    ridge = np.where(np.isfinite(data).any(axis=1), fit.ridge_centers(angles), np.nan)
+    fig.add_trace(go.Scatter(x=ridge, y=degrees, mode="lines",
+                             line={"color": "#ffd54f", "width": 2},
+                             hoverinfo="skip"), row=1, col=1)
+    half_r = (r[1] - r[0]) / 2
+    half_angle = np.degrees(theta[1] - theta[0]) / 2
+    fig.update_xaxes(title_text="Radius (pixels)", range=[radii[0] - half_r, radii[-1] + half_r], row=1)
+    fig.update_xaxes(matches="x", row=1, col=2)
+    fig.update_yaxes(range=[degrees[-1] + half_angle, degrees[0] - half_angle])
+    fig.update_yaxes(title_text="Angle (degrees)", row=1, col=1)
+    _style(fig, "Fit comparison")
+    fig.update_layout(height=450, plot_bgcolor="#d8d2ca",
+                      coloraxis={"colorscale": "Viridis", "cmin": float(finite.min()),
+                                 "cmax": float(finite.max()), "colorbar": {"title": "Intensity"}})
+    return fig
+
+
+def build(jobs=None, *, use_calibration=None) -> None:
     theme.section_title(
         "Trig Calibration",
         "Extract circularisation trig terms from a polar remap with optional "
@@ -187,7 +217,7 @@ def build(jobs=None) -> None:
     with theme.panel_card():
         with ui.row().classes("gap-4 flex-wrap items-end w-full"):
             widgets["image"] = persist(path_input(
-                "VMI image (.npy or .txt)", str(CIRC_DIR / "vmi_2d_raw.npy"),
+                "VMI image (.npy or .txt)", str(output_dir(centroid_settings()) / "vmi_2d_raw.npy"),
                 browse="file", filters=[".npy", ".txt"]), "calibration.image")
             widgets["rotation"] = persist(ui.select(
                 [0, 90, 180, 270], value=0,
@@ -199,8 +229,6 @@ def build(jobs=None) -> None:
                                     "calibration.center_x")
             widgets["cy"] = persist(num_input("Centre Y", 511.0, step=1.0),
                                     "calibration.center_y")
-            widgets["cx"].bind_enabled_from(widgets["brightest_center"], "value", not_)
-            widgets["cy"].bind_enabled_from(widgets["brightest_center"], "value", not_)
             widgets["n_r"] = persist(num_input("Radial bins", 512, step=1),
                                      "calibration.n_r")
             widgets["n_theta"] = persist(num_input("Angular bins", 720, step=1),
@@ -212,6 +240,20 @@ def build(jobs=None) -> None:
             use_circ_button = ui.button("Use Circularize input",
                                         icon="content_copy").props("flat")
             remap_status = ui.label("").classes("vmi-caption")
+
+        ui.label("NumPy input uses the original detector grid and its brightest pixel.") \
+            .classes("vmi-subtitle")
+
+        def update_geometry():
+            raw_grid = Path(widgets["image"].value or "").suffix.lower() == ".npy"
+            widgets["rotation"].set_enabled(not raw_grid)
+            widgets["brightest_center"].set_enabled(not raw_grid)
+            for key in ("cx", "cy"):
+                widgets[key].set_enabled(not raw_grid and not widgets["brightest_center"].value)
+
+        widgets["image"].on_value_change(lambda _: update_geometry())
+        widgets["brightest_center"].on_value_change(lambda _: update_geometry())
+        update_geometry()
 
     # ------------------------------------------------------------ processing
     with theme.panel_card():
@@ -282,11 +324,12 @@ def build(jobs=None) -> None:
                              {"name": "sigma", "label": "1σ", "field": "sigma"}],
                     rows=[], row_key="parameter").classes("w-full")
                 accept_button = ui.button("Accept ring (append to file)",
-                                          icon="save")
+                                           icon="save").disable()
         ui.label(
             "Enhancement helps you select a band and masks. The fit uses "
             "unenhanced data with inverse Abel applied if enabled."
         ).classes("vmi-caption")
+        fit_preview = ui.column().classes("w-full")
 
     # ----------------------------------------------------- rings, file, session
     with theme.panel_card():
@@ -348,6 +391,28 @@ def build(jobs=None) -> None:
         console.push(f"[Trig Calibration] {type(exc).__name__}: {exc}")
         ui.notify(f"{type(exc).__name__}: {exc}", type="negative", timeout=6000)
 
+    def _show_fit(fit):
+        state["last_fit"] = fit
+        fit_preview.clear()
+        param_table.rows = [] if fit is None else _parameter_rows(fit)
+        issue = fit.export_issue() if fit is not None else None
+        accept_button.set_enabled(fit is not None and issue is None)
+        if fit is None:
+            fit_status.text = "No fit yet."
+            return
+        fit_status.text = (f"r0 = {fit.params['r0']:.3f} px, "
+                           f"σ = {fit.params['sigma']:.3f} px, RMS = {fit.rms:.4g}, "
+                           f"pixels = {fit.n_pixels}")
+        with fit_preview:
+            if issue:
+                ui.label(issue).classes("text-negative")
+            if not fit.converged:
+                ui.label(f"Optimizer did not converge. {fit.message}").classes("text-warning")
+            figure = _fit_comparison_figure(state["fit_image"], state["theta"], state["r"], fit)
+            if figure is not None:
+                ui.label("Grey areas are excluded. The yellow line marks the fitted ridge.").classes("vmi-subtitle")
+                ui.plotly(plot_options(figure)).classes("w-full").style("height: 450px")
+
     def _update_labels():
         if state["band"] is not None:
             band = state["band"]
@@ -403,6 +468,7 @@ def build(jobs=None) -> None:
 
     def _clear_masks():
         state["masks"] = []
+        _show_fit(None)
         _update_overlay()
 
     def _on_mouse(event):
@@ -439,10 +505,9 @@ def build(jobs=None) -> None:
                 state["band"] = pf.Rect(
                     rect.r0, rect.r1, 0.0 if full else rect.theta0,
                     pf.TWO_PI if full else rect.theta1)
-                state["last_fit"] = None
-                param_table.rows = []
             else:
                 state["masks"].append(rect)
+            _show_fit(None)
             _update_overlay()
             return
 
@@ -460,6 +525,7 @@ def build(jobs=None) -> None:
             ui.notify("Load an image first.", type="warning")
             return
         state["fit_image"] = state["display"] = None
+        _show_fit(None)
         try:
             options = _options()
             fit_image, display, options = await asyncio.to_thread(
@@ -480,8 +546,10 @@ def build(jobs=None) -> None:
             return False
         remap_status.text = "loading and remapping…"
         try:
-            rotation = int(widgets["rotation"].value or 0)
-            auto_center = bool(widgets["brightest_center"].value)
+            path = Path(path).expanduser().resolve()
+            raw_grid = path.suffix.lower() == ".npy"
+            rotation = 0 if raw_grid else int(widgets["rotation"].value or 0)
+            auto_center = raw_grid or bool(widgets["brightest_center"].value)
             center = saved_center
             if center is None and not auto_center:
                 center = (float(widgets["cx"].value), float(widgets["cy"].value))
@@ -492,7 +560,11 @@ def build(jobs=None) -> None:
             row, col = await asyncio.to_thread(brightest_pixel, image)
             console.push(f"[Trig Calibration] Brightest pixel in {Path(path).name} "
                          f"(zero-based): row={row}, col={col}.")
-            rotated = pf.rotate_image(image, rotation)
+            if raw_grid:
+                if saved_center is not None and saved_center != (col, row):
+                    raise ValueError("The saved fit center differs from the raw detector origin. Refit the rings.")
+                center = (col, row)
+            rotated = pf.rotate_image(image, rotation) if rotation else image
             if center is None:
                 fit_row, fit_col = ((row, col) if rotation == 0 else
                                     await asyncio.to_thread(brightest_pixel, rotated))
@@ -510,7 +582,7 @@ def build(jobs=None) -> None:
             console.push("[Trig Calibration] The fit uses the remapped orientation. "
                          "Apply its calibration to a grid with that same orientation and center.")
         state.update(raw=polar, theta=theta, r=r, dr=dr, ready=True,
-                     image={"path": path, "center": list(center), "rotation": rotation,
+                     image={"path": str(path), "center": list(center), "rotation": rotation,
                             "brightest_center": auto_center,
                             "n_r": n_r, "n_theta": n_theta, "r_max": r_max},
                      band=None, masks=[], last_fit=None, fit_image=None, display=None,
@@ -537,12 +609,14 @@ def build(jobs=None) -> None:
             ui.notify("Drag a band around one ring first.", type="warning")
             return
         fit_button.disable()
+        _show_fit(None)
         fit_status.text = "fitting…"
+        image, theta, radii = state["fit_image"], state["theta"], state["r"]
+        band, masks = state["band"], tuple(state["masks"])
         try:
             fit = await asyncio.to_thread(
-                pf.fit_ring, state["fit_image"], state["theta"], state["r"],
-                state["band"], tuple(state["masks"]),
-                n_terms=int(widgets["n_terms"].value or 3),
+                pf.fit_ring, image, theta, radii, band, masks,
+                n_terms=int(widgets["n_terms"].value if widgets["n_terms"].value is not None else 3),
                 use_beta=bool(widgets["beta"].value),
                 iterative=bool(widgets["iterative"].value),
                 processing=state["options"])
@@ -552,12 +626,9 @@ def build(jobs=None) -> None:
             return
         finally:
             fit_button.enable()
-        state["last_fit"] = fit
-        param_table.rows = _parameter_rows(fit)
-        fit_status.text = (f"r0 = {fit.params['r0']:.3f} px, "
-                           f"σ = {fit.params['sigma']:.3f}, RMS = {fit.rms:.4g}, "
-                           f"χ²/dof = {fit.chi2_red:.4g}, pixels = {fit.n_pixels}, "
-                           f"converged = {fit.converged}")
+        if image is not state["fit_image"] or band != state["band"] or masks != tuple(state["masks"]):
+            return
+        _show_fit(fit)
         _update_overlay()
 
     def _ring_rows():
@@ -597,6 +668,11 @@ def build(jobs=None) -> None:
             _notify_error(exc)
             return
         image = payload.get("image", {})
+        if (Path(image.get("path") or "").suffix.lower() == ".npy"
+                and image.get("rotation", 0)):
+            ui.notify("This session rotated the NumPy image. Refit its rings on the original detector grid.",
+                      type="warning")
+            return
         widgets["image"].value = image.get("path", widgets["image"].value)
         center = image.get("center", [widgets["cx"].value, widgets["cy"].value])
         widgets["brightest_center"].value = image.get("brightest_center", False)
@@ -627,11 +703,8 @@ def build(jobs=None) -> None:
             state["masks"] = [pf.Rect(*item) for item in payload.get("masks", [])]
             state["rings"] = pf.session_rings(payload)
             fit_data = payload.get("fit")
-            state["last_fit"] = (None if fit_data is None
-                                 else pf.RingFit.from_dict(fit_data))
+            _show_fit(None if fit_data is None else pf.RingFit.from_dict(fit_data))
             rings_table.rows = _ring_rows()
-            param_table.rows = ([] if state["last_fit"] is None
-                                else _parameter_rows(state["last_fit"]))
             _refresh_view()
             await _update_reduction()
         ui.notify("Session loaded.")
@@ -655,6 +728,9 @@ def build(jobs=None) -> None:
             ui.notify("Fit a ring first.", type="warning")
             return
         fit = state["last_fit"]
+        if issue := fit.export_issue():
+            ui.notify(issue, type="warning")
+            return
         try:
             radii = await asyncio.to_thread(pf.existing_radii,
                                             widgets["output"].value)
@@ -674,10 +750,9 @@ def build(jobs=None) -> None:
             _notify_error(exc)
             return
         state["rings"].append(fit)
-        state["last_fit"] = None
+        _show_fit(None)
         state["band"] = None
         state["masks"] = []
-        param_table.rows = []
         fit_status.text = "Accepted. Select the next ring."
         rings_table.rows = _ring_rows()
         _update_overlay()
@@ -707,14 +782,21 @@ def build(jobs=None) -> None:
         coefficients_table.rows = rows
 
     def _use_in_circularize():
-        from nicegui import app as nicegui_app
-
         if not widgets["output"].value:
             ui.notify("Set the extracted file first.", type="warning")
             return
-        nicegui_app.storage.general["circularize.extracted"] = widgets["output"].value
-        ui.notify("Set as the Circularize extracted file "
-                  "(takes effect when that panel is opened/refreshed).")
+        image = state["image"]
+        raw_path = image["path"] if image and Path(image["path"]).suffix.lower() == ".npy" else None
+        if use_calibration is None:
+            return
+        use_calibration(str(Path(widgets["output"].value).expanduser().resolve()), raw_path)
+        ui.notify("Set the Circularize calibration file and NumPy input." if raw_path else
+                  "Set the Circularize calibration file.")
+
+    def _use_circularize_input():
+        path = app.storage.general.get("circularize.inp")
+        if path:
+            widgets["image"].value = str(CIRC_DIR / Path(path).expanduser())
 
     # ------------------------------------------------------------- wiring
     async def _load_clicked():
@@ -722,9 +804,6 @@ def build(jobs=None) -> None:
 
     def _apply_clicked():
         asyncio.create_task(_apply_processing())
-
-    def _fit_clicked():
-        asyncio.create_task(_fit_selection())
 
     def _accept_clicked():
         asyncio.create_task(_accept())
@@ -737,9 +816,9 @@ def build(jobs=None) -> None:
 
     load_button.on_click(_load_clicked)
     apply_button.on_click(_apply_clicked)
-    fit_button.on_click(_fit_clicked)
+    fit_button.on_click(_fit_selection)
     accept_button.on_click(_accept_clicked)
     widgets["tool"].on_value_change(
         lambda e: state.__setitem__("tool", e.value or "band"))
     widgets["show_raw"].on_value_change(lambda e: _refresh_view())
-    use_circ_button.on_click(_use_in_circularize)
+    use_circ_button.on_click(_use_circularize_input)
