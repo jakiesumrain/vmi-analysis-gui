@@ -85,7 +85,7 @@ def build(jobs: JobManager) -> None:
                                        browse="file", filters=[".npy"]),
                             "accumulate.dark_path")
         with ui.expansion("Histogram previews", icon="bar_chart", value=False).classes("w-full").props(
-            'header-class="vmi-histogram-toggle text-primary" expand-icon-class="text-primary"'
+            'header-class="vmi-section-toggle text-primary" expand-icon-class="text-primary"'
         ):
             histogram_subtract_dark = persist(ui.checkbox("Subtract dark frame in previews", value=True),
                                               "accumulate.histogram_subtract_dark")

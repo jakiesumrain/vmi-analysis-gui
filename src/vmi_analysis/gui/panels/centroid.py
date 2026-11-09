@@ -101,13 +101,15 @@ def build(jobs: JobManager) -> None:
                     wid.props('hint="Align the polarization vertically. Use 0° if it is already vertical. '
                               'Positive angles rotate counterclockwise."')
 
+    section_toggle_props = 'header-class="vmi-section-toggle text-primary" expand-icon-class="text-primary"'
     with theme.panel_card():
         render_fields("vmi_picasso", "Paths and detection")
-        with ui.expansion("Advanced Options").classes("w-full"):
+        with ui.expansion("Advanced Options", icon="tune").classes("w-full").props(section_toggle_props):
             render_fields("vmi_picasso", advanced=True)
         render_fields("processing", "Processing")
         render_fields("histogram", "Histogram")
-        with ui.expansion("Energy Calibration and Spectrum Plot").classes("w-full"):
+        with ui.expansion("Energy Calibration and Spectrum Plot", icon="show_chart") \
+                .classes("w-full").props(section_toggle_props):
             ui.label("E = α × r². Intensity is unchanged. Leave α empty for pixel². Xe fitting reports "
                      "a suggested α without changing your input. Fit limits "
                      "always use pixel². Spectrum axis limits use the displayed units.") \
