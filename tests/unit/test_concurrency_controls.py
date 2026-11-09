@@ -28,6 +28,25 @@ class ConcurrencyControlsTests(unittest.TestCase):
                 finally:
                     client.delete()
 
+    def test_keep_alive_toggle_is_global_and_persisted(self):
+        manager = JobManager()
+        self.addCleanup(manager.shutdown)
+        store = {'centroid.settings_migrated': True}
+        with patch.object(gui, 'MANAGER', manager), \
+                patch.object(app.storage, '_general', store):
+            client = Client(ui.page('/_test_keep_alive'))
+            try:
+                with client:
+                    gui.index()
+                toggle = next(element for element in client.elements.values()
+                              if element.__class__.__name__ == 'Checkbox'
+                              and 'Keep running' in getattr(element, 'text', ''))
+                self.assertTrue(toggle.value)
+                toggle.value = False
+                self.assertFalse(store[gui.KEEP_ALIVE_KEY])
+            finally:
+                client.delete()
+
     def test_restart_restores_limit_and_rejects_invalid_saved_values(self):
         for saved, expected in ((5, 5), (0, 2), ('invalid', 2)):
             manager = JobManager()

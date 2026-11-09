@@ -4,6 +4,7 @@ Launch from the repository root:  uv run vmi-analysis
 """
 
 import asyncio
+import os
 
 from nicegui import app, background_tasks, ui
 
@@ -14,7 +15,30 @@ from .panels import (accumulate, binning, centroid, circularize, dark,
                      gmd_map, movie, pes, pipeline)
 from .panels.common import init_zoom_overlay
 
+KEEP_ALIVE_KEY = "server.keep_alive_while_jobs"
+DEFAULT_RECONNECT_TIMEOUT = 30.0
+DEFAULT_SHUTDOWN_GRACE = 2.0
+
 _shutdown_task: asyncio.Task | None = None
+
+
+def _env_float(name: str, default: float, minimum: float = 0.1) -> float:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return max(value, minimum)
+
+
+def _keep_alive_enabled() -> bool:
+    return bool(app.storage.general.get(KEEP_ALIVE_KEY, True))
+
+
+def _has_connected_client() -> bool:
+    return any(client.has_socket_connection for client in app.clients())
 
 
 def _cancel_shutdown_check() -> None:
@@ -32,29 +56,54 @@ async def _cleanup_jobs() -> None:
     await asyncio.to_thread(MANAGER.shutdown)
 
 
-@app.on_disconnect
-def _shutdown_after_last_client(client) -> None:
-    """Stop the server once the last browser client is gone for good.
+def _shutdown_now() -> None:
+    MANAGER.begin_shutdown()
+    print("[gui] last client disconnected — shutting down", flush=True)
+    app.shutdown()
 
-    on_disconnect fires on the socket drop, before NiceGUI's reconnect grace
-    period ends — so re-check after that timeout: a page reload reconnects
-    within it and survives. Each new connection cancels the pending check;
-    each last-client disconnect starts a fresh grace period.
+
+async def _shutdown_after(delay: float) -> None:
+    await asyncio.sleep(max(delay, 0.0))
+    if app.is_stopping or _has_connected_client():
+        return
+    _shutdown_now()
+
+
+async def _keep_alive_until_idle() -> None:
+    """Keep the server and its jobs alive while no page is connected."""
+    while not app.is_stopping:
+        if _has_connected_client():
+            return
+        if not MANAGER.has_active():
+            break
+        await asyncio.sleep(1.0)
+    await asyncio.sleep(_env_float("VMI_GUI_SHUTDOWN_GRACE", DEFAULT_SHUTDOWN_GRACE))
+    if app.is_stopping or _has_connected_client():
+        return
+    _shutdown_now()
+
+
+@app.on_disconnect
+def _schedule_shutdown_after_last_client(client) -> None:
+    """Stop after the last page is gone, unless jobs should survive a detach.
+
+    With the header keep-alive option on, a disconnect while jobs are running
+    leaves the server and the jobs alive so Edge sleeping tabs, locks or network
+    drops do not kill a long job. The server exits after the queue becomes idle
+    and no page reconnects. When the option is off, the old behaviour applies:
+    wait a short grace period, then stop and cancel the jobs.
     """
     global _shutdown_task
     _cancel_shutdown_check()
-    if app.is_stopping or any(c.has_socket_connection for c in app.clients()):
+    if app.is_stopping or _has_connected_client():
         return
-
-    async def check() -> None:
-        await asyncio.sleep(client.page.resolve_reconnect_timeout() + 0.1)
-        if app.is_stopping or any(c.has_socket_connection for c in app.clients()):
-            return
-        MANAGER.begin_shutdown()
-        print("[gui] last client disconnected — shutting down", flush=True)
-        app.shutdown()
-
-    _shutdown_task = background_tasks.create(check(), name="auto-shutdown-check")
+    if _keep_alive_enabled() and MANAGER.has_active():
+        _shutdown_task = background_tasks.create(
+            _keep_alive_until_idle(), name="keep-alive-while-jobs-run")
+        return
+    _shutdown_task = background_tasks.create(
+        _shutdown_after(_env_float("VMI_GUI_SHUTDOWN_GRACE", DEFAULT_SHUTDOWN_GRACE)),
+        name="auto-shutdown-check")
 
 TABS = [
     ("GMD Map", gmd_map),
@@ -75,9 +124,22 @@ def index() -> None:
 
     with ui.header().classes("items-center justify-between px-6 py-3") \
             .style("background: #faf9f5; border-bottom: 1px solid #e6dfd8"):
-        with ui.row().classes("items-baseline gap-3"):
-            ui.label("VMI Analysis").classes("vmi-title vmi-title-md vmi-title-bold")
-            ui.label("photoelectron imaging toolbox").classes("vmi-subtitle")
+        with ui.row().classes("items-center gap-8"):
+            with ui.row().classes("items-baseline gap-3"):
+                ui.label("VMI Analysis").classes("vmi-title vmi-title-md vmi-title-bold")
+                ui.label("photoelectron imaging toolbox").classes("vmi-subtitle")
+            keep_alive = ui.checkbox(
+                "Keep running on disconnect",
+                value=_keep_alive_enabled(),
+            ).props("dense").classes("vmi-caption")
+            keep_alive.tooltip(
+                "Applies to every panel. While a job is running, keep this server "
+                "and the job alive when the page disconnects (closed tab, Edge "
+                "sleeping tab, locked screen, network loss). Turn off to stop the "
+                "server and cancel jobs when the last page closes.")
+            keep_alive.on_value_change(
+                lambda event: app.storage.general.__setitem__(
+                    KEEP_ALIVE_KEY, bool(event.value)))
         with ui.row().classes("items-center gap-4"):
             def change_limit(event):
                 if event.value is None:
@@ -118,15 +180,15 @@ def index() -> None:
 
     with ui.footer().classes("px-6 py-2 items-center justify-between") \
             .style("background: #181715"):
-        ui.label("vmi-analysis-gui — independent jobs can run concurrently; "
-                 "closing the browser tab stops the server.") \
+        ui.label("vmi-analysis-gui — independent jobs run concurrently; closing "
+                 "the last tab stops the server unless 'Keep running on "
+                 "disconnect' is on and a job is still running.") \
             .classes("vmi-subtitle").style("color: #a09d96")
         ui.link("Tao (jakiesumrain@163.com)", "mailto:jakiesumrain@163.com") \
             .classes("vmi-subtitle").style("color: #cc785c")
 
 
 def main() -> None:
-    import os
     port = startup_port()
     from vmi_analysis.paths import prepare_workspace
     prepare_workspace()
@@ -137,7 +199,8 @@ def main() -> None:
     init_zoom_overlay()
     ui.run(title="VMI Analysis",
            port=port,
-           reconnect_timeout=1.0,
+           reconnect_timeout=_env_float("VMI_GUI_RECONNECT_TIMEOUT",
+                                        DEFAULT_RECONNECT_TIMEOUT, minimum=4.0),
            reload=False,
            show=os.environ.get("VMI_GUI_NO_SHOW", "") != "1")
 

@@ -28,6 +28,15 @@ settings.LEGACY_CONFIG = Path(os.environ['VMI_TEST_CONFIG_PATH'])
 from vmi_analysis.gui import app as gui
 from vmi_analysis.gui.jobs import MANAGER, Job
 app.storage.general['jobs.max_concurrent'] = 1
+app.storage.general['server.keep_alive_while_jobs'] = False
+
+@app.post('/_test/keepalive')
+def set_keepalive(value: bool):
+    app.storage.general['server.keep_alive_while_jobs'] = value
+
+@app.post('/_test/short')
+def start_short_job():
+    MANAGER.submit(Job(name='short', cmd=[sys.executable, '-c', 'import time; time.sleep(3)']))
 
 @app.post('/_test/jobs')
 def start_jobs(marker: str):
@@ -73,6 +82,8 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
                      PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8",
                      NICEGUI_STORAGE_PATH=self.storage_folder.name,
                      VMI_WORKSPACE_DIR=self.storage_folder.name,
+                     VMI_GUI_SHUTDOWN_GRACE="2.0",
+                     VMI_GUI_RECONNECT_TIMEOUT="4.0",
                      VMI_TEST_CONFIG_PATH=str(Path(self.storage_folder.name) / "absent.toml")),
             stdout=self.log, stderr=subprocess.STDOUT,
         )
@@ -125,7 +136,7 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
         start = time.monotonic()
         await client.disconnect()
         await self.wait_stopped()
-        self.assertLess(time.monotonic() - start, 3)
+        self.assertLess(time.monotonic() - start, 4)
 
     async def test_other_tab_keeps_server_alive(self):
         first, second = await self.connect(), await self.connect()
@@ -199,6 +210,42 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
     async def test_server_shutdown_hook_cleans_up_jobs(self):
         await self.check_running_job_cleanup(close_tab=False)
 
+    async def test_keep_alive_keeps_server_and_jobs_after_disconnect(self):
+        response = await self.http.post(self.url + "/_test/keepalive",
+                                        params={"value": "true"})
+        response.raise_for_status()
+        client = await self.connect()
+        response = await self.http.post(self.url + "/_test/short")
+        response.raise_for_status()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            jobs = (await self.http.get(self.url + "/_test/jobs")).json()
+            if jobs and jobs[0]["status"] == "running":
+                break
+            await asyncio.sleep(0.05)
+        self.assertEqual(jobs[0]["status"], "running")
+        await client.disconnect()
+        # The job sleeps 3 s; the server must still be alive halfway through.
+        await asyncio.sleep(2.0)
+        self.assertIsNone(self.proc.poll(), "keep-alive did not protect the job")
+        await self.wait_stopped(timeout=8)
+
+    async def test_keep_alive_can_be_cancelled_by_reconnecting(self):
+        response = await self.http.post(self.url + "/_test/keepalive",
+                                        params={"value": "true"})
+        response.raise_for_status()
+        client = await self.connect()
+        response = await self.http.post(self.url + "/_test/short")
+        response.raise_for_status()
+        await asyncio.sleep(0.2)
+        await client.disconnect()
+        await asyncio.sleep(0.4)
+        replacement = await self.connect()
+        await asyncio.sleep(2.0)
+        self.assertIsNone(self.proc.poll(), "reconnect did not cancel shutdown")
+        await replacement.disconnect()
+        await self.wait_stopped(timeout=8)
+
     async def test_last_tab_cleans_up_all_concurrent_jobs(self):
         client = await self.connect()
         marker = Path(self.storage_folder.name) / 'must-not-start.txt'
@@ -237,3 +284,4 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

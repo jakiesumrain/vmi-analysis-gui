@@ -40,12 +40,18 @@ If the requested port is unavailable, startup exits with a clear error and
 prints PowerShell commands using a checked alternative port. The app does not
 switch ports automatically; run the suggested commands to relaunch it.
 
-The server stops automatically about 1–2 seconds after the last browser tab
-showing the app disconnects. Reloads and brief disconnects have a one-second
-reconnect grace period; a slower reload may require restarting the server.
-Silent connection loss takes longer to detect because it relies on socket
-heartbeats. `Ctrl+C` in the terminal works too. Shutdown cancels queued jobs,
-terminates the running job's process tree, and waits for cleanup before exit.
+The **Keep running on disconnect** checkbox in the header (on by default,
+applies to every panel) decides what happens when the last page disconnects.
+When it is on and a job is running or queued, the server and the jobs stay
+alive, so closing the tab, an Edge sleeping tab, a locked screen or a network
+drop does not kill a long job; the server exits after the queue is idle and no
+page reconnects. Turn it off to stop the server and cancel jobs when the last
+page closes. With no active job, the server exits after a short idle grace
+period. The browser reconnect window is 30 s by default
+(`VMI_GUI_RECONNECT_TIMEOUT`); the idle shutdown grace is 2 s
+(`VMI_GUI_SHUTDOWN_GRACE`). `Ctrl+C` in the terminal always works. Shutdown
+cancels queued jobs, terminates the running job's process tree, and waits for
+cleanup before exit.
 
 That is the whole setup. The app starts with one tab per script:
 
@@ -89,7 +95,9 @@ job shows **Cancel queued**, and cancellation in progress shows disabled
 **Stopping…**. The button returns to Run when the job finishes or stops.
 Reloading the page restores controls for that panel's active job. Other queued
 jobs start when their slots and resources are available; stopping one job leaves
-other running panels alone. Closing the last browser tab stops all jobs.
+other running panels alone. Closing the last browser tab cancels jobs only
+when **Keep running on disconnect** is off; with the default on, the job keeps
+running server-side and can be reattached by reopening the page.
 
 Click an output image to open the inspection overlay. Choose **Crop area**,
 drag a rectangle over the region you want to inspect, and release. The overlay

@@ -267,12 +267,12 @@ panel-specific fields are in Section~\ref{sec:panels}.
 \label{sec:tabs}
 
 The header shows the title \emph{VMI Analysis}, the subtitle
-\code{photoelectron imaging toolbox}, and the \emph{Maximum concurrent jobs}
-selector. Below it is one row of tabs, in this order:
+\code{photoelectron imaging toolbox}, the global \emph{Keep running on
+disconnect} checkbox, and the \emph{Maximum concurrent jobs} selector. The
+checkbox applies to every panel. Below it is one row of tabs, in this order:
 \code{GMD Map}, \emph{Movie}, \emph{Dark Frame}, \emph{Accumulate},
 \code{Centroiding}, \emph{Binning}, \emph{Circularize}, \emph{PES},
-\code{Pipeline}. The footer reports that independent jobs run concurrently
-and that closing the browser tab stops the server.
+\code{Pipeline}.
 
 Every panel is built when the page loads and keeps its own run state,
 progress, log, and results. Switching tabs does not stop or restart work.
@@ -418,12 +418,23 @@ Launch the application with \code{uv run vmi-\allowbreak{}analysis}; it serves
 port is unavailable the program prints an error plus a ready-to-paste
 suggestion for a free port; it does not switch ports on its own.
 
-When the last browser client disconnects, the server waits a one-second
-reconnect grace period, checks once more, and then shuts down: queued jobs
-are cancelled, running process trees are terminated, and cleanup is awaited.
-A fast reload reconnects within the grace period; a slower reload may
-require starting the server again. Multiple tabs keep it alive, and
+What happens when the last browser client disconnects is controlled by the
+global \emph{Keep running on disconnect} checkbox in the header (on by
+default). When it is on and any job is running or queued, the server and the
+jobs survive the disconnect: a closed tab, an Edge sleeping tab, a locked
+screen or a network drop does not terminate a long job. The server exits after
+the queue becomes idle and no page reconnects (idle grace set by
+\code{VMI\_\allowbreak{}GUI\_\allowbreak{}SHUTDOWN\_\allowbreak{}GRACE}, default 2\,s). Reopening
+the page before then reattaches to the running job and its results. When the
+option is off, or when no job is active, the server waits the idle grace,
+checks once more, and shuts down: queued jobs are cancelled, running process
+trees are terminated, and cleanup is awaited. Multiple tabs keep it alive, and
 \code{Ctrl+C} in the terminal also shuts it down.
+
+The browser reconnect window is \code{VMI\_\allowbreak{}GUI\_\allowbreak{}RECONNECT\_\allowbreak{}TIMEOUT}
+seconds (default 30); it also sets the socket ping interval and timeout. A
+reload reconnects within that window. Silent connection loss is eventually
+detected through those socket pings.
 
 \section{Data you must provide}
 \label{sec:data}
@@ -1889,9 +1900,11 @@ backend, for example \code{Agg}. \\
   \item[The server exits immediately.] The port is in use. Read the printed
     suggestion, set \code{VMI\_\allowbreak{}GUI\_\allowbreak{}PORT} to a free port, and rerun. Ports in
     the Windows excluded ranges are reported as unavailable.
-  \item[The server stops when I close a tab.] This is intended: the server
-    shuts down after the last client disconnects. Keep one tab open while
-    jobs run, or start the server again.
+  \item[The server stops when I close a tab.] With \emph{Keep running on
+    disconnect} off (or when no job is running), the server shuts down after
+    the last client disconnects. With it on and a job active, closing the tab
+    leaves the job running; reopen the page to reattach, or start the server
+    again after it has exited.
   \item[A job waits forever.] Look at the waiting reason: it names the
     conflicting job or path. Another job writes an overlapping file, or the
     panel's previous job is still active. Wait, or stop the conflicting job
