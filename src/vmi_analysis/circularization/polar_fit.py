@@ -213,8 +213,10 @@ def enhance_clahe(image, *, smooth_theta=1.0, smooth_r=1.0, clip_limit=0.02,
 
 def enhance_bandpass(image, *, smooth_theta=1.0, smooth_r=0.8, low_r=2.0, high_r=20.0):
     """Radial difference-of-Gaussians: keep thin ridges, remove the background."""
+    if not np.isfinite([low_r, high_r]).all() or not 0 <= low_r < high_r:
+        raise ValueError("Bandpass widths must satisfy 0 ≤ low r < high r.")
     base = gaussian_filter(image, sigma=(smooth_theta, smooth_r), mode="nearest")
-    lowpass_small = gaussian_filter1d(base, sigma=low_r, axis=1, mode="nearest")
+    lowpass_small = gaussian_filter1d(base, sigma=low_r, axis=1, mode="nearest") if low_r else base
     lowpass_large = gaussian_filter1d(base, sigma=high_r, axis=1, mode="nearest")
     band = np.clip(lowpass_small - lowpass_large, 0.0, None)
     return robust_normalize(band).astype(np.float32)

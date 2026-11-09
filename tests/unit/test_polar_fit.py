@@ -73,6 +73,15 @@ class AbelTests(unittest.TestCase):
 
 
 class EnhancementTests(unittest.TestCase):
+    def test_bandpass_accepts_zero_lower_width_and_rejects_invalid_widths(self):
+        polar, _, _ = make_polar_ridge(n_theta=24, n_r=60)
+        result = pf.enhance_bandpass(polar, low_r=0, high_r=5)
+        self.assertTrue(np.isfinite(result).all())
+        self.assertGreater(result.max(), 0)
+        for low, high in ((-1, 5), (0, 0), (5, 2), (0, np.inf)):
+            with self.subTest(low=low, high=high), self.assertRaisesRegex(ValueError, "Bandpass widths"):
+                pf.enhance_bandpass(polar, low_r=low, high_r=high)
+
     def test_bandpass_preserves_ridge_position(self):
         n_theta, n_r = 40, 80
         theta = np.linspace(0, pf.TWO_PI, n_theta, endpoint=False)

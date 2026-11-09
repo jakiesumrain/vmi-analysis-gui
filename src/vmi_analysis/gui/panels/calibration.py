@@ -12,6 +12,8 @@ library module with unit tests); this module only renders and handles input.
 from __future__ import annotations
 
 import asyncio
+from base64 import b64encode
+from io import BytesIO
 from pathlib import Path
 import time
 
@@ -29,11 +31,9 @@ from vmi_analysis.imaging.centering import brightest_pixel
 from .. import theme
 from ..centroid_plots import COLORMAPS, _style, plot_options
 from ..settings import centroid_settings, output_dir
-from .common import (GENERATED, REPO_ROOT, file_url, num_input, path_input,
-                     persist)
+from .common import REPO_ROOT, num_input, path_input, persist
 
 CIRC_DIR = REPO_ROOT / "circularization"
-VIEW_PNG = GENERATED / "polarfit_view.png"
 
 FILTER_FIELDS = [
     ("smooth_theta", "Smooth θ", 1.0, 0.1),
@@ -51,9 +51,9 @@ FILTER_FIELDS = [
 ]
 
 
-def _render_polar_png(polar, out_path, cmap="viridis", *, log_scale=False,
-                      vmin_pct=None, vmax_pct=None):
-    """Write the polar image at exactly one pixel per bin (x=r, y=theta)."""
+def _render_polar_image(polar, cmap="viridis", *, log_scale=False,
+                        vmin_pct=None, vmax_pct=None):
+    """Render the polar image at exactly one pixel per bin (x=r, y=theta)."""
     polar = np.asarray(polar, dtype=float)
     lower = 1.0 if vmin_pct is None else float(vmin_pct)
     upper = 99.5 if vmax_pct is None else float(vmax_pct)
@@ -72,8 +72,7 @@ def _render_polar_png(polar, out_path, cmap="viridis", *, log_scale=False,
             norm = LogNorm if log_scale else Normalize
             scaled[valid] = norm(vmin=low, vmax=high, clip=True)(values)
     rgb = (colormaps[cmap.lower()](scaled)[..., :3] * 255).astype(np.uint8)
-    Image.fromarray(rgb).save(out_path, format="PNG")
-    return out_path
+    return Image.fromarray(rgb)
 
 
 def _px_to_data(state, x, y):
@@ -411,7 +410,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
             widgets["order"] = persist(num_input("Slope order", 1, step=1),
                                        "calibration.slope_order")
             ui.button("Update a_n/b_n preview",
-                      on_click=lambda: asyncio.create_task(_update_reduction()))
+                      on_click=lambda: _update_reduction())
         coefficients_table = ui.table(
             columns=[{"name": "coefficient", "label": "Coefficient",
                       "field": "coefficient"},
@@ -506,19 +505,21 @@ def build(jobs=None, *, use_calibration=None) -> None:
         if ti.size < 2 or ri.size < 2:
             return
         indices = np.ix_(ti, ri)
-        raw_path = VIEW_PNG.with_stem(f"{VIEW_PNG.stem}_raw")
         warnings = []
-        for key, path, label in (("raw", raw_path, "Raw polar"),
-                                 ("display", VIEW_PNG, "Processed polar")):
+        for key, label in (("raw", "Raw polar"), ("display", "Processed polar")):
             patch = state[key][indices]
             try:
-                _render_polar_png(patch, path, cmap=colormap.value,
-                                  log_scale=color_scale.value == "Log",
-                                  vmin_pct=color_min.value, vmax_pct=color_max.value)
+                image = _render_polar_image(patch, cmap=colormap.value,
+                                            log_scale=color_scale.value == "Log",
+                                            vmin_pct=color_min.value, vmax_pct=color_max.value)
             except ValueError as exc:
                 warnings.append(f"{label} uses automatic linear colors. {exc}")
-                _render_polar_png(patch, path, cmap=colormap.value)
-            polar_images[key].set_source(file_url(path))
+                image = _render_polar_image(patch, cmap=colormap.value)
+            # Give each update its own bytes so in-flight requests cannot read a changing file.
+            with BytesIO() as buffer:
+                image.save(buffer, format="PNG")
+                encoded = b64encode(buffer.getbuffer()).decode("ascii")
+            polar_images[key].set_source(f"data:image/png;base64,{encoded}")
         color_status.text = " ".join(warnings)
         color_status.visible = bool(warnings)
         state["img_size"] = (int(ri.size), int(ti.size))
@@ -888,22 +889,10 @@ def build(jobs=None, *, use_calibration=None) -> None:
     async def _load_clicked():
         await _load_image()
 
-    def _apply_clicked():
-        asyncio.create_task(_apply_processing())
-
-    def _accept_clicked():
-        asyncio.create_task(_accept())
-
-    def _reduction_clicked():
-        asyncio.create_task(_update_reduction())
-
-    def _load_session_clicked():
-        asyncio.create_task(_load_session())
-
     load_button.on_click(_load_clicked)
-    apply_button.on_click(_apply_clicked)
+    apply_button.on_click(_apply_processing)
     fit_button.on_click(_fit_selection)
-    accept_button.on_click(_accept_clicked)
+    accept_button.on_click(_accept)
     widgets["tool"].on_value_change(
         lambda e: state.__setitem__("tool", e.value or "band"))
     for control in (color_scale, colormap):
