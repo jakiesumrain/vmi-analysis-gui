@@ -75,9 +75,12 @@ survive restart. Increasing the limit opens more slots; lowering it lets
 existing jobs finish and delays new starts. CPU worker counts inside individual
 panels still apply, so choose a limit appropriate for your RAM and disk speed.
 
-Read-only inputs can be shared. Jobs wait when another job writes an overlapping
-file or directory, or reads something they need to overwrite. Waiting jobs show
-the reason; unrelated jobs can use free slots. One job per panel runs at once.
+Read-only inputs can be shared. Jobs wait when another job writes a path they
+need, when they read inside a directory another job is writing, or when two
+directory reservations overlap. Two jobs may write different files inside the
+same reserved output directory (for example a GMD map beside a Centroiding
+run). Waiting jobs show the reason; unrelated jobs can use free slots. One job
+per panel runs at once.
 Pipeline stages stay sequential and reserve their inputs/outputs for the whole
 pipeline run. MATLAB/CPBASEX jobs also share an exclusive lock because their
 temporary files are shared. Clear-output actions respect these reservations.

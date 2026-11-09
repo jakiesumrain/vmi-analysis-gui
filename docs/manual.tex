@@ -311,12 +311,16 @@ they finish, and new jobs start more slowly. The value is saved and survives
 a restart.
 
 The queue also enforces file safety. Each submitted command declares the
-files and directories it reads and writes. A job whose output overlaps
-another job's input or output waits, and shows a reason such as
-\code{Waiting for <job>: <path>} or \emph{Waiting for a concurrent job
-slot}. Unrelated jobs can start in the free slots. Only one job per panel
-may be active at a time. Jobs launched by the Pipeline panel reserve the
-inputs and outputs of all four stages for the whole run.
+files and directories it reads and writes. A job waits and shows a reason
+such as \code{Waiting for <job>: <path>} or \emph{Waiting for a concurrent job
+slot} when it reads inside a directory another job is writing, writes a path
+that another job uses, or reserves a directory that overlaps another
+reservation. Two jobs may write \emph{different} files inside the same
+reserved output directory: for example, a GMD map can be written beside a
+Centroiding run whose output directory contains it. Deletion and preview
+actions remain conservative. Unrelated jobs can start in the free slots, and
+only one job per panel may be active at a time. Jobs launched by the Pipeline
+panel reserve the inputs and outputs of all four stages for the whole run.
 
 The MATLAB/CPBASEX backend takes an exclusive lock because the MATLAB script
 uses a shared working file, so MATLAB jobs never overlap each other or a job
@@ -1383,8 +1387,9 @@ resolution factor is independent of the Centroiding one. Invalid thresholds
 (empty, unparseable, unsorted) are not caught by the panel. The weight
 minimum and maximum in this panel are a separate copy from the Centroiding
 tab's values; the Pipeline uses the Centroiding values instead. Binning
-writes its whole output directory, so it is queued against a concurrent
-Centroiding or Pipeline job writing the same directory.
+reserves its whole output directory and reads the checkpoint; it queues when
+the checkpoint lies inside another job's reserved directory or when another
+job reserves the same output directory.
 
 \subsection{Pipeline}
 \label{sec:pipeline}
@@ -1473,8 +1478,8 @@ outputs exist} checked, a stage whose outputs are all present is marked
 The first failing stage stops the pipeline, marks the remaining stages
 \code{cancelled}, and fails the job. Stopping cancels queued work
 immediately and terminates the running process tree. The pipeline reserves
-the inputs and outputs of all four stages for the whole run, so overlapping
-jobs wait.
+the inputs and outputs of all four stages for the whole run, so jobs that
+read those paths or write the same paths wait.
 
 \textbf{Pitfalls.} There is no results view: results are the stage logs and
 the files each stage wrote. The stage badges are not restored after a page
@@ -1893,9 +1898,9 @@ backend, for example \code{Agg}. \\
     shuts down after the last client disconnects. Keep one tab open while
     jobs run, or start the server again.
   \item[A job waits forever.] Look at the waiting reason: it names the
-    conflicting job or path. Another job writes an overlapping file, or the
-    panel's previous job is still active. Wait, or stop the conflicting job
-    in its own panel.
+    conflicting job or path. Another job writes a file it needs or reads
+    inside a directory it is writing, or the panel's previous job is still
+    active. Wait, or stop the conflicting job in its own panel.
   \item[Changing parameters does nothing.] Some stages resume from existing
     outputs. Accumulate skips the computation when the output text file
     exists; Centroiding skips localisation when the checkpoint exists; the

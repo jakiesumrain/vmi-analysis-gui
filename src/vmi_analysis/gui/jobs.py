@@ -55,6 +55,7 @@ class Job:
     extra: dict = field(default_factory=dict)
     reads: list[str] = field(default_factory=list)
     writes: list[str] = field(default_factory=list)
+    write_dirs: list[str] = field(default_factory=list)
     exclusive: list[str] = field(default_factory=list)
     wait_reason: str = ""
     _access: Access = field(default_factory=Access, repr=False)
@@ -132,7 +133,9 @@ class JobManager:
         """Keep GUI output deletion atomic with job submission and scheduling."""
         access = Access(writes=frozenset(canonical_path(p) for p in paths))
         with self._lock:
-            self._check_active_access_locked(access)
+            # Deletion stays conservative: deleting a path may affect files
+            # inside another job's reserved output directory.
+            self._check_active_access_locked(access, strict=True)
             yield
 
     @contextmanager
@@ -237,14 +240,17 @@ class JobManager:
 
     # -------------------------------------------------------------- internals
 
-    def _check_active_access_locked(self, access):
+    def _check_active_access_locked(self, access, strict=False):
         for job in self._jobs.values():
             if job.status in ("running", "queued"):
-                conflict = access.conflict(job._access)
+                conflict = (access.conflict_strict(job._access) if strict
+                            else access.conflict(job._access))
                 if conflict:
                     raise ResourceBusyError(f"Files are reserved by {job.name}: {conflict}")
         for preview in self._preview_reads.values():
-            if conflict := access.conflict(preview):
+            conflict = (access.conflict_strict(preview) if strict
+                        else access.conflict(preview))
+            if conflict:
                 raise ResourceBusyError(f"Files are reserved by a histogram preview: {conflict}")
 
     def _schedule_locked(self) -> None:

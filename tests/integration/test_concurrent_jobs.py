@@ -69,6 +69,24 @@ class ConcurrentJobTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.manager.set_max_concurrent(invalid)
 
+    def test_single_file_writer_runs_inside_another_job_reserved_directory(self):
+        directory = self.root / 'out'
+        directory.mkdir()
+        blocker = self.job('centroid', writes=[str(directory)],
+                            write_dirs=[str(directory)])
+        mapping = self.job('map', writes=[str(directory / 'gmd_map_all.txt')])
+        self.manager.submit(blocker)
+        self.manager.submit(mapping)
+        self.ready(blocker, mapping)
+        self.assertEqual(blocker.status, 'running')
+        self.assertEqual(mapping.status, 'running')
+        self.manager.cancel(blocker.id)
+        self.manager.cancel(mapping.id)
+        self.release_cancelled(blocker, mapping)
+
+    def release_cancelled(self, *jobs):
+        wait_for(lambda: all(job.status == 'cancelled' for job in jobs))
+
     def test_readers_share_files_writer_waits_and_unrelated_work_bypasses(self):
         self.manager.set_max_concurrent(4)
         path = str(self.root / 'data/results.h5')

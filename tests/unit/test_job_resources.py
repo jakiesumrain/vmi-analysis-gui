@@ -51,6 +51,30 @@ class JobResourcesTests(unittest.TestCase):
                                                       '--movie-ext', '.mp4'])
         self.assertEqual(movie.writes, frozenset([canonical_path('movies/data.mp4'), canonical_path('movies/data.gif')]))
 
+    def test_distinct_file_write_inside_reserved_directory_is_allowed(self):
+        centroid = access('centroiding.process_andor_vmi_PICASSO_v5_h5_batch',
+                          ['--h5-dir', 'raw', '--output-dir', 'out'])
+        mapping = access('gmd.build_gmd_map',
+                         ['--h5-dir', 'raw', '--gmd-path', 'timestamps.txt',
+                          '--output-path', 'out/gmd_map_all.txt'])
+        self.assertIn(canonical_path('out'), centroid.write_dirs)
+        self.assertIsNone(centroid.conflict(mapping))
+        # Deletions and previews stay conservative.
+        self.assertIsNotNone(centroid.conflict_strict(mapping))
+        reader = Access(reads=frozenset([canonical_path('out/events.h5')]))
+        self.assertIsNotNone(centroid.conflict(reader))
+
+    def test_same_file_write_still_conflicts_and_directories_still_lock(self):
+        out = canonical_path('out')
+        file_a = Access(writes=frozenset([out / 'a.txt']))
+        file_b = Access(writes=frozenset([out / 'b.txt']))
+        self.assertIsNone(file_a.conflict(file_b))
+        self.assertIsNotNone(file_a.conflict(Access(writes=frozenset([out / 'a.txt']))))
+        reserved = Access(writes=frozenset([out]), write_dirs=frozenset([out]))
+        nested = Access(writes=frozenset([out / 'sub']),
+                        write_dirs=frozenset([out / 'sub']))
+        self.assertIsNotNone(reserved.conflict(nested))
+
     def test_binning_waits_for_the_entire_centroid_output_directory(self):
         centroid = access('centroiding.process_andor_vmi_PICASSO_v5_h5_batch', ['--output-dir', 'out'])
         bins = access('centroiding.vmi_histogram_gmd_bins', ['--checkpoint-path', 'out/events.h5',

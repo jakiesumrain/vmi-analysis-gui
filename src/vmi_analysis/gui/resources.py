@@ -23,12 +23,65 @@ class Access:
     reads: frozenset[Path] = frozenset()
     writes: frozenset[Path] = frozenset()
     exclusive: frozenset[str] = frozenset()
+    # Subset of ``writes`` that reserves a whole directory for a multi-file
+    # stage. A distinct file written inside it by another job is allowed while
+    # scheduling; reads and directory-vs-directory writes remain conservative.
+    write_dirs: frozenset[Path] = frozenset()
+
+    def __post_init__(self):
+        # Keep the directory reservations visible in ``writes`` so every
+        # read/write check sees them, even if a caller only sets write_dirs.
+        if not self.write_dirs <= self.writes:
+            object.__setattr__(self, "writes", self.writes | self.write_dirs)
 
     def union(self, other):
         return Access(self.reads | other.reads, self.writes | other.writes,
-                      self.exclusive | other.exclusive)
+                      self.exclusive | other.exclusive,
+                      self.write_dirs | other.write_dirs)
+
+    def _file_writes(self):
+        return self.writes - self.write_dirs
 
     def conflict(self, other):
+        """Scheduling conflict.
+
+        Reads conflict with any overlapping write. File writes conflict only on
+        the same path. A file written inside another job's reserved output
+        directory does not conflict, so a single-file stage can run alongside a
+        multi-file stage that writes the same folder. Two reserved directories
+        that overlap still conflict.
+        """
+        shared = self.exclusive & other.exclusive
+        if shared:
+            return sorted(shared)[0]
+        for read in self.reads:
+            for write in other.writes:
+                if overlaps(read, write):
+                    return str(write)
+        for read in other.reads:
+            for write in self.writes:
+                if overlaps(read, write):
+                    return str(write)
+        for write in self._file_writes():
+            for other_write in other.writes:
+                if write == other_write:
+                    return str(other_write)
+        for write in other._file_writes():
+            for other_write in self.writes:
+                if write == other_write:
+                    return str(write)
+        for write in self.write_dirs:
+            for other_dir in other.write_dirs:
+                if overlaps(write, other_dir):
+                    return str(other_dir)
+        return None
+
+    def conflict_strict(self, other):
+        """Conservative conflict used for deletions and previews.
+
+        Any overlapping write (including a path inside a reserved directory)
+        conflicts, regardless of the scheduling relaxation above.
+        """
         shared = self.exclusive & other.exclusive
         if shared:
             return sorted(shared)[0]
@@ -37,16 +90,18 @@ class Access:
                 if overlaps(write, path):
                     return str(path)
         for write in other.writes:
-            for path in self.reads:
-                if overlaps(write, path):
-                    return str(path)
+            for read in self.reads:
+                if overlaps(write, read):
+                    return str(read)
         return None
 
 
 def command_access(cmd, cwd=None):
     """Declare actual GUI command inputs/outputs without importing analysis scripts.
 
-    Output directories are reserved as a whole for multi-file analysis stages.
+    Output directories are reserved as a whole for multi-file analysis stages:
+    other jobs may not read inside them or reserve an overlapping directory,
+    but they may write a distinct file inside them while scheduling.
     A pipeline reserves the union for its entire run, including future stages.
     """
     if not cmd or len(cmd) < 3 or cmd[1] != "-m":
@@ -62,7 +117,7 @@ def command_access(cmd, cwd=None):
                 return arg.split("=", 1)[1]
         return default
 
-    reads, writes, exclusive = set(), set(), set()
+    reads, writes, exclusive, write_dirs = set(), set(), set(), set()
 
     def read(path, base=cwd):
         if path:
@@ -72,12 +127,18 @@ def command_access(cmd, cwd=None):
         if path:
             writes.add(canonical_path(path, cwd))
 
+    def write_dir(path):
+        if path:
+            directory = canonical_path(path, cwd)
+            writes.add(directory)
+            write_dirs.add(directory)
+
     if module == "vmi_analysis.gmd.build_gmd_map":
         read(value("--h5-dir")); read(value("--gmd-path"))
         write(value("--output-path", "gmd_map_all.txt"))
     elif module == "vmi_analysis.imaging.h5_play_frames_movie":
         read(value("--h5-dir")); read(value("--dark-path"))
-        write(value("--dump-frames"))
+        write_dir(value("--dump-frames"))
         if "--no-save-movie" not in args:
             name = Path(value("--h5-dir")).name
             directory = Path(value("--movie-dir") or cwd or Path.cwd())
@@ -107,18 +168,18 @@ def command_access(cmd, cwd=None):
         if "--gmd-weighting" in args:
             read(value("--gmd-map-path"))
         output = canonical_path(value("--output-dir", "vmi_output"), cwd)
-        write(output)
+        write_dir(output)
         # An absolute checkpoint filename can sit outside the output directory.
         write(output / value("--checkpoint-file", "vmi_results_raw.h5"))
     elif module == "vmi_analysis.centroiding.vmi_histogram_gmd_bins":
         read(value("--checkpoint-path")); read(value("--gmd-map-path"))
-        write(value("--output-dir"))
+        write_dir(value("--output-dir"))
     elif module == "vmi_analysis.circularization.circularization":
         read(value("--input", "image.txt")); read(value("--extracted", "extracted.txt"))
         read(value("--reassign-file"))
         write(value("--output", "image_circularized.txt"))
         if "--no-plots" not in args:
-            write(value("--plot-dir", "trig_fit_plots"))
+            write_dir(value("--plot-dir", "trig_fit_plots"))
     elif module == "vmi_analysis.circularization.process_gmd_bins":
         read(value("--bin-dir", str(CENTROID_DIR / "vmi_analysis_output_xe_j_100_sig")))
         for filename in ("extracted-FOC100eV-20260710.txt", "reassignment-FOC100eV-20260710.txt"):
@@ -127,17 +188,19 @@ def command_access(cmd, cwd=None):
         name = "gmd_bins_results" + value("--weight-suffix", "_w-gmd_norm")
         if backend == "pyabel":
             name += "_pyabel_" + value("--pyabel-method", "daun")
-        write(value("--output-dir", str(CIRCULARIZATION_DIR / name)))
+        write_dir(value("--output-dir", str(CIRCULARIZATION_DIR / name)))
         if backend == "matlab":
             exclusive.add("MATLAB/CPBASEX")
-            write(CPBASEX_DIR / "examples")
-    return Access(frozenset(reads), frozenset(writes), frozenset(exclusive))
+            write_dir(CPBASEX_DIR / "examples")
+    return Access(frozenset(reads), frozenset(writes), frozenset(exclusive),
+                  frozenset(write_dirs))
 
 
 def job_access(job):
     access = Access(frozenset(canonical_path(p, job.cwd) for p in job.reads),
                     frozenset(canonical_path(p, job.cwd) for p in job.writes),
-                    frozenset([*job.exclusive, f"panel:{job.name}"]))
+                    frozenset([*job.exclusive, f"panel:{job.name}"]),
+                    frozenset(canonical_path(p, job.cwd) for p in job.write_dirs))
     if job.stages is None:
         return access.union(command_access(job.cmd, job.cwd))
     for stage in job.stages:

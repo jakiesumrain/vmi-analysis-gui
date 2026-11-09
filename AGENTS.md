@@ -168,8 +168,11 @@ Rules for GUI-related changes:
   2, any positive integer). One active job per panel; each retains its Stop,
   progress, logs and reconnect state. Lowering the limit does not kill jobs.
 - `gui/resources.py` declares file reads/writes from submitted module commands.
-  Keep these declarations in sync with CLI interfaces. Block overlapping writes
-  and producer/reader conflicts; shared reads are allowed. Pipeline reservations
+  Keep these declarations in sync with CLI interfaces. Reserve multi-file output
+  directories with `write_dir` (`Access.write_dirs`); another job may write a
+  distinct file inside a reserved directory, but reads inside it, exact-path
+  writes and directory-vs-directory reservations still conflict. Deletions use
+  `Access.conflict_strict`. Shared reads are allowed. Pipeline reservations
   cover all stages for the whole run. MATLAB/CPBASEX stays mutually exclusive.
 - Clear-output handlers must use `delete_outputs`, which checks reservations
   atomically. Shutdown must cancel and join every running job's process tree.
