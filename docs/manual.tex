@@ -806,8 +806,8 @@ opening to each threshold mask before summing, removing isolated pixels.
 Ignored in simple-sum mode. \\
 \addlinespace
 \emph{Simple sum (no threshold)} & checkbox, off & \code{accumulate.\allowbreak{}simple\_\allowbreak{}sum} &
-\emph{-\allowbreak{}-\allowbreak{}simple-\allowbreak{}sum} & Sums all frames unchanged: no threshold, no denoise.
-Dark subtraction and GMD weighting still apply. \\
+\emph{-\allowbreak{}-\allowbreak{}simple-\allowbreak{}sum} & Skips thresholding and denoising. The panel disables
+both controls and keeps their saved values. Dark subtraction and GMD weighting still apply. \\
 \addlinespace
 \code{Dark frame .npy (optional)} & file, empty & \code{accumulate.\allowbreak{}dark\_\allowbreak{}path} &
 \emph{-\allowbreak{}-\allowbreak{}dark-\allowbreak{}path} & Subtracts the dark frame before thresholding and

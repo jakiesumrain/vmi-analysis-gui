@@ -5,6 +5,7 @@ import os
 import sys
 import time
 from functools import partial
+from operator import not_
 from pathlib import Path
 
 import numpy as np
@@ -78,6 +79,8 @@ def build(jobs: JobManager) -> None:
             simple_sum = persist(ui.checkbox("Simple sum (no threshold)",
                                              value=False),
                                  "accumulate.simple_sum")
+            im_threshold.bind_enabled_from(simple_sum, "value", not_)
+            do_denoise.bind_enabled_from(simple_sum, "value", not_)
         dark_path = persist(path_input("Dark frame .npy (optional)", "",
                                        browse="file", filters=[".npy"]),
                             "accumulate.dark_path")
@@ -210,7 +213,6 @@ def build(jobs: JobManager) -> None:
             cmd = [sys.executable, "-m", "vmi_analysis.imaging.h5_accumulate_fast_gmd",
                    "--h5-dir", h5_dir.value,
                    "--output-path", output_path.value,
-                   "--im-threshold", str(im_threshold.value),
                    "--max-workers", str(int(max_workers.value or 1)),
                    "--gmd-map-path", gmd_map_path.value,
                    "--gmd-w-min", str(gmd_w_min.value),
@@ -218,12 +220,11 @@ def build(jobs: JobManager) -> None:
                    "--dark-path", dark_path.value,
                    "--no-show",
                    "--live-path", str(live_path)]
-            if do_denoise.value:
-                cmd.append("--do-denoise")
-            else:
-                cmd.append("--no-do-denoise")
             if simple_sum.value:
                 cmd.append("--simple-sum")
+            else:
+                cmd.extend(["--im-threshold", str(im_threshold.value)])
+                cmd.append("--do-denoise" if do_denoise.value else "--no-do-denoise")
             if enable_gmd.value:
                 cmd.append("--enable-gmd")
             job = jobs.submit(Job(name="Accumulate", cmd=cmd, cwd=str(REPO_ROOT),
