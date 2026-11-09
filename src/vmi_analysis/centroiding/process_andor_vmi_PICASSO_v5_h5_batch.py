@@ -28,6 +28,7 @@ import sys
 import glob
 import pandas as pd
 import numpy as np
+from vmi_analysis.imaging.centering import brightest_pixel
 from vmi_analysis.paths import CENTROID_DIR
 
 if __package__:
@@ -789,7 +790,7 @@ def center_and_rotate(vmi_2d, verbose=True):
     the Abel transform need no explicit origin afterwards: the default
     PyAbel center is the spot itself.
     """
-    row, col = np.unravel_index(np.argmax(vmi_2d), vmi_2d.shape)
+    row, col = brightest_pixel(vmi_2d)
     if verbose:
         print(f"[Abel] Brightest spot: row={row}, col={col}")
     vmi_2d = abel.tools.center.center_image(vmi_2d, (row, col), odd_size=True, square=True)

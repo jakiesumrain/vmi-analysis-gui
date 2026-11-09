@@ -12,6 +12,8 @@ library module with unit tests); this module only renders and handles input.
 from __future__ import annotations
 
 import asyncio
+from operator import not_
+from pathlib import Path
 import time
 
 import numpy as np
@@ -20,6 +22,7 @@ from nicegui import ui
 from PIL import Image
 
 from vmi_analysis.circularization import polar_fit as pf
+from vmi_analysis.imaging.centering import brightest_pixel
 
 from .. import theme
 from .common import (GENERATED, REPO_ROOT, file_url, num_input, path_input,
@@ -176,6 +179,7 @@ def build(jobs=None) -> None:
         "drag_rect": None, "band": None, "masks": [], "last_fit": None,
         "rings": [], "ready": False,
         "last_overlay": 0.0,
+        "image": None,
     }
     widgets = {}
 
@@ -188,10 +192,15 @@ def build(jobs=None) -> None:
             widgets["rotation"] = persist(ui.select(
                 [0, 90, 180, 270], value=0,
                 label="Rotation (ccw)").props("outlined dense"), "calibration.rotation")
+            widgets["brightest_center"] = persist(
+                ui.checkbox("Use brightest pixel as center", value=True),
+                "calibration.brightest_center")
             widgets["cx"] = persist(num_input("Centre X", 511.0, step=1.0),
                                     "calibration.center_x")
             widgets["cy"] = persist(num_input("Centre Y", 511.0, step=1.0),
                                     "calibration.center_y")
+            widgets["cx"].bind_enabled_from(widgets["brightest_center"], "value", not_)
+            widgets["cy"].bind_enabled_from(widgets["brightest_center"], "value", not_)
             widgets["n_r"] = persist(num_input("Radial bins", 512, step=1),
                                      "calibration.n_r")
             widgets["n_theta"] = persist(num_input("Angular bins", 720, step=1),
@@ -318,6 +327,8 @@ def build(jobs=None) -> None:
             ui.button("Save session", on_click=lambda: _save_session())
             ui.button("Load session", on_click=lambda: _load_session())
 
+    console = theme.log_console()
+
     # --------------------------------------------------------------- helpers
     def _options():
         params = {}
@@ -334,6 +345,7 @@ def build(jobs=None) -> None:
         )
 
     def _notify_error(exc):
+        console.push(f"[Trig Calibration] {type(exc).__name__}: {exc}")
         ui.notify(f"{type(exc).__name__}: {exc}", type="negative", timeout=6000)
 
     def _update_labels():
@@ -461,25 +473,46 @@ def build(jobs=None) -> None:
         _refresh_view()
         remap_status.text = (f"{display.shape[1]} radial × {display.shape[0]} angular bins")
 
-    async def _load_image():
-        if not widgets["image"].value:
+    async def _load_image(saved_center=None):
+        path = widgets["image"].value
+        if not path:
             ui.notify("Choose an image.", type="warning")
-            return
+            return False
         remap_status.text = "loading and remapping…"
         try:
-            image = await asyncio.to_thread(pf.load_image, widgets["image"].value)
-            image = pf.rotate_image(image, int(widgets["rotation"].value or 0))
+            rotation = int(widgets["rotation"].value or 0)
+            auto_center = bool(widgets["brightest_center"].value)
+            center = saved_center
+            if center is None and not auto_center:
+                center = (float(widgets["cx"].value), float(widgets["cy"].value))
+            n_r = int(widgets["n_r"].value)
+            n_theta = int(widgets["n_theta"].value)
             r_max = float(widgets["r_max"].value or 0.0) or None
+            image = await asyncio.to_thread(pf.load_image, path)
+            row, col = await asyncio.to_thread(brightest_pixel, image)
+            console.push(f"[Trig Calibration] Brightest pixel in {Path(path).name} "
+                         f"(zero-based): row={row}, col={col}.")
+            rotated = pf.rotate_image(image, rotation)
+            if center is None:
+                fit_row, fit_col = ((row, col) if rotation == 0 else
+                                    await asyncio.to_thread(brightest_pixel, rotated))
+                center = (fit_col, fit_row)
             polar, theta, r, dr, _valid = await asyncio.to_thread(
-                pf.remap_polar, image,
-                (float(widgets["cx"].value), float(widgets["cy"].value)),
-                n_r=int(widgets["n_r"].value), n_theta=int(widgets["n_theta"].value),
-                r_max=r_max)
+                pf.remap_polar, rotated, center, n_r=n_r, n_theta=n_theta, r_max=r_max)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             remap_status.text = "remap failed"
             _notify_error(exc)
-            return
+            return False
+        widgets["cx"].value, widgets["cy"].value = center
+        console.push(f"[Trig Calibration] Polar fit center for Circularize on the matching grid: "
+                     f"Center X={center[0]:g}, Center Y={center[1]:g}.")
+        if rotation:
+            console.push("[Trig Calibration] The fit uses the remapped orientation. "
+                         "Apply its calibration to a grid with that same orientation and center.")
         state.update(raw=polar, theta=theta, r=r, dr=dr, ready=True,
+                     image={"path": path, "center": list(center), "rotation": rotation,
+                            "brightest_center": auto_center,
+                            "n_r": n_r, "n_theta": n_theta, "r_max": r_max},
                      band=None, masks=[], last_fit=None, fit_image=None, display=None,
                      rings=[], view={"r0": 0.0, "r1": float(r[-1]),
                                      "theta0": 0.0, "theta1": float(pf.TWO_PI)})
@@ -491,6 +524,7 @@ def build(jobs=None) -> None:
             state["ready"] = False
         param_table.rows = []
         fit_status.text = "No fit yet."
+        return state["ready"]
 
     async def _fit_selection():
         if not state["ready"]:
@@ -533,13 +567,7 @@ def build(jobs=None) -> None:
     def _session_payload():
         return {
             "schema": pf.SESSION_SCHEMA,
-            "image": {"path": widgets["image"].value,
-                      "center": [float(widgets["cx"].value),
-                                 float(widgets["cy"].value)],
-                      "rotation": int(widgets["rotation"].value or 0),
-                      "n_r": int(widgets["n_r"].value),
-                      "n_theta": int(widgets["n_theta"].value),
-                      "r_max": float(widgets["r_max"].value or 0.0)},
+            "image": state["image"],
             "processing": state["options"],
             "view": state["view"],
             "band": None if state["band"] is None else
@@ -571,6 +599,7 @@ def build(jobs=None) -> None:
         image = payload.get("image", {})
         widgets["image"].value = image.get("path", widgets["image"].value)
         center = image.get("center", [widgets["cx"].value, widgets["cy"].value])
+        widgets["brightest_center"].value = image.get("brightest_center", False)
         widgets["cx"].value = center[0]
         widgets["cy"].value = center[1]
         widgets["rotation"].value = image.get("rotation", 0)
@@ -589,8 +618,7 @@ def build(jobs=None) -> None:
                 if f"param.{key}" in widgets:
                     widgets[f"param.{key}"].value = value
         widgets["output"].value = payload.get("output", widgets["output"].value)
-        await _load_image()
-        if state["ready"]:
+        if await _load_image(saved_center=tuple(center)):
             view = payload.get("view")
             if view:
                 state["view"] = view
@@ -689,8 +717,8 @@ def build(jobs=None) -> None:
                   "(takes effect when that panel is opened/refreshed).")
 
     # ------------------------------------------------------------- wiring
-    def _load_clicked():
-        asyncio.create_task(_load_image())
+    async def _load_clicked():
+        await _load_image()
 
     def _apply_clicked():
         asyncio.create_task(_apply_processing())

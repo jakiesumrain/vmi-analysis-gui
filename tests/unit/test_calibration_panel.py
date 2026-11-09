@@ -1,9 +1,13 @@
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
 from vmi_analysis.circularization import polar_fit as pf
 from vmi_analysis.gui.panels import calibration
+from vmi_analysis.imaging.centering import brightest_pixel
 
 
 def make_state():
@@ -18,6 +22,12 @@ def make_state():
 
 
 class PanelHelperTests(unittest.TestCase):
+    def test_brightest_pixel_uses_row_column_and_first_finite_maximum(self):
+        image = np.array([[np.nan, 1, 8], [8, np.inf, 1]])
+        self.assertEqual(brightest_pixel(image), (0, 2))
+        with self.assertRaisesRegex(ValueError, "no finite pixels"):
+            brightest_pixel(np.full((2, 3), np.nan))
+
     def test_pixel_data_round_trip(self):
         state = make_state()
         r, theta = calibration._px_to_data(state, 50, 90)
@@ -66,6 +76,40 @@ class PanelBuildTests(unittest.TestCase):
             self.assertIn("Table", names)
         finally:
             client.delete()
+
+
+class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_load_uses_brightest_pixel_and_logs_circularize_coordinates(self):
+        from nicegui import Client, app, ui
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "vmi_2d_raw.npy"
+            image = np.zeros((12, 16))
+            image[4, 10] = 30
+            np.save(path, image)
+            store = {"calibration.image": str(path), "calibration.abel": False,
+                     "calibration.n_r": 16, "calibration.n_theta": 24}
+            callbacks = {}
+
+            def capture(button, callback):
+                callbacks[button.text] = callback
+
+            client = Client(ui.page("/_test_calibration_brightest"))
+            try:
+                with client, patch.object(app.storage, "_general", store), \
+                        patch.object(calibration, "VIEW_PNG", Path(tmp) / "polar.png"):
+                    with patch.object(ui.button, "on_click", capture):
+                        calibration.build()
+                    with patch.object(pf, "remap_polar", wraps=pf.remap_polar) as remap:
+                        await callbacks["Load image & remap"]()
+                    self.assertEqual(remap.call_args.args[1], (10, 4))
+                    console = next(element for element in client.elements.values()
+                                   if isinstance(element, ui.log))
+                    lines = [line.text for line in console.default_slot.children]
+                    self.assertTrue(any("row=4, col=10" in line for line in lines), lines)
+                    self.assertTrue(any("Center X=10, Center Y=4" in line for line in lines), lines)
+            finally:
+                client.delete()
 
 
 if __name__ == "__main__":

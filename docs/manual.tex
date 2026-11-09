@@ -1598,8 +1598,13 @@ Field & Type and default & Saved key & Meaning \\
 \emph{Rotation (ccw)} & select, 0 & \code{calibration.\allowbreak{}rotation} & Rotate by
 0, 90, 180 or 270 degrees before remapping. \\
 \addlinespace
+\emph{Use brightest pixel as center} & checkbox, on &
+\code{calibration.\allowbreak{}brightest\_\allowbreak{}center} & Use the brightest
+pixel as the polar origin. Clear the checkbox to enter the origin manually. \\
+\addlinespace
 \emph{Centre X}, \emph{Centre Y} & numbers, 511.0 & \code{calibration.\allowbreak{}center\_\allowbreak{}x},
-\code{.\allowbreak{}center\_\allowbreak{}y} & Centre in pixels of the rotated image. \\
+\code{.\allowbreak{}center\_\allowbreak{}y} & Zero-based column and row of the fit
+origin in the remapped orientation. \\
 \addlinespace
 \emph{Radial bins}, \emph{Angular bins} & numbers, 512 and 720 &
 \code{calibration.\allowbreak{}n\_\allowbreak{}r}, \code{.\allowbreak{}n\_\allowbreak{}theta} & Polar sampling. Rows are
@@ -1664,8 +1669,12 @@ accepted ring fits. \\
 \end{longtable}
 \end{center}
 
-\textbf{Workflow.} (1) Choose the image, centre and rotation, then
-\emph{Load image \& remap}. (2) Adjust the processing chain and press
+\textbf{Workflow.} (1) Choose the image and click \emph{Load image \& remap}.
+For Centroiding data, use its raw output \code{vmi\_2d\_raw.npy}. The console
+reports the brightest pixel in the original array and the fit origin as
+\emph{Center X} (column) and \emph{Center Y} (row). Use those values in
+Circularize on a grid with the same orientation and pixel scale.
+(2) Adjust the processing chain and press
 \emph{Apply processing}. Use the display to choose the band and masks.
 The same region is fitted on unenhanced data.
 (3) With \emph{Select band} active, drag a rectangle around one ring. (4) Switch
