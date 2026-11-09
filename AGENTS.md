@@ -82,9 +82,9 @@ Side tools (QC / helpers, not pipeline stages):
   `extracted-FOC100eV-20260710.txt` and `reassignment-FOC100eV-20260710.txt`
   (trig-distortion fits + radial reassignment map) in `circularization/`.
   They are per-experiment inputs. The GUI's **Trig Calibration** tab builds
-  the extracted trig-fit file clean-room (polar remap → divide by r →
-  optional radial enhancement → Hansen–Law inverse Abel per angle →
-  mouse-selected band/mask → Gaussian ridge fit → appended blocks); the
+  the extracted trig-fit file from point-sampled polar intensities with
+  optional inverse Abel per angle and a Gaussian ridge fit in the selected
+  band. Display enhancement does not enter the fit. The
   reassignment file is supplied separately. The reassignment file for the
   reference dataset was the identity map — only the azimuthal (trig) terms
   act, so any radial nonlinearity propagates into the energy axis.

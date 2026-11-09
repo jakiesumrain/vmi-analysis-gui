@@ -31,24 +31,11 @@ def build_parser():
                         help="number of angular bins (default 720)")
     parser.add_argument("--r-max", type=float, default=None,
                         help="maximum radius (default: largest circle inside)")
-    parser.add_argument("--no-divide-r", action="store_true",
-                        help="skip the divide-by-r Jacobian correction")
     parser.add_argument("--no-abel", action="store_true",
                         help="skip the inverse Abel transform")
     parser.add_argument("--abel-method", default="hansenlaw",
                         choices=["hansenlaw", "dasch_three_point",
                                  "dasch_two_point", "onion_peeling"])
-    parser.add_argument("--enhance", default="bandpass",
-                        choices=list(pf.ENHANCE_MODES))
-    parser.add_argument("--enhance-placement", default="post_abel",
-                        choices=list(pf.ENHANCE_PLACEMENTS))
-    for name in ("smooth_theta", "smooth_r", "low_r", "high_r",
-                 "background_theta", "background_r", "ridge_sigma",
-                 "blur_theta", "blur_r", "clip_limit", "kernel_theta",
-                 "kernel_r"):
-        parser.add_argument(f"--{name.replace('_', '-')}", type=float,
-                            default=None, dest=name,
-                            help=f"enhancement parameter {name}")
     parser.add_argument("--band", nargs=2, type=float, action="append",
                         required=True, metavar=("R0", "R1"),
                         help="radial band for one ring; repeat for more rings")
@@ -86,17 +73,8 @@ def main(argv=None):
     polar, theta, r, dr, _valid = pf.remap_polar(
         image, args.center, n_r=args.n_r, n_theta=args.n_theta,
         r_max=args.r_max)
-    params = {name: getattr(args, name) for name in
-              ("smooth_theta", "smooth_r", "low_r", "high_r",
-               "background_theta", "background_r", "ridge_sigma",
-               "blur_theta", "blur_r", "clip_limit", "kernel_theta",
-               "kernel_r") if getattr(args, name) is not None}
-    processed, options = pf.process_polar(
-        polar, r, dr, divide_r=not args.no_divide_r, abel=not args.no_abel,
-        abel_method=args.abel_method,
-        enhancement={"placement": args.enhance_placement,
-                     "mode": args.enhance,
-                     "params": params})
+    fit_image, _, options = pf.process_polar(
+        polar, dr, abel=not args.no_abel, abel_method=args.abel_method)
     t0, t1 = np.deg2rad([args.theta0, args.theta1])
     masks = [pf.Rect(band[0], band[1], np.deg2rad(band[2]), np.deg2rad(band[3]))
              for band in args.mask]
@@ -104,7 +82,7 @@ def main(argv=None):
     failures = 0
     for r0, r1 in args.band:
         try:
-            fit = pf.fit_ring(processed, theta, r, pf.Rect(r0, r1, t0, t1),
+            fit = pf.fit_ring(fit_image, theta, r, pf.Rect(r0, r1, t0, t1),
                               masks=masks, n_terms=args.n_terms,
                               use_beta=not args.no_beta,
                               iterative=not args.one_shot,

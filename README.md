@@ -58,7 +58,7 @@ That is the whole setup. The app starts with one tab per script:
 | Centroiding | `vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch` | Picasso localization → checkpoint + 2D VMI histogram |
 | Binning | `vmi_analysis.centroiding.vmi_histogram_gmd_bins` | split events into GMD bins, one 2D histogram per bin |
 | Circularize | `vmi_analysis.circularization.circularization` | correct radial distortion of a single image |
-| Trig Calibration | `vmi_analysis.circularization.polar_fit` (interactive tool) | build the extracted trig-fit file: polar remap, divide by r, radial filter, Hansen–Law Abel, mouse-select a ring and fit its ridge |
+| Trig Calibration | `vmi_analysis.circularization.polar_fit` (interactive tool) | fit ring ridges in a point-sampled polar image with optional inverse Abel and display enhancement |
 | PES | `vmi_analysis.circularization.process_gmd_bins` | per-bin chain → Abel inversion → spectra + betas |
 | Pipeline | all four pipeline stages | GMD map → centroiding → binning → PES, in one job |
 
@@ -115,10 +115,10 @@ The repository contains **no data**. You need:
    `circularization/`: `extracted-FOC100eV-20260710.txt` (trig-fit
    coefficients) and `reassignment-FOC100eV-20260710.txt` (radial
    reassignment map; an identity map is valid). These are per-experiment
-   inputs; the **Trig Calibration** tab can build the extracted file
-   clean-room (polar remap → divide by r → radial filter → Hansen–Law Abel →
-   mouse-select a ring and fit its ridge), and the PES panel warns while they
-   are missing.
+   inputs. The **Trig Calibration** tab can build the extracted file
+   by fitting ring ridges on a polar remap with optional inverse Abel.
+   Enhancement helps select rings. The fitter uses unenhanced data.
+   The PES panel warns when calibration files are missing.
 
 ## A first end-to-end run
 

@@ -1,10 +1,9 @@
 """Panel: interactive clean-room trig-fit calibration.
 
-This tab is an interactive tool rather than a submitted job. It remaps a VMI
-image to polar coordinates, applies the EXE preprocessing chain (divide by r,
-radial enhancement, Hansen-Law inverse Abel), lets the user select a ring
-band and mask rectangles with the mouse, fits the ridge, and appends the
-canonical block to an extracted trig-fit file.
+The panel remaps a VMI image to polar coordinates and prepares the fit
+image with optional inverse Abel. The user selects a ring band and masks
+with the mouse. The panel fits the ridge and appends a block to the
+extracted trig-fit file.
 
 The numeric work lives in ``vmi_analysis.circularization.polar_fit`` (a
 library module with unit tests); this module only renders and handles input.
@@ -162,9 +161,8 @@ def _parameter_rows(fit):
 def build(jobs=None) -> None:
     theme.section_title(
         "Trig Calibration",
-        "Clean-room extraction of the circularisation trig terms: polar remap, "
-        "divide by r, radial enhancement, Hansen–Law inverse Abel, then "
-        "mouse-select a ring, mask interference and fit its ridge. Accepted "
+        "Extract circularisation trig terms from a polar remap with optional "
+        "inverse Abel. Select a ring, mask interference and fit its ridge. Accepted "
         "rings are appended as Gascooke-compatible blocks.")
     ui.label(
         "Use the mouse: drag a rectangle to select a ring band (blue) or to "
@@ -172,11 +170,11 @@ def build(jobs=None) -> None:
     ).classes("vmi-caption")
 
     state = {
-        "raw": None, "processed": None, "theta": None, "r": None, "dr": None,
+        "raw": None, "fit_image": None, "display": None, "theta": None, "r": None, "dr": None,
         "options": None, "view": None, "img_size": (0, 0),
         "tool": "band", "drag_start": None, "drag_now": None,
         "drag_rect": None, "band": None, "masks": [], "last_fit": None,
-        "rings": [], "ready": False, "show_raw": False,
+        "rings": [], "ready": False,
         "last_overlay": 0.0,
     }
     widgets = {}
@@ -210,8 +208,6 @@ def build(jobs=None) -> None:
     with theme.panel_card():
         ui.label("Processing chain").classes("vmi-subtitle")
         with ui.row().classes("gap-4 flex-wrap items-center"):
-            widgets["divide"] = persist(
-                ui.checkbox("Divide by r", value=True), "calibration.divide_r")
             widgets["abel"] = persist(
                 ui.checkbox("Inverse Abel per θ", value=True), "calibration.abel")
             widgets["abel_method"] = persist(ui.select(
@@ -221,11 +217,11 @@ def build(jobs=None) -> None:
                 "calibration.abel_method")
             widgets["placement"] = persist(ui.select(
                 ["post_abel", "pre_abel", "raw", "off"], value="post_abel",
-                label="Filter placement").props("outlined dense"),
+                label="Display filter placement").props("outlined dense"),
                 "calibration.placement")
             widgets["mode"] = persist(ui.select(
                 list(pf.ENHANCE_MODES), value="bandpass",
-                label="Enhancement").props("outlined dense"),
+                label="Display enhancement").props("outlined dense"),
                 "calibration.enhance_mode")
             apply_button = ui.button("Apply processing", icon="tune")
             widgets["show_raw"] = persist(
@@ -279,9 +275,8 @@ def build(jobs=None) -> None:
                 accept_button = ui.button("Accept ring (append to file)",
                                           icon="save")
         ui.label(
-            "Fit runs on the displayed processed image. Filters change the "
-            "apparent σ/amplitude but not the ridge position; masks exclude "
-            "interfering pixels."
+            "Enhancement helps you select a band and masks. The fit uses "
+            "unenhanced data with inverse Abel applied if enabled."
         ).classes("vmi-caption")
 
     # ----------------------------------------------------- rings, file, session
@@ -331,7 +326,6 @@ def build(jobs=None) -> None:
             params[key] = (pf.DEFAULT_ENHANCE_PARAMS[key] if value in (None, "")
                            else float(value))
         return pf.process_options(
-            divide_r=bool(widgets["divide"].value),
             abel=bool(widgets["abel"].value),
             abel_method=widgets["abel_method"].value,
             enhancement={"placement": widgets["placement"].value,
@@ -372,7 +366,9 @@ def build(jobs=None) -> None:
                             & (r <= view["r1"] + 1e-12))
         if ti.size < 2 or ri.size < 2:
             return
-        source = state["raw"] if state["show_raw"] else state["processed"]
+        source = state["raw"] if widgets["show_raw"].value else state["display"]
+        if source is None:
+            return
         patch = source[np.ix_(ti, ri)]
         _render_polar_png(patch, VIEW_PNG)
         state["img_size"] = (int(ri.size), int(ti.size))
@@ -451,23 +447,19 @@ def build(jobs=None) -> None:
         if not state["ready"]:
             ui.notify("Load an image first.", type="warning")
             return
-        state["processed"] = None
+        state["fit_image"] = state["display"] = None
         try:
             options = _options()
-            processed, _ = await asyncio.to_thread(
-                pf.process_polar, state["raw"], state["r"], state["dr"],
-                divide_r=options["divide_r"], abel=options["abel"],
-                abel_method=options["abel_method"],
-                enhancement=options["enhancement"])
+            fit_image, display, options = await asyncio.to_thread(
+                pf.process_polar, state["raw"], state["dr"], **options)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             _notify_error(exc)
             return
-        state["processed"] = processed
+        state["fit_image"] = fit_image
+        state["display"] = display
         state["options"] = options
-        state["show_raw"] = bool(widgets["show_raw"].value)
         _refresh_view()
-        remap_status.text = (f"{state['processed'].shape[1]} radial × "
-                             f"{state['processed'].shape[0]} angular bins")
+        remap_status.text = (f"{display.shape[1]} radial × {display.shape[0]} angular bins")
 
     async def _load_image():
         if not widgets["image"].value:
@@ -488,14 +480,14 @@ def build(jobs=None) -> None:
             _notify_error(exc)
             return
         state.update(raw=polar, theta=theta, r=r, dr=dr, ready=True,
-                     band=None, masks=[], last_fit=None, processed=None,
+                     band=None, masks=[], last_fit=None, fit_image=None, display=None,
                      rings=[], view={"r0": 0.0, "r1": float(r[-1]),
                                      "theta0": 0.0, "theta1": float(pf.TWO_PI)})
         rings_table.rows = []
         coefficients_table.rows = []
         remap_status.text = "processing…"
         await _apply_processing()
-        if state["processed"] is None:
+        if state["fit_image"] is None:
             state["ready"] = False
         param_table.rows = []
         fit_status.text = "No fit yet."
@@ -504,6 +496,9 @@ def build(jobs=None) -> None:
         if not state["ready"]:
             ui.notify("Load an image first.", type="warning")
             return
+        if state["fit_image"] is None:
+            ui.notify("Apply processing before fitting.", type="warning")
+            return
         if state["band"] is None:
             ui.notify("Drag a band around one ring first.", type="warning")
             return
@@ -511,7 +506,7 @@ def build(jobs=None) -> None:
         fit_status.text = "fitting…"
         try:
             fit = await asyncio.to_thread(
-                pf.fit_ring, state["processed"], state["theta"], state["r"],
+                pf.fit_ring, state["fit_image"], state["theta"], state["r"],
                 state["band"], tuple(state["masks"]),
                 n_terms=int(widgets["n_terms"].value or 3),
                 use_beta=bool(widgets["beta"].value),
@@ -584,7 +579,6 @@ def build(jobs=None) -> None:
         widgets["r_max"].value = image.get("r_max", 0.0)
         processing = payload.get("processing") or {}
         if processing:
-            widgets["divide"].value = processing.get("divide_r", True)
             widgets["abel"].value = processing.get("abel", True)
             widgets["abel_method"].value = processing.get("abel_method",
                                                           "hansenlaw")

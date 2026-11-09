@@ -51,12 +51,6 @@ class PolarRemapTests(unittest.TestCase):
         self.assertFalse(valid.all())
         self.assertTrue(np.isnan(polar[~valid]).all())
 
-    def test_divide_by_radius(self):
-        polar = np.array([[1.0, 2.0, 4.0]])
-        out = pf.divide_by_radius(polar, np.array([0.0, 1.0, 2.0]))
-        np.testing.assert_allclose(out, [[0.0, 2.0, 2.0]])
-
-
 class AbelTests(unittest.TestCase):
     def test_hansenlaw_inverts_uniform_ball_projection(self):
         radius = 96
@@ -90,14 +84,18 @@ class EnhancementTests(unittest.TestCase):
         peak = int(np.argmax(profile))
         self.assertAlmostEqual(float(r[peak]), 42.0, delta=1.0)
 
-    def test_process_chain_runs_and_returns_options(self):
-        polar, theta, r = make_polar_ridge(n_theta=24, n_r=60)
-        processed, options = pf.process_polar(
-            polar, r, dr=1.0, divide_r=True, abel=True,
-            enhancement={"placement": "post_abel", "mode": "bandpass", "params": {}})
-        self.assertEqual(processed.shape, polar.shape)
-        self.assertEqual(options["abel_method"], "hansenlaw")
-        self.assertEqual(options["enhancement"]["placement"], "post_abel")
+    def test_display_filters_do_not_change_fit_image(self):
+        polar, _, _ = make_polar_ridge(n_theta=24, n_r=60)
+        for abel in (False, True):
+            expected = pf.inverse_abel(polar) if abel else polar
+            for placement in ("raw", "pre_abel", "post_abel"):
+                with self.subTest(abel=abel, placement=placement):
+                    fit_image, display, options = pf.process_polar(
+                        polar, dr=1.0, abel=abel,
+                        enhancement={"placement": placement, "mode": "bandpass"})
+                    np.testing.assert_array_equal(fit_image, expected)
+                    self.assertFalse(np.allclose(display, expected))
+                    self.assertEqual(options["enhancement"]["placement"], placement)
 
 
 class SelectionTests(unittest.TestCase):
@@ -206,6 +204,13 @@ class OutputTests(unittest.TestCase):
             ring = pf.session_rings(loaded)[0]
             self.assertAlmostEqual(ring.params["r0"], self.fit.params["r0"])
 
+    def test_legacy_session_requires_refitting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "session.json"
+            path.write_text('{"schema": "vmi-trig-calibration/1"}', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Refit the rings"):
+                pf.load_session(path)
+
 
 def make_cartesian_rings(size=257, center=128.0, rings=(60.0, 100.0),
                          slope_a=None, slope_b=None, sigma=1.8,
@@ -233,11 +238,8 @@ class EndToEndTests(unittest.TestCase):
         image = make_cartesian_rings()
         polar, theta, r, dr, _valid = pf.remap_polar(
             image, center=(128.0, 128.0), n_r=129, n_theta=360)
-        processed, _options = pf.process_polar(
-            polar, r, dr,
-            enhancement={"placement": "post_abel", "mode": "bandpass",
-                         "params": {}})
-        fits = [pf.fit_ring(processed, theta, r, pf.Rect(radius - 6, radius + 6),
+        fit_image, _, _ = pf.process_polar(polar, dr)
+        fits = [pf.fit_ring(fit_image, theta, r, pf.Rect(radius - 6, radius + 6),
                             n_terms=2)
                 for radius in (60.0, 100.0)]
         reduced = pf.reduce_rings(fits, model="poly", order=1)
@@ -245,6 +247,28 @@ class EndToEndTests(unittest.TestCase):
                               ("A2", 0.01), ("B2", 0.015)):
             self.assertAlmostEqual(reduced["a"][key], expected, delta=0.002,
                                    msg=key)
+
+    def test_projected_velocity_shell_recovers_absolute_radius(self):
+        radius, width = 25.0, 4.0
+        impact = np.linspace(0.0, 120.0, 1201)
+        los = np.linspace(0.0, 85.0, 681)
+        speed = np.hypot(impact[:, None], los)
+        density = np.exp(-0.5 * ((speed - radius) / width) ** 2)
+        projected = 2.0 * np.trapezoid(density, los, axis=1)
+        y, x = np.mgrid[-80:81, -80:81]
+        image = np.interp(np.hypot(x, y), impact, projected)
+        polar, theta, r, dr, _ = pf.remap_polar(
+            image, center=(80, 80), n_r=161, n_theta=72)
+
+        fit_image, _, _ = pf.process_polar(
+            polar, dr, enhancement={"placement": "post_abel", "mode": "bandpass"})
+        fit = pf.fit_ring(fit_image, theta, r, pf.Rect(17.0, 33.0),
+                          n_terms=2, use_beta=False)
+        self.assertTrue(fit.converged)
+        self.assertAlmostEqual(fit.params["r0"], radius, delta=0.15)
+        self.assertAlmostEqual(fit.params["sigma"], width, delta=0.15)
+        for name in ("A1", "B1", "A2", "B2"):
+            self.assertAlmostEqual(fit.params[name], 0.0, delta=0.02)
 
     def test_cli_writes_blocks_and_session(self):
         from contextlib import redirect_stdout

@@ -5,11 +5,12 @@ Gascooke software's "Theta vs r" image):
 
     cartesian image
       -> polar remap (rows theta, radius columns, includes r = 0)
-      -> optional divide by r          (Jacobian dx dy = r dr dtheta)
-      -> optional radial enhancement   (raw polar, pre-Abel, or post-Abel)
       -> optional inverse Abel          (Hansen-Law, per constant-theta row)
       -> per-ring Gaussian ridge fit
       -> canonical extracted trig-fit block (one block per accepted ring)
+
+Enhancement changes only the display. The fit uses point-sampled detector
+intensities with no polar-bin area correction.
 
 No Gascooke executable is involved; the model is the published one:
 
@@ -123,21 +124,6 @@ def remap_polar(image, center, n_r=512, n_theta=720, r_max=None, order=1):
                              cval=np.nan).reshape(x.shape)
     values[~valid] = np.nan
     return values, theta, r, dr, valid
-
-
-def divide_by_radius(polar, r):
-    """Divide each column by its radius (the polar Jacobian correction)."""
-    polar = np.asarray(polar, dtype=float)
-    r = np.asarray(r, dtype=float)
-    if polar.shape[1] != r.size:
-        raise ValueError("radius array does not match the polar image width")
-    valid = np.isfinite(polar)
-    out = polar.copy()
-    with np.errstate(divide="ignore", invalid="ignore"):
-        out[:, 1:] = out[:, 1:] / r[1:]
-    out[:, 0] = 0.0
-    out[~valid] = np.nan
-    return out
 
 
 def inverse_abel(polar, dr=1.0, method="hansenlaw"):
@@ -268,8 +254,7 @@ def enhance_polar(image, mode="bandpass", params=None):
     return out
 
 
-def process_options(divide_r=True, abel=True, abel_method="hansenlaw",
-                    enhancement=None):
+def process_options(abel=True, abel_method="hansenlaw", enhancement=None):
     """Build a normalised processing-options dictionary."""
     enhancement = dict(enhancement or {})
     placement = enhancement.get("placement", "off")
@@ -281,7 +266,6 @@ def process_options(divide_r=True, abel=True, abel_method="hansenlaw",
     params = dict(DEFAULT_ENHANCE_PARAMS)
     params.update(enhancement.get("params") or {})
     return {
-        "divide_r": bool(divide_r),
         "abel": bool(abel),
         "abel_method": str(abel_method),
         "enhancement": {"placement": placement, "mode": mode, "params": params},
@@ -290,14 +274,13 @@ def process_options(divide_r=True, abel=True, abel_method="hansenlaw",
 
 def describe_processing(options):
     """One-line human-readable description used in provenance comments."""
-    options = process_options(**{k: options[k] for k in ("divide_r", "abel",
-                                                          "abel_method",
+    options = process_options(**{k: options[k] for k in ("abel", "abel_method",
                                                           "enhancement")})
     enh = options["enhancement"]
-    parts = [f"divide_r={'yes' if options['divide_r'] else 'no'}",
+    parts = ["fit=point-sampled",
              f"abel={'none' if not options['abel'] else options['abel_method']}"]
     if enh["placement"] == "off" or enh["mode"] == "none":
-        parts.append("filter=none")
+        parts.append("display_filter=none")
     else:
         p = enh["params"]
         if enh["mode"] == "bandpass":
@@ -308,30 +291,24 @@ def describe_processing(options):
             detail = f"blur={p['blur_theta']},{p['blur_r']}"
         else:
             detail = f"clip={p['clip_limit']},kernel={p['kernel_theta']},{p['kernel_r']}"
-        parts.append(f"filter={enh['mode']}({enh['placement']}:{detail})")
+        parts.append(f"display_filter={enh['mode']}({enh['placement']}:{detail})")
     return " ".join(parts)
 
 
-def process_polar(polar, r, dr, *, divide_r=True, abel=True,
-                  abel_method="hansenlaw", enhancement=None):
-    """Apply the full processing chain to a raw polar image."""
-    options = process_options(divide_r=divide_r, abel=abel,
-                              abel_method=abel_method, enhancement=enhancement)
+def process_polar(polar, dr, *, abel=True, abel_method="hansenlaw", enhancement=None):
+    """Return the fit image, display image and processing options."""
+    options = process_options(abel=abel, abel_method=abel_method, enhancement=enhancement)
     enh = options["enhancement"]
-    valid = np.isfinite(polar)
-    out = np.array(polar, dtype=float, copy=True)
-    if enh["placement"] == "raw":
-        out = enhance_polar(out, enh["mode"], enh["params"])
-    if options["divide_r"]:
-        out = divide_by_radius(out, r)
-    if enh["placement"] == "pre_abel":
-        out = enhance_polar(out, enh["mode"], enh["params"])
-    if options["abel"]:
-        out = inverse_abel(out, dr=dr, method=options["abel_method"])
-    if enh["placement"] == "post_abel":
-        out = enhance_polar(out, enh["mode"], enh["params"])
-    out[~valid] = np.nan
-    return out, options
+    raw = np.asarray(polar, dtype=float)
+    fit = inverse_abel(raw, dr=dr, method=abel_method) if abel else raw
+    placement = enh["placement"]
+    if placement == "off" or enh["mode"] == "none":
+        return fit, fit, options
+    source = fit if placement == "post_abel" else raw
+    display = enhance_polar(source, enh["mode"], enh["params"])
+    if placement == "pre_abel" and abel:
+        display = inverse_abel(display, dr=dr, method=abel_method)
+    return fit, display, options
 
 
 # ---------------------------------------------------------------------------
@@ -731,7 +708,7 @@ def reduce_rings(fits, model="poly", order=2):
 # Session persistence
 # ---------------------------------------------------------------------------
 
-SESSION_SCHEMA = "vmi-trig-calibration/1"
+SESSION_SCHEMA = "vmi-trig-calibration/2"
 
 
 def save_session(path, session):
@@ -752,6 +729,9 @@ def load_session(path):
     """Load a panel session JSON and check its schema."""
     path = Path(path)
     payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema") == "vmi-trig-calibration/1":
+        raise ValueError(f"{path} uses the previous fitting pipeline. Refit the rings "
+                         "and export them to a new calibration file.")
     if payload.get("schema") != SESSION_SCHEMA:
         raise ValueError(f"Unsupported session schema in {path}: "
                          f"{payload.get('schema')!r}")
