@@ -34,6 +34,17 @@ def make_polar_ridge(n_theta=180, n_r=101, r0=50.0, sigma=2.0, intensity=100.0,
 
 
 class PolarRemapTests(unittest.TestCase):
+    def test_radial_bin_size_sets_sample_spacing_and_interpolates(self):
+        image = np.tile(np.arange(20, dtype=float), (20, 1))
+        polar, _, radii, dr, _ = pf.remap_polar(
+            image, (8, 8), radial_bin_size=0.5, r_max=4.2, n_theta=8)
+        self.assertEqual(dr, 0.5)
+        np.testing.assert_array_equal(radii, np.arange(9) * 0.5)
+        np.testing.assert_allclose(polar[0], 8 + radii)
+        _, radii, _ = pf.polar_grid(image.shape, (8, 8), radial_bin_size=0.1, r_max=0.9)
+        self.assertEqual(len(radii), 10)
+        self.assertEqual(radii[-1], 0.9)
+
     def test_remap_places_ring_at_expected_radius(self):
         image = make_ring_image()
         polar, theta, r, dr, valid = pf.remap_polar(

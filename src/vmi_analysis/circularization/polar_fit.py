@@ -72,7 +72,7 @@ def load_image(path):
     return image
 
 
-def polar_grid(image_shape, center, n_r=512, n_theta=720, r_max=None):
+def polar_grid(image_shape, center, n_r=512, n_theta=720, r_max=None, *, radial_bin_size=None):
     """Return (theta, r, dr) for a polar remap that includes r = 0."""
     ny, nx = image_shape
     cx, cy = (float(center[0]), float(center[1]))
@@ -81,19 +81,33 @@ def polar_grid(image_shape, center, n_r=512, n_theta=720, r_max=None):
     if r_max is None:
         r_max = min(cx, nx - 1 - cx, cy, ny - 1 - cy)
     r_max = float(r_max)
-    if r_max <= 0:
-        raise ValueError("The usable radius around the centre is zero")
-    n_r = int(n_r)
+    if not np.isfinite(r_max) or r_max <= 0:
+        raise ValueError("The maximum radius must be finite and positive.")
+    if radial_bin_size is None:
+        n_r = int(n_r)
+    else:
+        dr = float(radial_bin_size)
+        if not np.isfinite(dr) or dr <= 0:
+            raise ValueError("The radial bin size must be finite and positive.")
+        # Allow one rounding step when the maximum radius is an exact multiple.
+        steps = np.nextafter(r_max / dr, np.inf)
+        if not np.isfinite(steps):
+            raise ValueError("The radial bin size is too small for this maximum radius.")
+        n_r = int(steps) + 1
     n_theta = int(n_theta)
     if n_r < 8 or n_theta < 8:
-        raise ValueError("n_r and n_theta must be at least 8")
+        raise ValueError("The polar grid needs at least 8 radial samples and 8 angular bins.")
     theta = np.linspace(0.0, TWO_PI, n_theta, endpoint=False)
-    r = np.linspace(0.0, r_max, n_r)
-    dr = float(r[1] - r[0]) if n_r > 1 else 1.0
+    if radial_bin_size is None:
+        r = np.linspace(0.0, r_max, n_r)
+        dr = float(r[1] - r[0])
+    else:
+        r = np.arange(n_r, dtype=float) * dr
+        r[-1] = min(r[-1], r_max)
     return theta, r, dr
 
 
-def remap_polar(image, center, n_r=512, n_theta=720, r_max=None, order=1):
+def remap_polar(image, center, n_r=512, n_theta=720, r_max=None, order=1, *, radial_bin_size=None):
     """Remap a cartesian image to polar coordinates.
 
     Returns ``(polar, theta, r, dr, valid)`` where ``polar`` has shape
@@ -101,7 +115,8 @@ def remap_polar(image, center, n_r=512, n_theta=720, r_max=None, order=1):
     outside the image are NaN and flagged in ``valid``.
     """
     image = np.asarray(image, dtype=float)
-    theta, r, dr = polar_grid(image.shape, center, n_r=n_r, n_theta=n_theta, r_max=r_max)
+    theta, r, dr = polar_grid(image.shape, center, n_r=n_r, n_theta=n_theta, r_max=r_max,
+                              radial_bin_size=radial_bin_size)
     cx, cy = float(center[0]), float(center[1])
     ny, nx = image.shape
 

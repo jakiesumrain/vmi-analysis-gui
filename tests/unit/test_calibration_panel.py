@@ -117,7 +117,7 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
             store = {"calibration.image": str(path), "calibration.abel": False,
                      "calibration.rotation": 90, "calibration.brightest_center": True,
                      "calibration.output": str(Path(tmp) / "extracted.txt"),
-                     "calibration.n_r": 16, "calibration.n_theta": 24}
+                     "calibration.radial_bin_size": 0.5, "calibration.n_theta": 24}
             callbacks = {}
             manager = Mock()
             manager.jobs.return_value = []
@@ -139,10 +139,13 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(all(source.startswith("data:image/png;base64,") for source in sources))
                     np.testing.assert_array_equal(remap.call_args.args[0], image)
                     self.assertEqual(remap.call_args.args[1], (10, 4))
+                    self.assertEqual(remap.call_args.kwargs["radial_bin_size"], 0.5)
                     lines = [line.text for element in client.elements.values()
                              if isinstance(element, ui.log) for line in element.default_slot.children]
                     self.assertTrue(any("row=4, col=10" in line for line in lines), lines)
                     self.assertTrue(any("Center X=10, Center Y=4" in line for line in lines), lines)
+                    self.assertTrue(any("9 radial samples from 0 to 4 px at 0.5 px spacing" in line
+                                        for line in lines), lines)
                     callbacks["Use in Circularize"]()
                     self.assertEqual(store["circularize.inp"], str(path))
                     with patch.object(circularize.JobView, "attach"):

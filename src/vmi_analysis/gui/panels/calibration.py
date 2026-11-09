@@ -243,9 +243,10 @@ def build(jobs=None, *, use_calibration=None) -> None:
                                     "calibration.center_x")
             widgets["cy"] = persist(num_input("Centre Y", 511.0, step="any"),
                                     "calibration.center_y")
-            widgets["n_r"] = persist(num_input("Radial bins", 512, step=1),
-                                     "calibration.n_r")
-            widgets["n_r"].tooltip("Number of equally spaced radial samples, including 0 and the maximum radius.")
+        with ui.row().classes("gap-4 flex-wrap items-end w-full"):
+            widgets["radial_bin_size"] = persist(num_input("Radial bin size (px)", 1.0, step="any"),
+                                                "calibration.radial_bin_size")
+            widgets["radial_bin_size"].tooltip("Spacing between samples in detector pixels.")
             widgets["n_theta"] = persist(num_input("Angular bins", 720, step=1),
                                          "calibration.n_theta")
             widgets["r_max"] = persist(num_input("Max radius (0 = auto)", 0.0,
@@ -630,7 +631,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         _refresh_view()
         remap_status.text = (f"{processed.shape[1]} radial × {processed.shape[0]} angular bins")
 
-    async def _load_image(saved_center=None):
+    async def _load_image(saved_center=None, saved_radial_count=None):
         path = widgets["image"].value
         if not path:
             ui.notify("Choose an image.", type="warning")
@@ -644,7 +645,9 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 center = (widgets["cx"].value, widgets["cy"].value)
                 if None in center:
                     raise ValueError("Enter both Centre X and Centre Y.")
-            n_r = int(widgets["n_r"].value)
+            bin_size = widgets["radial_bin_size"].value
+            if saved_radial_count is None and bin_size is None:
+                raise ValueError("Enter a radial bin size in pixels.")
             n_theta = int(widgets["n_theta"].value)
             r_max = float(widgets["r_max"].value or 0.0) or None
             image = await asyncio.to_thread(pf.load_image, path)
@@ -655,21 +658,25 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 if saved_center is not None and saved_center != (col, row):
                     raise ValueError("The saved fit center differs from the raw detector origin. Refit the rings.")
                 center = (col, row)
+            radial_grid = ({"radial_bin_size": bin_size} if saved_radial_count is None else
+                           {"n_r": saved_radial_count})
             polar, theta, r, dr, _valid = await asyncio.to_thread(
-                pf.remap_polar, image, center, n_r=n_r, n_theta=n_theta, r_max=r_max)
+                pf.remap_polar, image, center, n_theta=n_theta, r_max=r_max, **radial_grid)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             remap_status.text = "remap failed"
             _notify_error(exc)
             return False
         widgets["cx"].value, widgets["cy"].value = center
+        if saved_radial_count is not None:
+            widgets["radial_bin_size"].value = dr
         console.push(f"[Trig Calibration] Polar fit center for Circularize on the matching grid: "
                      f"Center X={center[0]:g}, Center Y={center[1]:g}.")
-        console.push(f"[Trig Calibration] {n_r} radial samples from 0 to {r[-1]:g} px "
+        console.push(f"[Trig Calibration] {r.size} radial samples from 0 to {r[-1]:g} px "
                      f"at {dr:.6g} px spacing.")
         state.update(raw=polar, theta=theta, r=r, dr=dr, ready=True,
                      image={"path": str(path), "center": list(center),
                             "brightest_center": auto_center,
-                            "n_r": n_r, "n_theta": n_theta, "r_max": r_max},
+                            "radial_bin_size": dr, "n_theta": n_theta, "r_max": r_max},
                      band=None, masks=[], selection_history=[], last_fit=None,
                      processed=None,
                      rings=[], view={"r0": 0.0, "r1": float(r[-1]),
@@ -763,7 +770,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
         widgets["brightest_center"].value = image.get("brightest_center", False)
         widgets["cx"].value = center[0]
         widgets["cy"].value = center[1]
-        widgets["n_r"].value = image.get("n_r", widgets["n_r"].value)
+        if "radial_bin_size" in image:
+            widgets["radial_bin_size"].value = image["radial_bin_size"]
         widgets["n_theta"].value = image.get("n_theta", widgets["n_theta"].value)
         widgets["r_max"].value = image.get("r_max", 0.0)
         processing = payload.get("processing") or {}
@@ -778,7 +786,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 if f"param.{key}" in widgets:
                     widgets[f"param.{key}"].value = value
         widgets["output"].value = payload.get("output", widgets["output"].value)
-        if await _load_image(saved_center=tuple(center)):
+        saved_radial_count = None if "radial_bin_size" in image else image.get("n_r")
+        if await _load_image(saved_center=tuple(center), saved_radial_count=saved_radial_count):
             view = payload.get("view")
             if view:
                 state["view"] = view

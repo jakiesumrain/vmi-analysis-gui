@@ -25,8 +25,11 @@ def build_parser():
                         help="2D NumPy detector image (.npy)")
     parser.add_argument("--center", nargs=2, type=float, metavar=("X", "Y"),
                         help="image center in pixels (default: brightest pixel)")
-    parser.add_argument("--n-r", type=int, default=512,
-                        help="number of radial bins (default 512)")
+    radial = parser.add_mutually_exclusive_group()
+    radial.add_argument("--n-r", type=int,
+                        help="number of radial samples (default 512)")
+    radial.add_argument("--radial-bin-size", type=float,
+                        help="spacing between radial samples in detector pixels")
     parser.add_argument("--n-theta", type=int, default=720,
                         help="number of angular bins (default 720)")
     parser.add_argument("--r-max", type=float, default=None,
@@ -77,9 +80,10 @@ def main(argv=None):
     if auto_center:
         row, col = brightest_pixel(image)
         args.center = (col, row)
+    n_r = 512 if args.n_r is None else args.n_r
     polar, theta, r, dr, _valid = pf.remap_polar(
-        image, args.center, n_r=args.n_r, n_theta=args.n_theta,
-        r_max=args.r_max)
+        image, args.center, n_r=n_r, n_theta=args.n_theta,
+        r_max=args.r_max, radial_bin_size=args.radial_bin_size)
     fit_image, _, options = pf.process_polar(
         polar, dr, abel=not args.no_abel, abel_method=args.abel_method)
     t0, t1 = np.deg2rad([args.theta0, args.theta1])
@@ -106,13 +110,17 @@ def main(argv=None):
     if args.session:
         session = {
             "image": {"path": str(args.image), "center": list(args.center),
-                      "brightest_center": auto_center, "n_r": args.n_r,
+                      "brightest_center": auto_center,
                       "n_theta": args.n_theta, "r_max": args.r_max},
             "processing": options,
             "masks": [[m.r0, m.r1, m.theta0, m.theta1] for m in masks],
             "rings": [fit.to_dict() for fit in fits],
             "output": str(args.output),
         }
+        if args.radial_bin_size is None:
+            session["image"]["n_r"] = n_r
+        else:
+            session["image"]["radial_bin_size"] = dr
         pf.save_session(args.session, session)
         print(f"session -> {args.session}")
     if len(fits) >= 2:
