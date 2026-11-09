@@ -23,7 +23,7 @@ DEFAULT_CONFIG = {"vmi_picasso": {
                    "flat_field_file": "", "enable_circular_mask": False,
                    "mask_center_x": None, "mask_center_y": None, "mask_radius": None,
                    "tuning_only": False},
-    "histogram": {"resolution_factor": 1, "enable_abel": True},
+    "histogram": {"resolution_factor": 1, "enable_abel": True, "abel_rotation_deg": 0.0},
     "energy_calibration": {"alpha": None, "fit_xe_4d": False,
                            "fit_min_px2": None, "fit_max_px2": None},
     "spectrum_plot": {"x_min": -1.0, "x_max": -1.0, "y_min": -1.0, "y_max": -1.0},
@@ -85,6 +85,8 @@ def validate_settings(config, require_input=False):
         raise ValueError("Box size must be an odd integer of at least 3")
     if vmi["histogram"]["resolution_factor"] < 1 or vmi["processing"]["num_cores"] < 1:
         raise ValueError("Histogram resolution and CPU cores must be positive integers")
+    if not isinstance(vmi["histogram"]["abel_rotation_deg"], (int, float)):
+        raise ValueError("Abel rotation must be a number in degrees")
     # Import lazily so basic argument parsing does not import numerical libraries.
     if __package__:
         from .spectrum_calibration import CalibrationSettings
@@ -106,6 +108,8 @@ def parse_centroid_args(argv=None):
             kwargs["type"] = type(default) if default is not None else float
         if key in choices:
             kwargs["choices"] = choices[key]
+        if key == "abel_rotation_deg":
+            kwargs["help"] = "Counterclockwise rotation after centering and before Abel inversion (default: 0 degrees)"
         parser.add_argument("--" + flag_name(group, key), **kwargs)
     args = parser.parse_args(argv)
     try:

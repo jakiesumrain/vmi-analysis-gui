@@ -52,8 +52,9 @@ FIELDS = [
     ("processing", "mask_center_y", "float", "Mask center Y (empty = image center)"),
     ("processing", "mask_radius", "float", "Mask radius (empty = automatic)"),
     ("processing", "tuning_only", "bool", "Tuning mode only"),
-    ("histogram", "resolution_factor", "int", "Histogram resolution factor"),
     ("histogram", "enable_abel", "bool", "Abel inversion"),
+    ("histogram", "abel_rotation_deg", "float", "Abel rotation (° CCW)"),
+    ("histogram", "resolution_factor", "int", "Histogram resolution factor"),
     ("energy_calibration", "alpha", "float", "α (eV/pixel²; empty = uncalibrated)"),
     ("energy_calibration", "fit_xe_4d", "bool", "Fit Xe 4d doublet → hν and α in console"),
     ("energy_calibration", "fit_min_px2", "float", "Xe fit min (pixel²; empty = auto)"),
@@ -104,6 +105,8 @@ def build(jobs: JobManager) -> None:
                     value = sec.get(key, "")
                     wid = persist(_make_widget(kind, label, value), storage_key(section, key))
                     widgets[(section, key, kind)] = wid
+                    if key == "abel_rotation_deg":
+                        wid.bind_enabled_from(widgets[(section, "enable_abel", "bool")], "value")
 
         def run():
             if not _save(widgets):

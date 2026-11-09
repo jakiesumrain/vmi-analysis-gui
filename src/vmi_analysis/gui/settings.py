@@ -29,7 +29,7 @@ def centroid_settings(store=None, legacy_path=None):
     result = load_settings()
     for group, key, default in options():
         value = store.get(storage_key(group, key), default)
-        if group == "spectrum_plot" and value is None:
+        if value is None and (group == "spectrum_plot" or key == "abel_rotation_deg"):
             value = default
         section(result, group)[key] = value
     return result

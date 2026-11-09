@@ -41,6 +41,8 @@ tuning_only = false
 [vmi_picasso.histogram]
 resolution_factor = 1
 enable_abel = true
+# Rotation after centering and before Abel inversion. Positive is counterclockwise.
+abel_rotation_deg = 0.0
 
 [vmi_picasso.energy_calibration]
 fit_xe_4d = false

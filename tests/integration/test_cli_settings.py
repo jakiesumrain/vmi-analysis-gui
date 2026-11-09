@@ -30,12 +30,14 @@ class CentroidOptionsTests(unittest.TestCase):
         self.assertEqual(vmi["energy_calibration"]["alpha"], .0007)
         self.assertFalse(vmi["processing"]["enable_parallel"])
         self.assertFalse(vmi["histogram"]["enable_abel"])
+        self.assertEqual(vmi["histogram"]["abel_rotation_deg"], 0.0)
         self.assertEqual(vmi["spectrum_plot"]["x_max"], 150)
 
     def test_round_trip_every_option_including_spaces_and_negative_limits(self):
         config = load_settings()
         config["vmi_picasso"].update(h5_dir="folder with spaces", output_dir="out dir", gmd_map_path="")
         config["vmi_picasso"]["processing"].update(tuning_only=True, mask_center_x=0.0)
+        config["vmi_picasso"]["histogram"]["abel_rotation_deg"] = -22.5
         args = centroid_cli_args(config)
         self.assertNotIn("--config", args)
         self.assertEqual(parse_centroid_args(args).settings, config)
@@ -182,12 +184,14 @@ class GuiSubmissionTests(unittest.TestCase):
         from vmi_analysis.gui.panels import centroid
         store = {MIGRATED_KEY: True, storage_key("vmi_picasso", "h5_dir"): "chosen data",
                  storage_key("energy_calibration", "alpha"): .0007,
+                 storage_key("histogram", "abel_rotation_deg"): 17.5,
                  storage_key("spectrum_plot", "x_max"): None}
         job = self.submit_form(centroid, store)
         self.assertNotIn("--config", job.cmd)
         cfg = parse_centroid_args(job.cmd[3:]).settings
         self.assertEqual(cfg["vmi_picasso"]["h5_dir"], "chosen data")
         self.assertEqual(cfg["vmi_picasso"]["energy_calibration"]["alpha"], .0007)
+        self.assertEqual(cfg["vmi_picasso"]["histogram"]["abel_rotation_deg"], 17.5)
         self.assertEqual(cfg["vmi_picasso"]["spectrum_plot"]["x_max"], -1)
         self.assertEqual(Path(job.extra["output_dir"]), ROOT / "centroiding/vmi_output")
 
