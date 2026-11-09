@@ -53,7 +53,7 @@ FIELDS = [
     ("processing", "mask_radius", "float", "Mask radius (empty = automatic)"),
     ("processing", "tuning_only", "bool", "Tuning mode only"),
     ("histogram", "enable_abel", "bool", "Abel inversion"),
-    ("histogram", "abel_rotation_deg", "float", "Abel rotation (° CCW)"),
+    ("histogram", "abel_rotation_deg", "float", "Image rotation before Abel inversion (°)"),
     ("histogram", "resolution_factor", "int", "Histogram resolution factor"),
     ("energy_calibration", "alpha", "float", "α (eV/pixel²; empty = uncalibrated)"),
     ("energy_calibration", "fit_xe_4d", "bool", "Fit Xe 4d doublet → hν and α in console"),
@@ -107,6 +107,8 @@ def build(jobs: JobManager) -> None:
                     widgets[(section, key, kind)] = wid
                     if key == "abel_rotation_deg":
                         wid.bind_enabled_from(widgets[(section, "enable_abel", "bool")], "value")
+                        wid.props('hint="Align the polarization vertically. Use 0° if it is already vertical. '
+                                  'Positive angles rotate counterclockwise."')
 
         def run():
             if not _save(widgets):
