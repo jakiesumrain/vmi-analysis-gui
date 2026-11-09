@@ -61,29 +61,17 @@ class FramePreviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             frame_preview.list_raw_frames(self.folder)
 
-    def test_statistics_count_threshold_and_denoise(self):
-        frame = np.zeros((8, 8), dtype=np.uint16)
-        frame[3, 3] = 40        # isolated pixel: removed by the 2×2 opening
-        frame[5:7, 5:7] = 40    # solid 2×2 block: survives
-        stats = frame_preview.frame_statistics(frame, 10, denoise=True)
-        self.assertEqual(stats["n_pixels"], 64)
-        self.assertEqual(stats["above"], 5)
-        self.assertEqual(stats["after_denoise"], 4)
-        self.assertEqual(stats["maximum"], 40)
-        linear = frame_preview.frame_statistics(frame, 10, denoise=False)
-        self.assertIsNone(linear["after_denoise"])
-        self.assertEqual(linear["above"], 5)
-
-    def test_histogram_figure_marks_threshold_and_serialises(self):
+    def test_histogram_counts_raw_pixel_values_and_serialises(self):
         values = np.array([[0, 1, 2], [3, 100, 1000]], dtype=np.uint16)
-        figure = frame_histogram_figure(values, 50)
+        figure = frame_histogram_figure(values, bins=4)
         self.assertEqual(figure.data[0].type, "bar")
-        self.assertEqual(int(np.sum(figure.data[0].y)), values.size)
+        np.testing.assert_array_equal(figure.data[0].y, [5, 0, 0, 1])
         self.assertEqual(figure.layout.yaxis.type, "log")
-        self.assertTrue(figure.layout.shapes)
+        self.assertFalse(figure.layout.shapes)
+        self.assertFalse(figure.layout.annotations)
         figure.to_json()
         with self.assertRaises(ValueError):
-            frame_histogram_figure(np.array([]), 5)
+            frame_histogram_figure(np.array([]))
 
 
 if __name__ == "__main__":

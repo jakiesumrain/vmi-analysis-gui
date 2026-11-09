@@ -14,8 +14,7 @@ from ..accumulate_plot import (ACCUMULATE_HEIGHT, COLORMAPS,
                                FRAME_HISTOGRAM_HEIGHT, accumulation_figure,
                                frame_histogram_figure)
 from ..centroid_plots import plot_options
-from ..frame_preview import (frame_statistics, list_raw_frames,
-                             load_raw_frame, pick_frame)
+from ..frame_preview import list_raw_frames, load_raw_frame, pick_frame
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
@@ -103,18 +102,9 @@ def build(jobs: JobManager) -> None:
                 refs = await asyncio.to_thread(list_raw_frames, folder)
                 ref = pick_frame(refs, index)
                 values = await asyncio.to_thread(load_raw_frame, ref)
-                dark = None
-                dark_file = (dark_path.value or "").strip()
-                if dark_file:
-                    dark = await asyncio.to_thread(_load_dark_npy, dark_file,
-                                                   values.shape)
-                if dark is not None:
-                    values = values.astype(np.float64) - dark
-                threshold = (float(im_threshold.value)
-                             if im_threshold.value is not None else 5.0)
-                stats = await asyncio.to_thread(
-                    frame_statistics, values, threshold,
-                    denoise=bool(do_denoise.value))
+                figure = await asyncio.to_thread(
+                    frame_histogram_figure, values,
+                    title=f"Raw frame histogram · {ref.file_name} frame {ref.frame_index}")
             except (OSError, ValueError, KeyError, IndexError) as exc:
                 ui.notify(str(exc), type="negative")
                 return
@@ -125,17 +115,6 @@ def build(jobs: JobManager) -> None:
             caption = (f"Frame {ref.global_index + 1} of {len(refs)} · "
                        f"{ref.file_name} frame {ref.frame_index} "
                        f"(0-based index {ref.global_index})")
-            if dark is not None:
-                caption += " · dark-subtracted"
-            percent = 100.0 * stats["above"] / stats["n_pixels"]
-            summary = (f"threshold {threshold:g}: {stats['above']:,} px above "
-                       f"({percent:.3g}%) · median {stats['median']:.6g}, "
-                       f"max {stats['maximum']:.6g}")
-            after = stats["after_denoise"]
-            if after is not None:
-                summary += (f" · {after:,} px after 2×2 denoise "
-                            f"({100.0 * after / stats['n_pixels']:.3g}%)")
-
             histogram_area.clear()
             with histogram_area:
                 with ui.row().classes("w-full items-center justify-between"):
@@ -143,10 +122,6 @@ def build(jobs: JobManager) -> None:
                     ui.button("Hide", icon="visibility_off",
                               on_click=hide_histogram) \
                         .props("flat dense color=secondary")
-                ui.label(summary).classes("vmi-subtitle")
-                figure = frame_histogram_figure(
-                    values, threshold,
-                    title=f"{ref.file_name} · frame {ref.frame_index}")
                 ui.plotly(plot_options(figure)).classes("w-full") \
                     .style(f"height: {FRAME_HISTOGRAM_HEIGHT}px")
             histogram_area.visible = True
@@ -213,15 +188,6 @@ def build(jobs: JobManager) -> None:
 
     view.place_console()
     live_area.move()
-
-
-def _load_dark_npy(path: str, shape) -> np.ndarray:
-    """Load a dark-frame .npy and reject a shape mismatch early."""
-    dark = np.load(path, allow_pickle=False)
-    if dark.shape != tuple(shape):
-        raise ValueError(f"Dark frame shape {dark.shape} does not match "
-                         f"frame shape {tuple(shape)}")
-    return dark
 
 
 def _clear_output(output_path) -> None:

@@ -30,9 +30,9 @@ def accumulation_figure(values, *, title="Accumulated image", revision=None, col
     return fig
 
 
-def frame_histogram_figure(values, threshold, *, title="Frame histogram",
+def frame_histogram_figure(values, *, title="Raw frame histogram",
                            bins=160, log_y=True):
-    """Pixel-value histogram of one raw frame with the current threshold marked."""
+    """Plot the pixel-value distribution of one raw frame."""
     values = np.asarray(values, dtype=float).ravel()
     values = values[np.isfinite(values)]
     if values.size == 0:
@@ -47,11 +47,7 @@ def frame_histogram_figure(values, threshold, *, title="Frame histogram",
         customdata=np.column_stack([edges[:-1], edges[1:]]),
         hovertemplate="Pixel value %{customdata[0]:.4g}–%{customdata[1]:.4g}"
                       "<br>%{y} pixels<extra></extra>"), row=1, col=1)
-    fig.add_vline(x=float(threshold), line_dash="dash", line_color="#181715",
-                  line_width=1.5, annotation_text=f"threshold {threshold:g}",
-                  annotation_position="top right",
-                  annotation_font={"color": "#181715", "size": 12})
-    fig.update_xaxes(title_text="Pixel value (counts)", showgrid=False,
+    fig.update_xaxes(title_text="Raw pixel value (counts)", showgrid=False,
                      zeroline=False)
     fig.update_yaxes(title_text="Pixels", type="log" if log_y else "linear")
     _style(fig, title)

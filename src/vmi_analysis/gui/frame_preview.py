@@ -1,4 +1,4 @@
-"""Read one raw frame for interactive threshold tuning.
+"""Read one raw frame for an interactive pixel-value histogram.
 
 The Accumulate panel previews a single frame from the sorted ``RAW-*.h5``
 files without launching the accumulation job: enumerating frames (the same
@@ -83,35 +83,3 @@ def pick_frame(refs, index: int | None = None, rng: random.Random | None = None)
     if index < 0 or index >= len(refs):
         raise IndexError(f"Frame index {index} is out of range (0–{len(refs) - 1})")
     return refs[index]
-
-
-def opened_mask(mask: np.ndarray) -> np.ndarray:
-    """Apply the Accumulate script's 2×2 morphological opening to a bool mask."""
-    import cv2  # imported lazily: only the denoise readout needs it
-
-    kernel = np.ones((2, 2), dtype=np.uint8)
-    return cv2.morphologyEx(np.ascontiguousarray(mask, dtype=np.uint8),
-                            cv2.MORPH_OPEN, kernel, iterations=1).astype(bool)
-
-
-def frame_statistics(values: np.ndarray, threshold: float, *,
-                     denoise: bool = True) -> dict:
-    """Pixel-value statistics behind a threshold choice.
-
-    ``above`` applies ``values >= threshold``, exactly like the accumulation
-    script (after its optional dark subtraction). ``after_denoise`` repeats the
-    count after the 2×2 opening, so the user sees how many pixels really
-    survive at this threshold.
-    """
-    values = np.asarray(values)
-    if values.size == 0:
-        raise ValueError("Frame contains no pixels")
-    above = values >= threshold
-    return {
-        "n_pixels": int(values.size),
-        "above": int(above.sum()),
-        "after_denoise": int(opened_mask(above).sum()) if denoise else None,
-        "minimum": float(values.min()),
-        "median": float(np.median(values)),
-        "maximum": float(values.max()),
-    }
