@@ -811,7 +811,10 @@ Dark subtraction and GMD weighting still apply. \\
 \addlinespace
 \code{Dark frame .npy (optional)} & file, empty & \code{accumulate.\allowbreak{}dark\_\allowbreak{}path} &
 \emph{-\allowbreak{}-\allowbreak{}dark-\allowbreak{}path} & Subtracts the dark frame before thresholding and
-weighting. Both histogram previews also subtract it when supplied. \\
+weighting in Accumulate. The previews have a separate checkbox. \\
+\addlinespace
+\emph{Subtract dark frame in previews} & checkbox, on & \code{accumulate.\allowbreak{}histogram\_\allowbreak{}subtract\_\allowbreak{}dark} &
+none (GUI preview) & Applies the selected dark frame to both histogram previews. A blank dark-frame field makes this setting inactive. \\
 \addlinespace
 \emph{Histogram X min} & number, blank & \code{accumulate.\allowbreak{}histogram\_\allowbreak{}x\_\allowbreak{}min} &
 none (GUI preview) & Lower bound in pixel counts. Blank uses the data range. \\
@@ -882,7 +885,8 @@ to dark-subtracted values.
 \subsubsection{Histogram previews}
 \label{sec:framepreview}
 
-Both previews use interactive histograms with a logarithmic count axis.
+Expand \emph{Histogram previews} to see the controls and plots.
+The section starts collapsed. Both plots use a logarithmic count axis.
 Hover over a bar for its pixel-value interval and pixel count, or drag to zoom.
 
 \begin{itemize}
@@ -895,9 +899,11 @@ Hover over a bar for its pixel-value interval and pixel count, or drag to zoom.
         distinct files and calculates a pixel-by-pixel mean across every
         frame in them. Each frame contributes equally. The caption reports
         the file and frame counts.
-  \item \textbf{Dark subtraction.} Select a dark \code{.\allowbreak{}npy} above the
-        histogram controls to subtract it from either preview. The plots
-        retain negative pixel values after subtraction.
+  \item \textbf{Dark subtraction.} Select a dark \code{.\allowbreak{}npy} and check
+        \emph{Subtract dark frame in previews} to apply it to either plot.
+        The plots retain negative pixel values after subtraction. Clear the
+        checkbox to preview raw values while keeping the file selected for
+        the Accumulate run.
   \item \textbf{Range and binning.} Both previews use the same X limits and bin
         width. Pixels outside the chosen X range are excluded from the
         histogram. A custom bin width may leave a narrower final bin at X max.

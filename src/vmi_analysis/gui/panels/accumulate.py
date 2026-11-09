@@ -81,26 +81,29 @@ def build(jobs: JobManager) -> None:
         dark_path = persist(path_input("Dark frame .npy (optional)", "",
                                        browse="file", filters=[".npy"]),
                             "accumulate.dark_path")
-        with ui.row().classes("gap-3 items-end flex-wrap"):
-            histogram_x_min = persist(
-                num_input("Histogram X min", None, step="any").classes("w-36")
-                .props('placeholder="Auto"'), "accumulate.histogram_x_min")
-            histogram_x_max = persist(
-                num_input("Histogram X max", None, step="any").classes("w-36")
-                .props('placeholder="Auto"'), "accumulate.histogram_x_max")
-            histogram_bin_width = persist(
-                num_input("Bin width (counts)", None, step="any").classes("w-36")
-                .props('placeholder="Auto"'), "accumulate.histogram_bin_width")
-        with ui.row().classes("gap-3 items-end flex-wrap"):
-            frame_index = num_input("Frame index (0-based)", None).classes("w-56") \
-                .props('placeholder="blank = random"')
-            frame_button = ui.button("Histogram frame", icon="bar_chart").props("flat color=primary")
-            file_count = persist(num_input("Files to average", 1, step=1).classes("w-36"),
-                                 "accumulate.histogram_file_count")
-            average_button = ui.button("Histogram average", icon="bar_chart").props("flat color=primary")
-        frame_area = ui.column().classes("w-full gap-1")
-        average_area = ui.column().classes("w-full gap-1")
-        frame_area.visible = average_area.visible = False
+        with ui.expansion("Histogram previews", icon="bar_chart", value=False).classes("w-full"):
+            histogram_subtract_dark = persist(ui.checkbox("Subtract dark frame in previews", value=True),
+                                              "accumulate.histogram_subtract_dark")
+            with ui.row().classes("gap-3 items-end flex-wrap"):
+                histogram_x_min = persist(
+                    num_input("Histogram X min", None, step="any").classes("w-36")
+                    .props('placeholder="Auto"'), "accumulate.histogram_x_min")
+                histogram_x_max = persist(
+                    num_input("Histogram X max", None, step="any").classes("w-36")
+                    .props('placeholder="Auto"'), "accumulate.histogram_x_max")
+                histogram_bin_width = persist(
+                    num_input("Bin width (counts)", None, step="any").classes("w-36")
+                    .props('placeholder="Auto"'), "accumulate.histogram_bin_width")
+            with ui.row().classes("gap-3 items-end flex-wrap"):
+                frame_index = num_input("Frame index (0-based)", None).classes("w-56") \
+                    .props('placeholder="blank = random"')
+                frame_button = ui.button("Histogram frame", icon="bar_chart").props("flat color=primary")
+                file_count = persist(num_input("Files to average", 1, step=1).classes("w-36"),
+                                     "accumulate.histogram_file_count")
+                average_button = ui.button("Histogram average", icon="bar_chart").props("flat color=primary")
+            frame_area = ui.column().classes("w-full gap-1")
+            average_area = ui.column().classes("w-full gap-1")
+            frame_area.visible = average_area.visible = False
 
         def hide_histogram(area):
             area.clear()
@@ -155,7 +158,7 @@ def build(jobs: JobManager) -> None:
                 else:
                     source = "a random frame" if selection is None else f"frame index {selection:,}"
                 view.log.push(f"[{preview}] Reading {source} from {folder}…")
-                dark = (dark_path.value or "").strip()
+                dark = (dark_path.value or "").strip() if histogram_subtract_dark.value else ""
                 limits = dict(x_min=histogram_x_min.value, x_max=histogram_x_max.value,
                               bin_width=histogram_bin_width.value)
                 figure, caption = await asyncio.to_thread(
