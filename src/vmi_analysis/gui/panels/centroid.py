@@ -39,7 +39,7 @@ FIELDS = [
     ("vmi_picasso", "mle_max_iterations", "int", "MLE max iterations"),
     ("vmi_picasso", "mle_method", "select:sigma,sigmaxy", "MLE method"),
     ("vmi_picasso", "fitting_method", "select:mle,lq", "Fitting method"),
-    ("vmi_picasso", "tuning_frame_index", "int", "Tuning frame index"),
+    ("vmi_picasso", "tuning_frame_index", "int", "Tuning frame index (blank = random)"),
     ("processing", "enable_parallel", "bool", "Parallel processing"),
     ("processing", "num_cores", "int", "CPU cores"),
     ("processing", "enable_dark_subtraction", "bool", "Dark subtraction"),
@@ -52,8 +52,9 @@ FIELDS = [
     ("processing", "mask_center_y", "float", "Mask center Y (empty = image center)"),
     ("processing", "mask_radius", "float", "Mask radius (empty = automatic)"),
     ("processing", "tuning_only", "bool", "Tuning mode only"),
-    ("histogram", "resolution_factor", "int", "Histogram resolution factor"),
     ("histogram", "enable_abel", "bool", "Abel inversion"),
+    ("histogram", "abel_rotation_deg", "float", "Image rotation before Abel inversion (°)"),
+    ("histogram", "resolution_factor", "int", "Histogram resolution factor"),
     ("energy_calibration", "alpha", "float", "α (eV/pixel²; empty = uncalibrated)"),
     ("energy_calibration", "fit_xe_4d", "bool", "Fit Xe 4d doublet → hν and α in console"),
     ("energy_calibration", "fit_min_px2", "float", "Xe fit min (pixel²; empty = auto)"),
@@ -67,13 +68,9 @@ FIELDS = [
     ("gmd", "gmd_weight_max", "float", "GMD weight max"),
 ]
 
-GROUPS = {
-    "vmi_picasso": "Paths, detection and fitting",
-    "processing": "Processing",
-    "histogram": "Histogram",
-    "energy_calibration": "Energy calibration / Xe 4d fit",
-    "spectrum_plot": "Summary spectrum plot axes",
-    "gmd": "GMD normalization",
+ADVANCED_KEYS = {
+    "camera_baseline", "camera_sensitivity", "camera_gain", "camera_qe",
+    "mle_convergence", "mle_max_iterations", "mle_method", "fitting_method",
 }
 
 
@@ -89,21 +86,37 @@ def build(jobs: JobManager) -> None:
     doc = centroid_settings()
     widgets = {}
 
-    with theme.panel_card():
-        for group, caption in GROUPS.items():
+    def render_fields(group, caption=None, *, advanced=False):
+        if caption:
             ui.label(caption).classes("vmi-caption")
-            if group == "energy_calibration":
-                ui.label("E = α × r²; intensity is unchanged. Leave α empty for pixel². Xe fitting reports "
-                         "a suggested α without changing your input. Fit limits "
-                         "always use pixel²; spectrum axis limits use the displayed units.") \
-                    .classes("vmi-subtitle")
-            fields = [f for f in FIELDS if f[0] == group]
-            with ui.grid(columns=2).classes("w-full gap-x-4"):
-                for section, key, kind, label in fields:
-                    sec = _section(doc, section)
-                    value = sec.get(key, "")
-                    wid = persist(_make_widget(kind, label, value), storage_key(section, key))
-                    widgets[(section, key, kind)] = wid
+        with ui.grid(columns=2).classes("w-full gap-x-4"):
+            for section, key, kind, label in FIELDS:
+                if section != group or (key in ADVANCED_KEYS) != advanced:
+                    continue
+                value = _section(doc, section).get(key, "")
+                wid = persist(_make_widget(kind, label, value), storage_key(section, key))
+                widgets[(section, key, kind)] = wid
+                if key == "abel_rotation_deg":
+                    wid.bind_enabled_from(widgets[(section, "enable_abel", "bool")], "value")
+                    wid.props('hint="Align the polarization vertically. Use 0° if it is already vertical. '
+                              'Positive angles rotate counterclockwise."')
+
+    section_toggle_props = 'header-class="vmi-section-toggle text-primary" expand-icon-class="text-primary"'
+    with theme.panel_card():
+        render_fields("vmi_picasso", "Paths and detection")
+        with ui.expansion("Advanced Options", icon="tune").classes("w-full").props(section_toggle_props):
+            render_fields("vmi_picasso", advanced=True)
+        render_fields("processing", "Processing")
+        render_fields("histogram", "Histogram")
+        with ui.expansion("Energy Calibration and Spectrum Plot", icon="show_chart") \
+                .classes("w-full").props(section_toggle_props):
+            ui.label("E = α × r². Intensity is unchanged. Leave α empty for pixel². Xe fitting reports "
+                     "a suggested α without changing your input. Fit limits "
+                     "always use pixel². Spectrum axis limits use the displayed units.") \
+                .classes("vmi-subtitle")
+            render_fields("energy_calibration", "Energy calibration / Xe 4d fit")
+            render_fields("spectrum_plot", "Summary spectrum plot axes")
+        render_fields("gmd", "GMD normalization")
 
         def run():
             if not _save(widgets):
@@ -165,7 +178,8 @@ def _save(widgets) -> bool:
             if (v is None or v == "") and section in ("spectrum_plot", "energy_calibration"):
                 # Empty optional values are omitted so the script uses defaults.
                 sec[key] = None if section == "energy_calibration" else -1.0
-            elif v is None and key in ("mask_center_x", "mask_center_y", "mask_radius"):
+            elif (v is None or v == "") and key in ("tuning_frame_index", "mask_center_x",
+                                                   "mask_center_y", "mask_radius"):
                 sec[key] = None
             else:
                 sec[key] = (int(v or 0) if kind == "int"

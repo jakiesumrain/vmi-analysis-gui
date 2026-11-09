@@ -92,13 +92,13 @@ body {
   font-weight: 500;
   letter-spacing: 0;
 }
-.vmi-histogram-toggle {
+.vmi-section-toggle {
   width: fit-content;
   min-height: 36px;
   border-radius: 8px;
   font-weight: 500;
 }
-.vmi-histogram-toggle .q-item__section--avatar {
+.vmi-section-toggle .q-item__section--avatar {
   min-width: 0;
   padding-right: 12px;
 }
