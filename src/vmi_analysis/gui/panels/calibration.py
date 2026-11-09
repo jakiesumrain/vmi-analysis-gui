@@ -224,6 +224,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         "options": None, "view": None, "img_size": (0, 0),
         "tool": "band", "drag_start": None, "drag_now": None,
         "drag_rect": None, "band": None, "masks": [], "last_fit": None,
+        "selection_history": [],
         "rings": [], "ready": False,
         "last_overlay": 0.0,
         "image": None,
@@ -337,7 +338,12 @@ def build(jobs=None, *, use_calibration=None) -> None:
                     widgets["full_angle"] = persist(
                         ui.checkbox("Full angular range", value=True),
                         "calibration.full_angle")
-                    ui.button("Clear masks", on_click=lambda: _clear_masks())
+                    undo_button = ui.button("Undo selection", icon="undo",
+                                            on_click=lambda: _undo_selection()).disable()
+                    clear_band_button = ui.button(
+                        "Clear band", on_click=lambda: _set_selection(None, state["masks"])).disable()
+                    clear_masks_button = ui.button(
+                        "Clear masks", on_click=lambda: _set_selection(state["band"], [])).disable()
                     ui.button("Zoom to band", on_click=lambda: _zoom_band()).tooltip("Zoom along radius only")
                     ui.button("Reset view", on_click=lambda: _reset_view())
                 band_label = ui.label("").classes("vmi-caption")
@@ -464,6 +470,9 @@ def build(jobs=None, *, use_calibration=None) -> None:
         overlay = _overlay_svg(state)
         for image in polar_images.values():
             image.content = overlay
+        undo_button.set_enabled(bool(state["selection_history"]))
+        clear_band_button.set_enabled(state["band"] is not None)
+        clear_masks_button.set_enabled(bool(state["masks"]))
         _update_labels()
 
     def _reset_view():
@@ -511,8 +520,16 @@ def build(jobs=None, *, use_calibration=None) -> None:
                              r1=min(band.r1 + pad, float(state["r"][-1])))
         _refresh_view()
 
-    def _clear_masks():
-        state["masks"] = []
+    def _set_selection(band, masks):
+        state["selection_history"].append((state["band"], state["masks"]))
+        _restore_selection(band, masks)
+
+    def _undo_selection():
+        if state["selection_history"]:
+            _restore_selection(*state["selection_history"].pop())
+
+    def _restore_selection(band, masks):
+        state["band"], state["masks"] = band, masks
         _show_fit(None)
         _update_overlay()
 
@@ -547,13 +564,12 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 return
             if state["tool"] == "band":
                 full = bool(widgets["full_angle"].value)
-                state["band"] = pf.Rect(
+                band = pf.Rect(
                     rect.r0, rect.r1, 0.0 if full else rect.theta0,
                     pf.TWO_PI if full else rect.theta1)
+                _set_selection(band, state["masks"])
             else:
-                state["masks"].append(rect)
-            _show_fit(None)
-            _update_overlay()
+                _set_selection(state["band"], [*state["masks"], rect])
             return
 
     def _drag_rect():
@@ -630,7 +646,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
                      image={"path": str(path), "center": list(center), "rotation": rotation,
                             "brightest_center": auto_center,
                             "n_r": n_r, "n_theta": n_theta, "r_max": r_max},
-                     band=None, masks=[], last_fit=None, fit_image=None, display=None,
+                     band=None, masks=[], selection_history=[], last_fit=None,
+                     fit_image=None, display=None,
                      rings=[], view={"r0": 0.0, "r1": float(r[-1]),
                                      "theta0": 0.0, "theta1": float(pf.TWO_PI)})
         rings_table.rows = []
@@ -798,6 +815,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         _show_fit(None)
         state["band"] = None
         state["masks"] = []
+        state["selection_history"].clear()
         fit_status.text = "Accepted. Select the next ring."
         rings_table.rows = _ring_rows()
         _update_overlay()
