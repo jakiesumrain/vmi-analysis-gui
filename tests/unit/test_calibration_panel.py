@@ -76,6 +76,26 @@ class PanelHelperTests(unittest.TestCase):
             with Image.open(path) as image:
                 self.assertEqual(image.size, (100, 360))
 
+    def test_live_color_limits_apply_linear_or_log_mapping_to_display(self):
+        from PIL import Image
+
+        data = np.array([[-1., 1., 10., 100., np.nan]])
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "polar.png"
+            calibration._render_polar_png(data, path, "Gray", vmin=1, vmax=100)
+            with Image.open(path) as image:
+                linear = np.array(image)[0, :, 0]
+            calibration._render_polar_png(data, path, "Gray", log_scale=True, vmin=1, vmax=100)
+            with Image.open(path) as image:
+                log = np.array(image)[0, :, 0]
+            self.assertLess(linear[2], 30)
+            self.assertGreater(log[2], 120)
+            self.assertEqual(log[[0, 1, 3, 4]].tolist(), [0, 0, 255, 0])
+            with self.assertRaisesRegex(ValueError, "positive"):
+                calibration._render_polar_png(data, path, log_scale=True, vmin=0)
+            with self.assertRaisesRegex(ValueError, "below the maximum"):
+                calibration._render_polar_png(data, path, vmin=10, vmax=1)
+
 
 class PanelBuildTests(unittest.TestCase):
     def test_panel_builds(self):

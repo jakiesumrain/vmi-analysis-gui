@@ -17,6 +17,7 @@ import time
 
 import numpy as np
 from matplotlib import colormaps
+from matplotlib.colors import LogNorm, Normalize
 from nicegui import app, ui
 from PIL import Image
 import plotly.graph_objects as go
@@ -26,7 +27,7 @@ from vmi_analysis.circularization import polar_fit as pf
 from vmi_analysis.imaging.centering import brightest_pixel
 
 from .. import theme
-from ..centroid_plots import _style, plot_options
+from ..centroid_plots import COLORMAPS, _style, plot_options
 from ..settings import centroid_settings, output_dir
 from .common import (GENERATED, REPO_ROOT, file_url, num_input, path_input,
                      persist)
@@ -50,15 +51,33 @@ FILTER_FIELDS = [
 ]
 
 
-def _render_polar_png(polar, out_path, cmap="viridis"):
+def _render_polar_png(polar, out_path, cmap="viridis", *, log_scale=False, vmin=None, vmax=None):
     """Write the polar image at exactly one pixel per bin (x=r, y=theta)."""
     polar = np.asarray(polar, dtype=float)
-    finite = np.isfinite(polar)
-    data = np.where(finite, polar, 0.0)
-    scaled = pf.robust_normalize(data, 1.0, 99.5)
-    rgba = (colormaps[cmap](np.clip(scaled, 0.0, 1.0))[..., :3] * 255).astype(
-        np.uint8)
-    Image.fromarray(rgba).save(out_path, format="PNG")
+    limits = [float(value) for value in (vmin, vmax) if value is not None]
+    if not all(np.isfinite(limits)):
+        raise ValueError("Color limits must be finite.")
+    if log_scale and any(value <= 0 for value in limits):
+        raise ValueError("Log color limits must be positive.")
+    if len(limits) == 2 and limits[0] >= limits[1]:
+        raise ValueError("The minimum intensity must be below the maximum.")
+    valid = np.isfinite(polar)
+    if log_scale:
+        valid &= polar > 0
+        if not valid.any():
+            raise ValueError("Log scale needs positive intensities.")
+    values = polar[valid]
+    scaled = np.zeros(polar.shape)
+    if values.size:
+        low = float(np.percentile(values, 1)) if vmin is None else float(vmin)
+        high = float(np.percentile(values, 99.5)) if vmax is None else float(vmax)
+        if high > low:
+            norm = LogNorm if log_scale else Normalize
+            scaled[valid] = norm(vmin=low, vmax=high, clip=True)(values)
+        elif limits:
+            raise ValueError("The minimum intensity must be below the maximum.")
+    rgb = (colormaps[cmap.lower()](scaled)[..., :3] * 255).astype(np.uint8)
+    Image.fromarray(rgb).save(out_path, format="PNG")
     return out_path
 
 
@@ -292,6 +311,23 @@ def build(jobs=None, *, use_calibration=None) -> None:
     with theme.panel_card():
         with ui.column().classes("w-full gap-4"):
             with ui.column().classes("w-full gap-2"):
+                with ui.row().classes("gap-3 items-center flex-wrap"):
+                    color_scale = persist(
+                        ui.select(["Linear", "Log"], value="Linear", label="Color scale")
+                        .props("outlined dense").classes("w-32"), "calibration.color_scale")
+                    colormap = persist(
+                        ui.select(list(COLORMAPS), value="Viridis", label="Colormap")
+                        .props("outlined dense").classes("w-36"), "calibration.colormap")
+                    color_min = persist(
+                        num_input("Min intensity (vmin)", None, step="any")
+                        .props('placeholder="Auto" debounce=200').classes("w-44"), "calibration.color_min")
+                    color_max = persist(
+                        num_input("Max intensity (vmax)", None, step="any")
+                        .props('placeholder="Auto" debounce=200').classes("w-44"), "calibration.color_max")
+                color_status = ui.label("").classes("vmi-subtitle")
+                color_status.visible = False
+                ui.label("Blank limits are automatic. In Log mode, enter positive intensity limits.") \
+                    .classes("vmi-subtitle")
                 polar_image = ui.interactive_image(
                     "", on_mouse=lambda e: _on_mouse(e),
                     events=["mousedown", "mousemove", "mouseup", "mouseleave"],
@@ -450,7 +486,15 @@ def build(jobs=None, *, use_calibration=None) -> None:
         if source is None:
             return
         patch = source[np.ix_(ti, ri)]
-        _render_polar_png(patch, VIEW_PNG)
+        try:
+            _render_polar_png(patch, VIEW_PNG, cmap=colormap.value,
+                              log_scale=color_scale.value == "Log",
+                              vmin=color_min.value, vmax=color_max.value)
+            color_status.visible = False
+        except ValueError as exc:
+            color_status.text = f"{exc} Showing automatic linear colors."
+            color_status.visible = True
+            _render_polar_png(patch, VIEW_PNG, cmap=colormap.value)
         state["img_size"] = (int(ri.size), int(ti.size))
         polar_image.set_source(file_url(VIEW_PNG))
         _update_overlay()
@@ -820,4 +864,6 @@ def build(jobs=None, *, use_calibration=None) -> None:
     widgets["tool"].on_value_change(
         lambda e: state.__setitem__("tool", e.value or "band"))
     widgets["show_raw"].on_value_change(lambda e: _refresh_view())
+    for control in (color_scale, colormap, color_min, color_max):
+        control.on_value_change(lambda _: _refresh_view())
     use_circ_button.on_click(_use_circularize_input)
