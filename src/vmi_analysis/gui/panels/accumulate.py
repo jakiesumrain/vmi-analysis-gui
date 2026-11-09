@@ -5,6 +5,7 @@ import os
 import sys
 import time
 from functools import partial
+from operator import not_
 from pathlib import Path
 
 import numpy as np
@@ -78,29 +79,36 @@ def build(jobs: JobManager) -> None:
             simple_sum = persist(ui.checkbox("Simple sum (no threshold)",
                                              value=False),
                                  "accumulate.simple_sum")
+            im_threshold.bind_enabled_from(simple_sum, "value", not_)
+            do_denoise.bind_enabled_from(simple_sum, "value", not_)
         dark_path = persist(path_input("Dark frame .npy (optional)", "",
                                        browse="file", filters=[".npy"]),
                             "accumulate.dark_path")
-        with ui.row().classes("gap-3 items-end flex-wrap"):
-            histogram_x_min = persist(
-                num_input("Histogram X min", None, step="any").classes("w-36")
-                .props('placeholder="Auto"'), "accumulate.histogram_x_min")
-            histogram_x_max = persist(
-                num_input("Histogram X max", None, step="any").classes("w-36")
-                .props('placeholder="Auto"'), "accumulate.histogram_x_max")
-            histogram_bin_width = persist(
-                num_input("Bin width (counts)", None, step="any").classes("w-36")
-                .props('placeholder="Auto"'), "accumulate.histogram_bin_width")
-        with ui.row().classes("gap-3 items-end flex-wrap"):
-            frame_index = num_input("Frame index (0-based)", None).classes("w-56") \
-                .props('placeholder="blank = random"')
-            frame_button = ui.button("Histogram frame", icon="bar_chart").props("flat color=primary")
-            file_count = persist(num_input("Files to average", 1, step=1).classes("w-36"),
-                                 "accumulate.histogram_file_count")
-            average_button = ui.button("Histogram average", icon="bar_chart").props("flat color=primary")
-        frame_area = ui.column().classes("w-full gap-1")
-        average_area = ui.column().classes("w-full gap-1")
-        frame_area.visible = average_area.visible = False
+        with ui.expansion("Histogram previews", icon="bar_chart", value=False).classes("w-full").props(
+            'header-class="vmi-histogram-toggle text-primary" expand-icon-class="text-primary"'
+        ):
+            histogram_subtract_dark = persist(ui.checkbox("Subtract dark frame in previews", value=True),
+                                              "accumulate.histogram_subtract_dark")
+            with ui.row().classes("gap-3 items-end flex-wrap"):
+                histogram_x_min = persist(
+                    num_input("Histogram X min", None, step="any").classes("w-36")
+                    .props('placeholder="Auto"'), "accumulate.histogram_x_min")
+                histogram_x_max = persist(
+                    num_input("Histogram X max", None, step="any").classes("w-36")
+                    .props('placeholder="Auto"'), "accumulate.histogram_x_max")
+                histogram_bin_width = persist(
+                    num_input("Bin width (counts)", None, step="any").classes("w-36")
+                    .props('placeholder="Auto"'), "accumulate.histogram_bin_width")
+            with ui.row().classes("gap-3 items-end flex-wrap"):
+                frame_index = num_input("Frame index (0-based)", None).classes("w-56") \
+                    .props('placeholder="blank = random"')
+                frame_button = ui.button("Histogram frame", icon="bar_chart").props("flat color=primary")
+                file_count = persist(num_input("Files to average", 1, step=1).classes("w-36"),
+                                     "accumulate.histogram_file_count")
+                average_button = ui.button("Histogram average", icon="bar_chart").props("flat color=primary")
+            frame_area = ui.column().classes("w-full gap-1")
+            average_area = ui.column().classes("w-full gap-1")
+            frame_area.visible = average_area.visible = False
 
         def hide_histogram(area):
             area.clear()
@@ -155,7 +163,7 @@ def build(jobs: JobManager) -> None:
                 else:
                     source = "a random frame" if selection is None else f"frame index {selection:,}"
                 view.log.push(f"[{preview}] Reading {source} from {folder}…")
-                dark = (dark_path.value or "").strip()
+                dark = (dark_path.value or "").strip() if histogram_subtract_dark.value else ""
                 limits = dict(x_min=histogram_x_min.value, x_max=histogram_x_max.value,
                               bin_width=histogram_bin_width.value)
                 figure, caption = await asyncio.to_thread(
@@ -205,7 +213,6 @@ def build(jobs: JobManager) -> None:
             cmd = [sys.executable, "-m", "vmi_analysis.imaging.h5_accumulate_fast_gmd",
                    "--h5-dir", h5_dir.value,
                    "--output-path", output_path.value,
-                   "--im-threshold", str(im_threshold.value),
                    "--max-workers", str(int(max_workers.value or 1)),
                    "--gmd-map-path", gmd_map_path.value,
                    "--gmd-w-min", str(gmd_w_min.value),
@@ -213,12 +220,11 @@ def build(jobs: JobManager) -> None:
                    "--dark-path", dark_path.value,
                    "--no-show",
                    "--live-path", str(live_path)]
-            if do_denoise.value:
-                cmd.append("--do-denoise")
-            else:
-                cmd.append("--no-do-denoise")
             if simple_sum.value:
                 cmd.append("--simple-sum")
+            else:
+                cmd.extend(["--im-threshold", str(im_threshold.value)])
+                cmd.append("--do-denoise" if do_denoise.value else "--no-do-denoise")
             if enable_gmd.value:
                 cmd.append("--enable-gmd")
             job = jobs.submit(Job(name="Accumulate", cmd=cmd, cwd=str(REPO_ROOT),
