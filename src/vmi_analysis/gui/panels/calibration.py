@@ -107,14 +107,16 @@ def _overlay_svg(state):
             x, y, w, h = box
             parts.append(
                 f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" '
-                f'fill="rgba(33,150,243,0.14)" stroke="#2196f3" stroke-width="2"/>')
+                f'fill="rgba(33,150,243,0.14)" stroke="#2196f3" stroke-width="2" '
+                f'vector-effect="non-scaling-stroke"/>')
     for rect in state.get("masks", []):
         box = _clipped_rect(state, rect)
         if box:
             x, y, w, h = box
             parts.append(
                 f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" '
-                f'fill="rgba(244,67,54,0.28)" stroke="#f44336" stroke-width="2"/>')
+                f'fill="rgba(244,67,54,0.28)" stroke="#f44336" stroke-width="2" '
+                f'vector-effect="non-scaling-stroke"/>')
     drag = state.get("drag_rect")
     if drag is not None:
         box = _clipped_rect(state, drag)
@@ -123,7 +125,7 @@ def _overlay_svg(state):
             parts.append(
                 f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" '
                 f'fill="rgba(255,235,59,0.15)" stroke="#fbc02d" '
-                f'stroke-width="2" stroke-dasharray="6 4"/>')
+                f'stroke-width="2" stroke-dasharray="6 4" vector-effect="non-scaling-stroke"/>')
     fit = state.get("last_fit")
     if fit is not None:
         theta = np.linspace(state["view"]["theta0"], state["view"]["theta1"],
@@ -144,7 +146,8 @@ def _overlay_svg(state):
                 continue
             path = "M " + " L ".join(f"{x:.2f} {y:.2f}" for x, y in segment)
             parts.append(
-                f'<path d="{path}" fill="none" stroke="#ffd54f" stroke-width="2"/>')
+                f'<path d="{path}" fill="none" stroke="#ffd54f" stroke-width="2" '
+                f'vector-effect="non-scaling-stroke"/>')
     return "".join(parts)
 
 
@@ -287,13 +290,13 @@ def build(jobs=None, *, use_calibration=None) -> None:
 
     # --------------------------------------------------------- image + fit
     with theme.panel_card():
-        with ui.row().classes("w-full gap-6 items-start no-wrap"):
-            with ui.column().classes("gap-2"):
+        with ui.column().classes("w-full gap-4"):
+            with ui.column().classes("w-full gap-2"):
                 polar_image = ui.interactive_image(
                     "", on_mouse=lambda e: _on_mouse(e),
                     events=["mousedown", "mousemove", "mouseup", "mouseleave"],
                     sanitize=False,
-                ).style("width: 100%; max-width: 560px; border: 1px solid #e0ddd6")
+                ).classes("w-full").style("height: clamp(220px, 38vh, 360px); border: 1px solid #e0ddd6")
                 widgets["tool"] = ui.toggle(
                     {"band": "Select band", "mask": "Mask"}, value="band")
                 with ui.row().classes("gap-2 items-center"):
@@ -301,11 +304,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
                         ui.checkbox("Full angular range", value=True),
                         "calibration.full_angle")
                     ui.button("Clear masks", on_click=lambda: _clear_masks())
-                    ui.button("Zoom to band", on_click=lambda: _zoom_band())
+                    ui.button("Zoom to band", on_click=lambda: _zoom_band()).tooltip("Zoom along radius only")
                     ui.button("Reset view", on_click=lambda: _reset_view())
                 band_label = ui.label("").classes("vmi-caption")
                 mask_label = ui.label("").classes("vmi-caption")
-            with ui.column().classes("grow gap-3"):
+            with ui.column().classes("w-full gap-3"):
                 with ui.row().classes("gap-3 items-center flex-wrap"):
                     widgets["n_terms"] = persist(
                         num_input("Trig terms N", 3, step=1),
@@ -458,12 +461,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
             return
         band = state["band"]
         pad = max((band.r1 - band.r0) * 0.25, 2.0)
-        state["view"] = {
-            "r0": max(band.r0 - pad, 0.0),
-            "r1": min(band.r1 + pad, float(state["r"][-1])),
-            "theta0": band.theta0 if band.theta1 - band.theta0 < pf.TWO_PI - 1e-9 else 0.0,
-            "theta1": band.theta1 if band.theta1 - band.theta0 < pf.TWO_PI - 1e-9 else float(pf.TWO_PI),
-        }
+        state["view"].update(r0=max(band.r0 - pad, 0.0),
+                             r1=min(band.r1 + pad, float(state["r"][-1])))
         _refresh_view()
 
     def _clear_masks():
