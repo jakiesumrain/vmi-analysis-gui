@@ -80,9 +80,10 @@ def _render_polar_image(polar, cmap="viridis", *, log_scale=False,
 def _px_to_data(state, x, y):
     width, height = state["img_size"]
     view = state["view"]
-    r = view["r0"] + (float(x) / max(width, 1)) * (view["r1"] - view["r0"])
-    theta = view["theta0"] + (float(y) / max(height, 1)) * (
-        view["theta1"] - view["theta0"])
+    radial_fraction = min(1.0, max(0.0, float(x) / max(width, 1)))
+    angular_fraction = min(1.0, max(0.0, float(y) / max(height, 1)))
+    r = view["r0"] + radial_fraction * (view["r1"] - view["r0"])
+    theta = view["theta0"] + angular_fraction * (view["theta1"] - view["theta0"])
     return r, theta
 
 
@@ -376,6 +377,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
                         sanitize=False,
                     ).classes("w-full").style(
                         "height: calc(clamp(220px, 38vh, 360px) * 2 / 3); border: 1px solid #e0ddd6")
+                    polar_images[key].on("pointerdown", js_handler="""(event) => {
+                        if (event.button === 0 && event.target instanceof HTMLImageElement) {
+                            event.target.setPointerCapture(event.pointerId);
+                        }
+                    }""")
                 widgets["tool"] = ui.toggle(
                     {"band": "Select band", "mask": "Mask"}, value="band")
                 with ui.row().classes("gap-2 items-center"):

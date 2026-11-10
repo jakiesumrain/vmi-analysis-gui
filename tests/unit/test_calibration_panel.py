@@ -69,6 +69,11 @@ class PanelHelperTests(unittest.TestCase):
         self.assertAlmostEqual(x, 50.0)
         self.assertAlmostEqual(y, 90.0)
 
+    def test_drag_coordinates_clamp_to_view_edges(self):
+        state = make_state()
+        self.assertEqual(calibration._px_to_data(state, -5, 375), (0.0, pf.TWO_PI))
+        self.assertEqual(calibration._px_to_data(state, 105, -20), (100.0, 0.0))
+
     def test_overlay_draws_band_mask_and_ridge(self):
         state = make_state()
         band_only = calibration._overlay_svg(state)
