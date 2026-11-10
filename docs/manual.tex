@@ -82,11 +82,12 @@
     Application version & 0.1.0 \\
     Document revision & 1.0 \\
     Date & \today \\
-    License & MIT \\
+    License & Apache License, Version 2.0 \\
   \end{tabular}
   \vfill
   {\small This manual describes the panels, input fields, processing
-   stages, output files, and operating constraints of the application.}
+   stages, output files, and operating constraints of the application.
+   Bundled CPBASEX uses the MIT License.}
 \end{titlepage}
 
 \markboth{Contents}{Contents}
@@ -410,6 +411,13 @@ from another panel's saved settings (for example PES suggests the saved
 Centroiding output directory). Legacy \code{centroiding/\allowbreak{}config.\allowbreak{}toml}
 values are migrated once, read-only, for Centroiding and Binning; no GUI job
 passes a configuration file to a script.
+
+Use \emph{Settings} and choose \emph{Save workflow} to capture the panel
+inputs and parameters in one JSON file, including untouched defaults.
+\emph{Load workflow} restores the forms for review before you run an
+analysis. The workflow stores paths to datasets, calibration files, and
+outputs. For Trig Calibration, load its separate session file to recover
+the selected band, masks, and fitted rings.
 
 \subsection{Server lifecycle, ports and reconnecting}
 \label{sec:lifecycle}

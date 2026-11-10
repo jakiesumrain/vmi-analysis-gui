@@ -101,5 +101,6 @@ The highlights that review most often catches (full detail in `AGENTS.md`):
 
 ## License
 
-By contributing you agree that your changes are licensed under the
-repository's MIT license (see `LICENSE`).
+Contributions to the project are licensed under the
+[Apache License, Version 2.0](LICENSE). Bundled CPBASEX has a separate
+[MIT license](vendor/pbasex-matlab/LICENSE.txt).
