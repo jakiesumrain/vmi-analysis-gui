@@ -28,6 +28,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 import numpy as np
 from scipy.ndimage import gaussian_filter, gaussian_filter1d, map_coordinates
@@ -749,7 +750,12 @@ def existing_radii(path):
 def load_accepted_rings(path):
     """Load measurements and preserve the source blocks for a later rebuild."""
     path = Path(path)
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    return parse_accepted_rings(path.read_text(encoding="utf-8"), source=str(path))
+
+
+def parse_accepted_rings(text, *, source="<text>"):
+    """Read measurements and their original blocks from a text snapshot."""
+    lines = text.splitlines(keepends=True)
     if not any(line.strip() and not line.lstrip().startswith("#") for line in lines):
         return []
     starts = []
@@ -760,14 +766,14 @@ def load_accepted_rings(path):
                 start -= 1
             starts.append(start)
     if not starts:
-        raise ValueError(f"No fit blocks found in {path}")
+        raise ValueError(f"No fit blocks found in {source}")
     starts[0] = 0
     rings = []
     for start, end in zip(starts, [*starts[1:], len(lines)]):
         text = "".join(lines[start:end])
-        block, = parse_extracted_text(text, source=str(path))
+        block, = parse_extracted_text(text, source=source)
         if "radius" not in block or not np.isfinite(block["radius"]):
-            raise ValueError(f"Missing or invalid Gaussian Centre in {path}")
+            raise ValueError(f"Missing or invalid Gaussian Centre in {source}")
         terms = [key for key in block if re.fullmatch(r"[AB]\d+", key)]
         rms = re.search(r"^# ring .*\brms=([\d.eE+-]+)\s*$", text, re.MULTILINE)
         rings.append(RingFit(
@@ -782,11 +788,19 @@ def load_accepted_rings(path):
 
 
 def write_ring_blocks(path, blocks):
-    """Rewrite a trig-fit file from a sequence of rendered blocks."""
-    path = Path(path)
+    """Atomically replace a trig-fit file with the rendered blocks."""
+    path = Path(path).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     text = "\n".join(block.rstrip("\n") + "\n" for block in blocks)
-    path.write_text(text, encoding="utf-8", newline="\n")
+    temporary = NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
+                                   dir=path.parent, suffix=".tmp", delete=False)
+    temp_path = Path(temporary.name)
+    try:
+        with temporary:
+            temporary.write(text)
+        temp_path.replace(path)
+    finally:
+        temp_path.unlink(missing_ok=True)
     return path
 
 

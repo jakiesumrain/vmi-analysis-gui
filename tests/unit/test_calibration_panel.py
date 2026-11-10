@@ -150,6 +150,48 @@ class PanelBuildTests(unittest.TestCase):
 
 
 class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rebuild_confirms_removed_and_replaced_rings_and_rechecks_file(self):
+        from nicegui import Client, app, ui
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "extracted.txt"
+            ring = f'{pf.EXTRACTED_HEADER}\n"Gaussian Centre" 20 +- 0.1\n'
+            old = (f'{pf.EXTRACTED_HEADER}\n"Gaussian Centre" 10 +- 0.1\n\n'
+                   + ring.replace("0.1", "0.2"))
+            path.write_text(ring, encoding="utf-8")
+            callbacks = {}
+
+            def capture(button, callback):
+                callbacks[button.text] = callback
+
+            client = Client(ui.page("/_test_calibration_rebuild"))
+            try:
+                with client, patch.object(app.storage, "_general", {"calibration.output": str(path)}), \
+                        patch.object(ui.button, "on_click", capture), patch.object(ui, "notify") as notify:
+                    calibration.build()
+                    await callbacks["Refresh rings from file"]()
+                    path.write_text(old, encoding="utf-8")
+                    callbacks["Rebuild file from rings"]()
+                    labels = [el.text for el in client.elements.values() if isinstance(el, ui.label)]
+                    self.assertIn("Will remove rings at 10 px.", labels)
+                    self.assertIn("Will replace rings at 20 px.", labels)
+                    self.assertEqual(path.read_text(encoding="utf-8"), old)
+                    callbacks["Cancel"]()
+                    self.assertEqual(path.read_text(encoding="utf-8"), old)
+
+                    callbacks["Rebuild file from rings"]()
+                    changed = old + "\n# external edit\n"
+                    path.write_text(changed, encoding="utf-8")
+                    callbacks["Rebuild file"]()
+                    self.assertEqual(path.read_text(encoding="utf-8"), changed)
+                    self.assertIn("changed", notify.call_args.args[0])
+
+                    callbacks["Rebuild file from rings"]()
+                    callbacks["Rebuild file"]()
+                    self.assertEqual(path.read_text(encoding="utf-8"), ring)
+            finally:
+                client.delete()
+
     async def test_latest_remap_and_processing_request_wins(self):
         from nicegui import Client, app, ui
 

@@ -283,6 +283,31 @@ def _handoff_warnings(preview_rings, saved_rings, max_trig_n):
     return warnings
 
 
+def _rebuild_changes(saved_rings, blocks):
+    # Ignore line endings and separators, while preserving provenance comments.
+    remaining = Counter((pf.validate_block_text(block), tuple(block.strip().splitlines()))
+                        for block in blocks)
+    unmatched = []
+    for ring in saved_rings:
+        radius = ring.params["r0"]
+        key = (radius, tuple(ring.source_block.strip().splitlines()))
+        if remaining[key]:
+            remaining[key] -= 1
+        else:
+            unmatched.append(radius)
+    replacement_counts = Counter()
+    for (radius, _), count in remaining.items():
+        replacement_counts[radius] += count
+    removed, replaced = [], []
+    for radius in unmatched:
+        if replacement_counts[radius]:
+            replaced.append(radius)
+            replacement_counts[radius] -= 1
+        else:
+            removed.append(radius)
+    return removed, replaced
+
+
 def build(jobs=None, *, use_calibration=None) -> None:
     theme.section_title(
         "Trig Calibration",
@@ -1008,20 +1033,55 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 ui.notify("Session loaded.")
 
     def _rebuild_file():
-        if not state["rings"]:
+        rings = tuple(state["rings"])
+        if not rings:
             ui.notify("No accepted rings to write.", type="warning")
             return
         try:
-            path = _calibration_path()
+            path = _calibration_path().resolve()
             blocks = [fit.source_block if fit.source_block is not None else
                       pf.ring_block_text(fit, provenance=bool(widgets["provenance"].value))
-                      for fit in state["rings"]]
+                      for fit in rings]
             with MANAGER.write_access([path]):
-                pf.write_ring_blocks(path, blocks)
+                saved = path.read_bytes() if path.exists() else None
+                saved_rings = pf.parse_accepted_rings(saved.decode("utf-8"), source=str(path)) if saved else []
+                removed, replaced = _rebuild_changes(saved_rings, blocks)
+                if not removed and not replaced:
+                    pf.write_ring_blocks(path, blocks)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             _notify_error(exc)
             return
-        ui.notify(f"Wrote {len(blocks)} ring block(s) to {widgets['output'].value}")
+        message = f"Wrote {len(blocks)} ring block(s) to {path}"
+        if not removed and not replaced:
+            ui.notify(message)
+            return
+
+        def confirm_rebuild():
+            try:
+                with MANAGER.write_access([path]):
+                    current = path.read_bytes() if path.exists() else None
+                    if (current != saved or _calibration_path().resolve() != path
+                            or tuple(state["rings"]) != rings):
+                        raise ValueError("The file or Accepted rings table changed. Review it and click Rebuild again.")
+                    pf.write_ring_blocks(path, blocks)
+            except Exception as exc:  # noqa: BLE001 - surfaced to the user
+                _notify_error(exc)
+                return
+            finally:
+                dialog.close()
+            ui.notify(message)
+
+        with ui.dialog() as dialog, ui.card():
+            ui.label("Replace saved calibration rings?").classes("text-lg")
+            ui.label(str(path)).classes("break-all")
+            for label, radii in (("Will remove", removed), ("Will replace", replaced)):
+                if radii:
+                    ui.label(f"{label} rings at {', '.join(f'{radius:.10g}' for radius in radii)} px.")
+            ui.label("Use Refresh rings from file to bring the saved rings into the table.")
+            with ui.row():
+                ui.button("Cancel", on_click=dialog.close).props("flat")
+                ui.button("Rebuild file", on_click=confirm_rebuild).props("color=negative")
+        dialog.open()
 
     def _calibration_path():
         value = (widgets["output"].value or "").strip()

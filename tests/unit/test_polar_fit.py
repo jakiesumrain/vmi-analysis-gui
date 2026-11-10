@@ -221,6 +221,20 @@ class FitTests(unittest.TestCase):
 
 
 class OutputTests(unittest.TestCase):
+    def test_rebuild_preserves_original_if_replacement_fails(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "extracted.txt"
+            original = f'{pf.EXTRACTED_HEADER}\n"Gaussian Centre" 10 +- 0.1\n'
+            path.write_text(original, encoding="utf-8")
+            replacement = original.replace("10", "20")
+            with patch.object(Path, "replace", side_effect=OSError("destination is locked")):
+                with self.assertRaisesRegex(OSError, "destination is locked"):
+                    pf.write_ring_blocks(path, [replacement])
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+            self.assertEqual(list(path.parent.iterdir()), [path])
+
     def setUp(self):
         trig = {"A1": 1.0, "B1": -2.0, "A2": 0.5, "B2": 0.2}
         polar, theta, r = make_polar_ridge(n_theta=120, n_r=80, r0=40.0,

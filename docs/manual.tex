@@ -1733,7 +1733,9 @@ their uncertainties. The parameter table reports local
 least-squares errors. These estimates do not account for correlations between
 interpolated pixels. \emph{Rebuild file from
 rings} rewrites the file from the accepted rings and is the recovery path after
-a wrong or duplicate append.
+a wrong or duplicate append. If the rebuild would remove or replace saved
+rings, the panel lists their radii and asks for confirmation. Use
+\emph{Refresh rings from file} to bring the full saved set back into the table.
 
 The optimizer can report a warning while still returning a model for review.
 If the data cannot determine some parameters, widen the selected angular
