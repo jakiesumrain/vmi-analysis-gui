@@ -870,6 +870,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                      f"at {dr:.6g} px spacing.")
         state.update(raw=polar, theta=theta, r=r, dr=dr, ready=True,
                      image={"path": str(path), "center": list(center),
+                            "shape": list(image.shape),
                             "brightest_center": auto_center,
                             "radial_bin_size": dr, "n_theta": n_theta, "r_max": r_max},
                      band=None, masks=[], selection_history=[], last_fit=None, view_indices=None,
@@ -899,6 +900,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         _show_fit(None)
         fit_status.text = "fitting…"
         image, theta, radii = state["processed"], state["theta"], state["r"]
+        geometry = {key: state["image"][key] for key in ("center", "shape")}
         band, masks = state["band"], tuple(state["masks"])
         try:
             fit = await asyncio.to_thread(
@@ -917,6 +919,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 fit_button.enable()
         if request != state["request_id"] or band != state["band"] or masks != tuple(state["masks"]):
             return
+        fit.detector_geometry = geometry
         _show_fit(fit)
         _update_overlay()
 

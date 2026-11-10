@@ -33,7 +33,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter, gaussian_filter1d, map_coordinates
 from scipy.optimize import least_squares
 
-from .circularization import parse_extracted_text
+from .circularization import DETECTOR_GEOMETRY_PREFIX, parse_extracted_text
 
 TWO_PI = 2.0 * np.pi
 EXTRACTED_HEADER = '"Parameter" "Value" "+-" "Uncertainty (1 std dev)"'
@@ -503,6 +503,7 @@ class RingFit:
     created: str = ""
     unconstrained: list[str] | None = None
     source_block: str | None = None
+    detector_geometry: dict | None = None
 
     def ridge_centers(self, theta):
         centers = np.full_like(theta, self.params["r0"], dtype=float)
@@ -551,6 +552,7 @@ class RingFit:
             "created": self.created,
             "unconstrained": self.unconstrained,
             "source_block": self.source_block,
+            "detector_geometry": self.detector_geometry,
         }
 
     @classmethod
@@ -566,7 +568,8 @@ class RingFit:
                    message=str(data.get("message", "")),
                    processing=dict(data.get("processing", {})),
                    created=str(data.get("created", "")),
-                   unconstrained=data.get("unconstrained"), source_block=data.get("source_block"))
+                   unconstrained=data.get("unconstrained"), source_block=data.get("source_block"),
+                   detector_geometry=data.get("detector_geometry"))
 
 
 def fit_comparison(polar, theta, r, fit):
@@ -693,6 +696,8 @@ def ring_block_text(fit, provenance=True, extra_comments=()):
         if fit.processing:
             lines.append(f"# processing: {describe_processing(fit.processing)}")
         lines.extend(str(comment) for comment in extra_comments)
+    if fit.detector_geometry is not None:
+        lines.append(DETECTOR_GEOMETRY_PREFIX + json.dumps(fit.detector_geometry))
     lines.append(EXTRACTED_HEADER)
     lines.append(f'"Gaussian Centre" {_number(fit.params["r0"])} '
                  f'+- {_number(fit.sigmas.get("r0", 0.0))}')
@@ -771,6 +776,7 @@ def load_accepted_rings(path):
             n_terms=max((int(key[1:]) for key in terms), default=0),
             use_beta=False, band=Rect(block["radius"], block["radius"]),
             rms=float(rms[1]) if rms else float("nan"), source_block=text,
+            detector_geometry=block.get("detector_geometry"),
         ))
     return rings
 

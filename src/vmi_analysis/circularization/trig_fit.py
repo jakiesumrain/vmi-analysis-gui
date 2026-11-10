@@ -98,6 +98,7 @@ def main(argv=None):
                               use_beta=not args.no_beta,
                               iterative=not args.one_shot,
                               processing=options)
+            fit.detector_geometry = {"center": list(args.center), "shape": list(image.shape)}
             block = pf.ring_block_text(fit, provenance=args.provenance)
         except ValueError as exc:
             failures += 1

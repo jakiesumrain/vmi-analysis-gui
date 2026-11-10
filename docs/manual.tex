@@ -1667,8 +1667,8 @@ Fit $1,2,\ldots,N$ terms cumulatively instead of all at once. \\
 calibration. \\
 \addlinespace
 \emph{Provenance comments} & checkbox, on & \code{calibration.\allowbreak{}provenance} &
-Write \code{\#} comment lines before each block (band, filter, Abel method,
-RMS). Parsers ignore them. \\
+Include band, filter, Abel method, and RMS comments. The fit center and
+detector shape are recorded independently of this setting. \\
 \addlinespace
 \emph{Radial model} & select, Interp & \code{calibration.\allowbreak{}radial\_\allowbreak{}model} &
 Use shape-preserving cubic interpolation (Interp) or a through-origin
@@ -1720,6 +1720,8 @@ NumPy image, center, calibration file, and radial model to Circularize. The
 export includes the polynomial degree when Poly is selected.
 Sending the calibration warns if the saved rings differ from the preview or
 if Circularize's \emph{Max trig n} excludes a saved term.
+When Circularize runs, its console warns if any saved ring used a different
+center or detector shape, and reports rings whose geometry could not be verified.
 Use \emph{Refresh rings from file} to replace the accepted-ring list and plots
 with the contents of the selected calibration file. Use \emph{Clear calibration
 file} to delete that file and reset the ring list and plots after confirmation.

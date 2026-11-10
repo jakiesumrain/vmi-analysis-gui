@@ -1,4 +1,5 @@
 import argparse
+import json
 from pathlib import Path
 import re
 from tempfile import NamedTemporaryFile
@@ -10,6 +11,8 @@ from scipy.optimize import curve_fit
 
 from vmi_analysis.imaging.centering import brightest_pixel
 from vmi_analysis.paths import validate_distinct_output
+
+DETECTOR_GEOMETRY_PREFIX = "# detector geometry: "
 
 try:
     import matplotlib.pyplot as plt
@@ -447,9 +450,8 @@ def parse_extracted_text(text, source="<text>"):
     Parse the text of a Gascooke / clean-room trig-fit export.
 
     A file holds one block per fitted ring; every block starts with the
-    quoted parameter header. Lines starting with '#' are comments (used for
-    provenance by the clean-room builder) and are ignored, as is anything
-    before the first header.
+    quoted parameter header. A detector geometry comment immediately before
+    a block records its fit center and shape. Other comments are ignored.
 
     Returns
     -------
@@ -457,16 +459,21 @@ def parse_extracted_text(text, source="<text>"):
         One dict per fitted ring. Each dict contains:
         - "radius", "radius_sigma"
         - "A1", "A1_sigma", "B1", "B1_sigma", ...
+        - optional "detector_geometry" with center (X, Y) and shape (NY, NX)
     """
     lines = [line.strip() for line in text.splitlines()]
 
     header = '"Parameter" "Value" "+-" "Uncertainty (1 std dev)"'
     blocks = []
     current = None
+    pending_geometry = geometry = None
 
     trig_pattern = re.compile(r'^Trig Term (sin|cos)\((\d+)\*theta\)$')
 
     for line in lines:
+        if line.startswith(DETECTOR_GEOMETRY_PREFIX):
+            pending_geometry = _parse_detector_geometry(line[len(DETECTOR_GEOMETRY_PREFIX):])
+            continue
         if not line or line.startswith("#"):
             continue
 
@@ -474,6 +481,7 @@ def parse_extracted_text(text, source="<text>"):
             if current:
                 blocks.append(current)
             current = {}
+            geometry, pending_geometry = pending_geometry, None
             continue
 
         if current is None:
@@ -496,6 +504,8 @@ def parse_extracted_text(text, source="<text>"):
         if name == "Gaussian Centre":
             current["radius"] = value
             current["radius_sigma"] = sigma
+            if geometry is not None:
+                current["detector_geometry"] = geometry
             continue
 
         match = trig_pattern.match(name)
@@ -513,6 +523,36 @@ def parse_extracted_text(text, source="<text>"):
         raise ValueError(f"No fit blocks found in {source}")
 
     return blocks
+
+
+def _parse_detector_geometry(text):
+    try:
+        data = json.loads(text)
+        x, y = data["center"]
+        ny, nx = data["shape"]
+        if (type(ny) is int and type(nx) is int and ny > 0 and nx > 0
+                and type(x) in (int, float) and type(y) in (int, float)
+                and 0 <= x < nx and 0 <= y < ny):
+            return {"center": [x, y], "shape": [ny, nx]}
+    except (TypeError, ValueError, KeyError):
+        pass
+    return None
+
+
+def detector_geometry_warnings(blocks, shape, center):
+    missing = 0
+    for block in blocks:
+        geometry = block.get("detector_geometry")
+        if geometry is None:
+            missing += 1
+        elif (tuple(geometry["shape"]) != tuple(shape)
+              or not np.allclose(geometry["center"], center, atol=1e-6, rtol=0)):
+            x, y = geometry["center"]
+            ny, nx = geometry["shape"]
+            yield (f"Ring r0={block['radius']:g} px was fitted on NY={ny}, NX={nx} "
+                   f"with Center X={x:g}, Center Y={y:g}. This differs from the input grid above.")
+    if missing:
+        yield f"Detector geometry is unverified for {missing} calibration ring(s) without valid geometry metadata."
 
 
 def parse_extracted_txt(path):
@@ -927,6 +967,8 @@ def main():
     raw_image, center = load_image_and_center(args.input, args.shape, args.center)
     print(f"Input grid: NY={raw_image.shape[0]}, NX={raw_image.shape[1]}. "
           f"Center X={center[0]:g}, Center Y={center[1]:g}.")
+    for warning in detector_geometry_warnings(blocks, raw_image.shape, center):
+        print(f"Warning: {warning}")
     if args.radial_model == "poly":
         fit_params, fit_meta = fit_all_trig_polynomials(
             dataset,

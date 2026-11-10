@@ -521,14 +521,26 @@ class EndToEndTests(unittest.TestCase):
             output = root / "corrected.txt"
             np.save(source, image)
             calibration.write_text(
+                '# detector geometry: {"center": [10, 4], "shape": [12, 16]}\n'
+                f'{pf.EXTRACTED_HEADER}\n"Gaussian Centre" 3 +- 0.1\n'
+                '"Trig Term cos(1*theta)" 0 +- 0.1\n'
+                '# detector geometry: {"center": [9, 4], "shape": [12, 16]}\n'
+                f'{pf.EXTRACTED_HEADER}\n"Gaussian Centre" 4 +- 0.1\n'
+                '# detector geometry: {"center": [10, 4], "shape": [16, 12]}\n'
                 f'{pf.EXTRACTED_HEADER}\n"Gaussian Centre" 5 +- 0.1\n'
-                '"Trig Term cos(1*theta)" 0 +- 0.1\n', encoding="utf-8")
+                f'{pf.EXTRACTED_HEADER}\n"Gaussian Centre" 6 +- 0.1\n', encoding="utf-8")
             args = ["circularization", "--input", str(source), "--output", str(output),
                     "--extracted", str(calibration), "--no-plots", "--interp-order", "1"]
             log = io.StringIO()
             with patch.object(sys, "argv", args), redirect_stdout(log):
                 circularization.main()
             self.assertIn("NY=12, NX=16. Center X=10, Center Y=4.", log.getvalue())
+            self.assertNotIn("Warning: Ring r0=3", log.getvalue())
+            self.assertIn("Warning: Ring r0=4 px was fitted on NY=12, NX=16 with Center X=9, Center Y=4",
+                          log.getvalue())
+            self.assertIn("Warning: Ring r0=5 px was fitted on NY=16, NX=12 with Center X=10, Center Y=4",
+                          log.getvalue())
+            self.assertIn("Detector geometry is unverified for 1 calibration ring(s)", log.getvalue())
             np.testing.assert_allclose(np.loadtxt(output), image)
             np.testing.assert_array_equal(np.load(source), image)
             with self.assertRaisesRegex(ValueError, "cannot be reshaped"):
@@ -599,7 +611,13 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(code, 0)
             blocks = parse_extracted_txt(output)
             self.assertEqual(len(blocks), 2)
-            self.assertEqual(len(pf.session_rings(pf.load_session(session))), 2)
+            geometry = {"center": [128, 128], "shape": list(image.shape)}
+            self.assertEqual([block["detector_geometry"] for block in blocks], [geometry, geometry])
+            for fit in pf.session_rings(pf.load_session(session)):
+                block, = parse_extracted_text(pf.ring_block_text(fit, provenance=False))
+                self.assertEqual(block["detector_geometry"], geometry)
+            self.assertEqual([fit.detector_geometry for fit in pf.load_accepted_rings(output)],
+                             [geometry, geometry])
 
 
 if __name__ == "__main__":
