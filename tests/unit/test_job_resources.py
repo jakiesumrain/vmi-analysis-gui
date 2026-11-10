@@ -16,6 +16,40 @@ def access(module, args=(), cwd=None):
 
 
 class JobResourcesTests(unittest.TestCase):
+    def test_only_unrelated_map_files_can_share_the_centroid_output_directory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            centroid_module = 'centroiding.process_andor_vmi_PICASSO_v5_h5_batch'
+            args = ['--output-dir', 'experiment/analysis']
+            centroid = access(centroid_module, args, folder)
+
+            def map_access(path):
+                return access('gmd.build_gmd_map', ['--output-path', path], folder)
+
+            def conflicts(first, second):
+                return first.conflict(second, allow_map_beside_centroid=True)
+
+            map_path = 'experiment/analysis/gmd_map_all.txt'
+            mapping = map_access(map_path)
+            self.assertIsNone(conflicts(centroid, mapping))
+            self.assertIsNone(conflicts(mapping, centroid))
+            self.assertIsNotNone(centroid.conflict(mapping))
+            for path in ('experiment', 'experiment/analysis', 'experiment/analysis/energy_spectrum.csv',
+                         'experiment/analysis/vmi_2d_raw.npy', 'experiment/analysis/04_final_summary.png',
+                         'experiment/analysis/vmi_results_raw.h5'):
+                with self.subTest(path=path):
+                    self.assertIsNotNone(conflicts(centroid, map_access(path)))
+                    self.assertIsNotNone(conflicts(map_access(path), centroid))
+            weighted = access(centroid_module, [*args, '--gmd-weighting', '--gmd-map-path', map_path], folder)
+            self.assertIsNotNone(conflicts(mapping, weighted))
+            accumulate = access('imaging.h5_accumulate_fast_gmd', ['--output-path', map_path], folder)
+            self.assertIsNotNone(conflicts(accumulate, centroid))
+
+            spectrum = Path(folder) / 'experiment/analysis/energy_spectrum.csv'
+            spectrum.parent.mkdir(parents=True)
+            spectrum.touch()
+            (Path(folder) / map_path).hardlink_to(spectrum)
+            self.assertIsNotNone(conflicts(mapping, centroid))
+
     def test_gmd_map_producer_conflicts_with_accumulate_reader_only_when_enabled(self):
         with tempfile.TemporaryDirectory() as folder:
             producer = access('gmd.build_gmd_map', ['--h5-dir', 'raw', '--gmd-path', 'timestamps.txt',
@@ -50,30 +84,6 @@ class JobResourcesTests(unittest.TestCase):
         movie = access('imaging.h5_play_frames_movie', ['--h5-dir', 'data', '--movie-dir', 'movies',
                                                       '--movie-ext', '.mp4'])
         self.assertEqual(movie.writes, frozenset([canonical_path('movies/data.mp4'), canonical_path('movies/data.gif')]))
-
-    def test_distinct_file_write_inside_reserved_directory_is_allowed(self):
-        centroid = access('centroiding.process_andor_vmi_PICASSO_v5_h5_batch',
-                          ['--h5-dir', 'raw', '--output-dir', 'out'])
-        mapping = access('gmd.build_gmd_map',
-                         ['--h5-dir', 'raw', '--gmd-path', 'timestamps.txt',
-                          '--output-path', 'out/gmd_map_all.txt'])
-        self.assertIn(canonical_path('out'), centroid.write_dirs)
-        self.assertIsNone(centroid.conflict(mapping))
-        # Deletions and previews stay conservative.
-        self.assertIsNotNone(centroid.conflict_strict(mapping))
-        reader = Access(reads=frozenset([canonical_path('out/events.h5')]))
-        self.assertIsNotNone(centroid.conflict(reader))
-
-    def test_same_file_write_still_conflicts_and_directories_still_lock(self):
-        out = canonical_path('out')
-        file_a = Access(writes=frozenset([out / 'a.txt']))
-        file_b = Access(writes=frozenset([out / 'b.txt']))
-        self.assertIsNone(file_a.conflict(file_b))
-        self.assertIsNotNone(file_a.conflict(Access(writes=frozenset([out / 'a.txt']))))
-        reserved = Access(writes=frozenset([out]), write_dirs=frozenset([out]))
-        nested = Access(writes=frozenset([out / 'sub']),
-                        write_dirs=frozenset([out / 'sub']))
-        self.assertIsNotNone(reserved.conflict(nested))
 
     def test_binning_waits_for_the_entire_centroid_output_directory(self):
         centroid = access('centroiding.process_andor_vmi_PICASSO_v5_h5_batch', ['--output-dir', 'out'])

@@ -3,9 +3,10 @@ async page => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   const names = ['GMD Map', 'Movie', 'Dark Frame', 'Accumulate', 'Centroiding',
-                 'Binning', 'Circularize', 'PES', 'Pipeline'];
+                 'Binning', 'Trig Calibration', 'Circularize', 'PES', 'Pipeline'];
   const titles = {'Movie': 'Frame Movie', 'Accumulate': 'Fast Accumulate',
                   'Centroiding': 'Picasso Centroiding', 'Binning': 'GMD Binning', 'PES': 'PES / Abel Inversion'};
+  const runLabels = {'Pipeline': 'Run pipeline', 'Trig Calibration': 'Load image & remap'};
   const show = async name => {
     await page.getByRole('tab', {name, exact: true}).click();
     await page.waitForFunction(title => {
@@ -20,7 +21,7 @@ async page => {
     await show(name);
     const panel = page.getByRole('tabpanel');
     await panel.waitFor({state: 'visible'});
-    if (!await panel.getByRole('button', {name: name === 'Pipeline' ? 'Run pipeline' : 'Run', exact: true}).isVisible()) {
+    if (!await panel.getByRole('button', {name: runLabels[name] || 'Run', exact: true}).isVisible()) {
       throw new Error(`${name}: missing Run control`);
     }
     if (await panel.getByText('Internal Server Error', {exact: true}).count()) throw new Error(`${name}: failed to render`);

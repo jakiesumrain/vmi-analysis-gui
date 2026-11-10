@@ -81,10 +81,13 @@ Side tools (QC / helpers, not pipeline stages):
 - **Circularization calibration files are required** by `process_gmd_bins.py`:
   `extracted-FOC100eV-20260710.txt` and `reassignment-FOC100eV-20260710.txt`
   (trig-distortion fits + radial reassignment map) in `circularization/`.
-  They are per-experiment inputs, not generated here; supply them before
-  running stage 4. The reassignment file for the reference dataset was the
-  identity map — only the azimuthal (trig) terms act, so any radial
-  nonlinearity propagates into the energy axis.
+  They are per-experiment inputs. The GUI's **Trig Calibration** tab builds
+  the extracted trig-fit file from point-sampled polar intensities with
+  optional inverse Abel per angle and filtering before a Gaussian ridge fit
+  in the selected band. The
+  reassignment file is supplied separately. The reassignment file for the
+  reference dataset was the identity map — only the azimuthal (trig) terms
+  act, so any radial nonlinearity propagates into the energy axis.
 - **TOML is optional and never loaded implicitly by scripts.** Explicit CLI
   values override an explicitly supplied `--config PATH`. Relative analysis
   paths resolve from the subprocess cwd (GUI centroiding/binning jobs use
@@ -168,11 +171,11 @@ Rules for GUI-related changes:
   2, any positive integer). One active job per panel; each retains its Stop,
   progress, logs and reconnect state. Lowering the limit does not kill jobs.
 - `gui/resources.py` declares file reads/writes from submitted module commands.
-  Keep these declarations in sync with CLI interfaces. Reserve multi-file output
-  directories with `write_dir` (`Access.write_dirs`); another job may write a
-  distinct file inside a reserved directory, but reads inside it, exact-path
-  writes and directory-vs-directory reservations still conflict. Deletions use
-  `Access.conflict_strict`. Shared reads are allowed. Pipeline reservations
+  Keep these declarations in sync with CLI interfaces. Block overlapping writes
+  and producer/reader conflicts; shared reads are allowed. A standalone GMD Map
+  may write inside a standalone Centroiding output directory only when its file
+  is independent of Centroiding's inputs and explicitly reserved outputs.
+  Pipeline reservations
   cover all stages for the whole run. MATLAB/CPBASEX stays mutually exclusive.
 - Clear-output handlers must use `delete_outputs`, which checks reservations
   atomically. Shutdown must cancel and join every running job's process tree.

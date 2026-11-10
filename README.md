@@ -57,7 +57,8 @@ That is the whole setup. The app starts with one tab per script:
 | Accumulate | `vmi_analysis.imaging.h5_accumulate_fast_gmd` | fast threshold+denoise accumulation with live preview (QC) |
 | Centroiding | `vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch` | Picasso localization → checkpoint + 2D VMI histogram |
 | Binning | `vmi_analysis.centroiding.vmi_histogram_gmd_bins` | split events into GMD bins, one 2D histogram per bin |
-| Circularize | `vmi_analysis.circularization.circularization` | correct radial distortion of a single image |
+| Trig Calibration | `vmi_analysis.circularization.polar_fit` (interactive tool) | fit ring ridges in a processed polar image with optional inverse Abel and filtering |
+| Circularize | `vmi_analysis.circularization.circularization` | correct radial distortion on the original NumPy detector grid or on a legacy text image |
 | PES | `vmi_analysis.circularization.process_gmd_bins` | per-bin chain → Abel inversion → spectra + betas |
 | Pipeline | all four pipeline stages | GMD map → centroiding → binning → PES, in one job |
 
@@ -75,12 +76,11 @@ survive restart. Increasing the limit opens more slots; lowering it lets
 existing jobs finish and delays new starts. CPU worker counts inside individual
 panels still apply, so choose a limit appropriate for your RAM and disk speed.
 
-Read-only inputs can be shared. Jobs wait when another job writes a path they
-need, when they read inside a directory another job is writing, or when two
-directory reservations overlap. Two jobs may write different files inside the
-same reserved output directory (for example a GMD map beside a Centroiding
-run). Waiting jobs show the reason; unrelated jobs can use free slots. One job
-per panel runs at once.
+Read-only inputs can be shared. Jobs wait when another job writes an overlapping
+file or directory, or reads something they need to overwrite. Waiting jobs show
+the reason; unrelated jobs can use free slots. One job per panel runs at once.
+GMD Map can write beside a Centroiding run in the same output directory when
+the map path is separate from the run's inputs and outputs.
 Pipeline stages stay sequential and reserve their inputs/outputs for the whole
 pipeline run. MATLAB/CPBASEX jobs also share an exclusive lock because their
 temporary files are shared. Clear-output actions respect these reservations.

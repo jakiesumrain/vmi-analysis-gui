@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from vmi_analysis.gui.jobs import Job, JobManager, ResourceBusyError, Stage
+from vmi_analysis.gui.resources import command_access
 
 
 def wait_for(predicate, timeout=10):
@@ -69,24 +70,6 @@ class ConcurrentJobTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.manager.set_max_concurrent(invalid)
 
-    def test_single_file_writer_runs_inside_another_job_reserved_directory(self):
-        directory = self.root / 'out'
-        directory.mkdir()
-        blocker = self.job('centroid', writes=[str(directory)],
-                            write_dirs=[str(directory)])
-        mapping = self.job('map', writes=[str(directory / 'gmd_map_all.txt')])
-        self.manager.submit(blocker)
-        self.manager.submit(mapping)
-        self.ready(blocker, mapping)
-        self.assertEqual(blocker.status, 'running')
-        self.assertEqual(mapping.status, 'running')
-        self.manager.cancel(blocker.id)
-        self.manager.cancel(mapping.id)
-        self.release_cancelled(blocker, mapping)
-
-    def release_cancelled(self, *jobs):
-        wait_for(lambda: all(job.status == 'cancelled' for job in jobs))
-
     def test_readers_share_files_writer_waits_and_unrelated_work_bypasses(self):
         self.manager.set_max_concurrent(4)
         path = str(self.root / 'data/results.h5')
@@ -114,6 +97,25 @@ class ConcurrentJobTests(unittest.TestCase):
         self.assertEqual(later.status, 'queued')
         self.manager.cancel(writer.id)
         self.ready(reader, later)
+
+    def test_map_can_run_beside_centroiding_but_cannot_write_its_spectrum(self):
+        def reservation(module, *args):
+            return command_access([sys.executable, '-m', 'vmi_analysis.' + module, *args], self.root)
+
+        centroid = reservation('centroiding.process_andor_vmi_PICASSO_v5_h5_batch', '--output-dir', 'analysis')
+        safe_map = reservation('gmd.build_gmd_map', '--output-path', 'analysis/gmd_map_all.txt')
+        conflicting_map = reservation('gmd.build_gmd_map', '--output-path', 'analysis/energy_spectrum.csv')
+        with patch('vmi_analysis.gui.resources.command_access', side_effect=[centroid, safe_map, conflicting_map]):
+            centroid_job = self.manager.submit(self.job('Centroiding'))
+            map_job = self.manager.submit(self.job('GMD Map'))
+            conflicting = self.manager.submit(self.job('Map collision'))
+        self.ready(centroid_job, map_job)
+        self.assertEqual(conflicting.status, 'queued')
+        with self.assertRaises(ResourceBusyError):
+            with self.manager.write_access([self.root / 'analysis/unused.txt']):
+                self.fail('A direct write should still respect the whole directory reservation')
+        self.release(centroid_job)
+        self.ready(conflicting)
 
     def test_histogram_preview_shares_reads_and_blocks_writes(self):
         path = self.root / 'dark.npy'

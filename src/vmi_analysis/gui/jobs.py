@@ -55,7 +55,6 @@ class Job:
     extra: dict = field(default_factory=dict)
     reads: list[str] = field(default_factory=list)
     writes: list[str] = field(default_factory=list)
-    write_dirs: list[str] = field(default_factory=list)
     exclusive: list[str] = field(default_factory=list)
     wait_reason: str = ""
     _access: Access = field(default_factory=Access, repr=False)
@@ -133,9 +132,7 @@ class JobManager:
         """Keep GUI output deletion atomic with job submission and scheduling."""
         access = Access(writes=frozenset(canonical_path(p) for p in paths))
         with self._lock:
-            # Deletion stays conservative: deleting a path may affect files
-            # inside another job's reserved output directory.
-            self._check_active_access_locked(access, strict=True)
+            self._check_active_access_locked(access)
             yield
 
     @contextmanager
@@ -240,17 +237,14 @@ class JobManager:
 
     # -------------------------------------------------------------- internals
 
-    def _check_active_access_locked(self, access, strict=False):
+    def _check_active_access_locked(self, access):
         for job in self._jobs.values():
             if job.status in ("running", "queued"):
-                conflict = (access.conflict_strict(job._access) if strict
-                            else access.conflict(job._access))
+                conflict = access.conflict(job._access)
                 if conflict:
                     raise ResourceBusyError(f"Files are reserved by {job.name}: {conflict}")
         for preview in self._preview_reads.values():
-            conflict = (access.conflict_strict(preview) if strict
-                        else access.conflict(preview))
-            if conflict:
+            if conflict := access.conflict(preview):
                 raise ResourceBusyError(f"Files are reserved by a histogram preview: {conflict}")
 
     def _schedule_locked(self) -> None:
@@ -261,7 +255,8 @@ class JobManager:
             job = self._jobs[job_id]
             blockers = [self._jobs[key] for key in self._workers] + waiting
             blocker = next(((other, reason) for other in blockers
-                            if (reason := job._access.conflict(other._access))), None)
+                            if (reason := job._access.conflict(
+                                other._access, allow_map_beside_centroid=True))), None)
             if blocker:
                 other, reason = blocker
                 job.wait_reason = f"Waiting for {other.name}: {reason}"
