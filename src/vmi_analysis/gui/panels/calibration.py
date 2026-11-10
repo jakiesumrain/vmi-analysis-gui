@@ -431,7 +431,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                     ui.button("Close", on_click=inspection_dialog.close).props("flat")
                 with ui.row().classes("items-center gap-4"):
                     zoom_label = ui.label()
-                    horizontal_zoom = ui.slider(min=1, max=8, step=0.25, value=1).classes("w-52").props(
+                    horizontal_zoom = ui.slider(min=0.25, max=8, step=0.25, value=1).classes("w-52").props(
                         'aria-label="Horizontal zoom"')
                     zoom_label.bind_text_from(horizontal_zoom, "value", lambda value: f"Horizontal zoom {value:g}×")
                     inspection_undo = ui.button("Undo selection", icon="undo",
