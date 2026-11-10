@@ -57,7 +57,8 @@ That is the whole setup. The app starts with one tab per script:
 | Accumulate | `vmi_analysis.imaging.h5_accumulate_fast_gmd` | fast threshold+denoise accumulation with live preview (QC) |
 | Centroiding | `vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch` | Picasso localization → checkpoint + 2D VMI histogram |
 | Binning | `vmi_analysis.centroiding.vmi_histogram_gmd_bins` | split events into GMD bins, one 2D histogram per bin |
-| Circularize | `vmi_analysis.circularization.circularization` | correct radial distortion of a single image |
+| Trig Calibration | `vmi_analysis.circularization.polar_fit` (interactive tool) | fit ring ridges in a processed polar image with optional inverse Abel and filtering |
+| Circularize | `vmi_analysis.circularization.circularization` | correct radial distortion on the original NumPy detector grid or on a legacy text image |
 | PES | `vmi_analysis.circularization.process_gmd_bins` | per-bin chain → Abel inversion → spectra + betas |
 | Pipeline | all four pipeline stages | GMD map → centroiding → binning → PES, in one job |
 
