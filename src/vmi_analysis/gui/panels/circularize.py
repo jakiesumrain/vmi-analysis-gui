@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from nicegui import ui
+from vmi_analysis.paths import validate_distinct_output
 
 from ..jobs import Job, JobManager
 from .. import theme
@@ -97,6 +98,15 @@ def build(jobs: JobManager):
         update_geometry()
 
         def run():
+            if not summary_only.value:
+                try:
+                    validate_distinct_output(out.value, (
+                        ("input image", inp.value), ("extracted calibration file", extracted.value),
+                        ("radial reassignment file", reassign.value),
+                    ), cwd=CIRC_DIR)
+                except (OSError, ValueError) as exc:
+                    ui.notify(str(exc), type="warning")
+                    return
             cmd = [sys.executable, "-m", "vmi_analysis.circularization.circularization",
                    "--input", inp.value,
                    "--output", out.value,

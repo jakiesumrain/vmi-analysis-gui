@@ -318,6 +318,60 @@ def make_cartesian_rings(size=257, center=128.0, rings=(60.0, 100.0),
 
 
 class EndToEndTests(unittest.TestCase):
+    def test_circularize_rejects_outputs_aliasing_its_inputs(self):
+        import sys
+        from unittest.mock import patch
+
+        from vmi_analysis.circularization import circularization
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            image = root / "raw.npy"
+            extracted = root / "extracted.txt"
+            reassign = root / "reassign.txt"
+            for source in (image, extracted, reassign):
+                source.write_bytes(b"original")
+            hardlink = root / "alias.txt"
+            hardlink.hardlink_to(image)
+            cases = [(image, "input image"), (extracted, "extracted calibration file"),
+                     (reassign, "radial reassignment file"), (hardlink, "input image")]
+            symlink = root / "symlink.txt"
+            try:
+                symlink.symlink_to(extracted)
+            except OSError:
+                pass  # Windows may require developer mode for symbolic links.
+            else:
+                cases.append((symlink, "extracted calibration file"))
+            args = ["circularization", "--input", str(image), "--extracted", str(extracted),
+                    "--reassign-file", str(reassign)]
+            for output, label in cases:
+                with self.subTest(output=output), patch.object(sys, "argv", args + ["--output", str(output)]):
+                    with self.assertRaisesRegex(SystemExit, label):
+                        circularization.main()
+                    self.assertEqual(output.read_bytes(), b"original")
+
+    def test_atomic_image_write_preserves_output_on_failure(self):
+        from unittest.mock import patch
+
+        from vmi_analysis.circularization import circularization
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "corrected.txt"
+            path.write_bytes(b"previous complete result")
+            image = np.arange(6).reshape(2, 3)
+
+            def fail(handle, *_args, **_kwargs):
+                handle.write("partial result")
+                raise OSError("write interrupted")
+
+            with patch.object(circularization.np, "savetxt", side_effect=fail):
+                with self.assertRaisesRegex(OSError, "write interrupted"):
+                    circularization.save_image_txt(path, image)
+            self.assertEqual(path.read_bytes(), b"previous complete result")
+            self.assertEqual(list(Path(folder).iterdir()), [path])
+            circularization.save_image_txt(path, image)
+            np.testing.assert_array_equal(np.loadtxt(path), image)
+
     def test_signed_harmonics_round_trip_through_circularize(self):
         from vmi_analysis.circularization import circularization as circ
 

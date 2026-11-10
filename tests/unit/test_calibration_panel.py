@@ -180,6 +180,16 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                                         for line in lines), lines)
                     callbacks["Send to Circularize"]()
                     self.assertEqual(store["circularize.inp"], str(path))
+                    output = next(element for element in client.elements.values()
+                                  if isinstance(element, ui.input)
+                                  and element._props.get("label") == "Output image (.txt)")
+                    original_output = output.value
+                    output.value = str(path)
+                    with patch.object(ui, "notify") as notify:
+                        callbacks["Run"]()
+                    manager.submit.assert_not_called()
+                    self.assertIn("input image", notify.call_args.args[0])
+                    output.value = original_output
                     with patch.object(circularize.JobView, "attach"):
                         callbacks["Run"]()
                     cmd = manager.submit.call_args.args[0].cmd

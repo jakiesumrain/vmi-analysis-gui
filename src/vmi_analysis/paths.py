@@ -24,6 +24,29 @@ CPBASEX_DIR = Path(os.environ.get("CPBASEX_DIR", _old_cpbasex if _old_cpbasex.is
                                 else WORKSPACE_ROOT / "vendor" / "pbasex-matlab"))
 
 
+def validate_distinct_output(output, inputs, *, cwd=None):
+    """Resolve an output path and reject aliases of the named input files."""
+    if not output:
+        raise ValueError("Choose an output image file.")
+    base = Path.cwd() if cwd is None else Path(cwd)
+    target = (base / output).resolve()
+    if target.is_dir():
+        raise ValueError("Choose an output image file.")
+    for label, source in inputs:
+        if not source:
+            continue
+        source = (base / source).resolve()
+        same_file = target == source
+        if not same_file:
+            try:
+                same_file = target.samefile(source)
+            except FileNotFoundError:
+                pass
+        if same_file:
+            raise ValueError(f"The output image points to the {label}. Choose a different output file.")
+    return target
+
+
 def prepare_workspace():
     """Only runtime directories are created; user data is never relocated."""
     for path in (CENTROID_DIR, CIRCULARIZATION_DIR, GENERATED_DIR):

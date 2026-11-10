@@ -1,6 +1,7 @@
 import argparse
 from pathlib import Path
 import re
+from tempfile import NamedTemporaryFile
 
 import numpy as np
 from scipy.ndimage import map_coordinates
@@ -8,6 +9,7 @@ from scipy.interpolate import PchipInterpolator
 from scipy.optimize import curve_fit
 
 from vmi_analysis.imaging.centering import brightest_pixel
+from vmi_analysis.paths import validate_distinct_output
 
 try:
     import matplotlib.pyplot as plt
@@ -416,7 +418,17 @@ def load_image_txt(path, shape=None):
 
 
 def save_image_txt(path, image):
-    np.savetxt(path, image, fmt="%.18e")
+    """Publish a complete text image after writing it beside the destination."""
+    path = Path(path)
+    temporary = NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                   prefix=f".{path.name}.", suffix=".tmp", delete=False)
+    temp_path = Path(temporary.name)
+    try:
+        with temporary:
+            np.savetxt(temporary, image, fmt="%.18e")
+        temp_path.replace(path)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def load_image_and_center(path, shape=None, center=None):
@@ -896,6 +908,13 @@ def parse_args():
 
 def main():
     args = parse_args()
+    inputs = (("input image", args.input), ("extracted calibration file", args.extracted),
+              ("radial reassignment file", args.reassign_file))
+    if not args.summary_only:
+        try:
+            output = validate_distinct_output(args.output, inputs)
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"Circularize: {exc}") from exc
 
     blocks = parse_extracted_txt(args.extracted)
     dataset = build_fit_dataset(blocks, max_trig_n=args.max_trig_n)
@@ -963,7 +982,11 @@ def main():
         polar_dr=args.polar_dr,
     )
 
-    save_image_txt(args.output, corrected)
+    try:
+        output = validate_distinct_output(output, inputs)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"Circularize: {exc}") from exc
+    save_image_txt(output, corrected)
 
 
 if __name__ == "__main__":
