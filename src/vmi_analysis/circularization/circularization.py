@@ -479,25 +479,19 @@ def parse_extracted_text(text, source="<text>"):
         if current is None:
             continue
 
-        parts = re.findall(r'"([^"]+)"|([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(\+\-)', line)
-        tokens = []
-        for quoted, number, pm in parts:
-            if quoted:
-                tokens.append(quoted)
-            elif number:
-                tokens.append(number)
-            elif pm:
-                tokens.append(pm)
-
-        if len(tokens) < 4:
+        parameter = re.match(r'^"([^"]+)"\s*(.*)$', line)
+        if parameter is None:
             continue
-
-        name = tokens[0]
+        name, fields = parameter.groups()
+        value_text, _, sigma_text = fields.partition("+-")
         try:
-            value = float(tokens[1])
-            sigma = float(tokens[3])
+            value = float(value_text)
         except ValueError:
             continue
+        try:
+            sigma = float(sigma_text.split(maxsplit=1)[0])
+        except (ValueError, IndexError):
+            sigma = np.nan
 
         if name == "Gaussian Centre":
             current["radius"] = value
@@ -528,7 +522,7 @@ def parse_extracted_txt(path):
 
 def build_fit_dataset(blocks, max_trig_n=None):
     """
-    Convert parsed blocks into arrays grouped by trig order.
+    Convert parsed blocks into arrays aligned by ring. Missing terms are NaN.
     """
     radii = np.array([block["radius"] for block in blocks], dtype=float)
     dataset = {"radii": radii}
@@ -543,24 +537,32 @@ def build_fit_dataset(blocks, max_trig_n=None):
     for n in range(1, max_trig_n + 1):
         for prefix in ("A", "B"):
             key = f"{prefix}{n}"
-            values = []
-            sigmas = []
-            for block in blocks:
-                if key in block:
-                    values.append(block[key])
-                    sigmas.append(block[f"{key}_sigma"])
-            if len(values) == len(blocks):
-                dataset[key] = np.array(values, dtype=float)
-                dataset[f"{key}_sigma"] = np.array(sigmas, dtype=float)
+            present = np.array([key in block for block in blocks], dtype=bool)
+            if present.any():
+                values = np.array([block.get(key, np.nan) for block in blocks], dtype=float)
+                if not np.isfinite(values[present]).all():
+                    raise ValueError(f"Measured {key} coefficients must be finite.")
+                dataset[key] = values
+                dataset[f"{key}_sigma"] = np.array(
+                    [block.get(f"{key}_sigma", np.nan) for block in blocks], dtype=float)
 
     return dataset
+
+
+def _trig_samples(dataset, key):
+    values = dataset[key]
+    measured = ~np.isnan(values)
+    sigma = dataset.get(f"{key}_sigma")
+    if sigma is not None:
+        sigma = sigma[measured]
+        sigma = np.where(np.isfinite(sigma) & (sigma > 0), sigma, np.nan)
+    return dataset["radii"][measured], values[measured], sigma
 
 
 def fit_all_trig_polynomials(dataset, order=2, max_trig_n=None):
     """
     Fit all available A_n(r), B_n(r) arrays in the dataset.
     """
-    radii = dataset["radii"]
     fit_params = {}
     fit_meta = {}
 
@@ -573,14 +575,16 @@ def fit_all_trig_polynomials(dataset, order=2, max_trig_n=None):
     for n in range(1, max_trig_n + 1):
         for prefix in ("A", "B"):
             key = f"{prefix}{n}"
-            sigma_key = f"{key}_sigma"
             if key not in dataset:
                 continue
+            radii, values, sigma = _trig_samples(dataset, key)
+            n_radii = np.unique(radii).size
+            if n_radii < order:
+                raise ValueError(f"{key} has {n_radii} distinct measured radii. "
+                                 f"Polynomial order {order} requires at least {order}.")
+            weighted = sigma is not None and np.isfinite(sigma).all()
             coeffs, cov = fit_distortion_polynomials(
-                radii,
-                dataset[key],
-                order=order,
-                sigma=dataset.get(sigma_key),
+                radii, values, order=order, sigma=sigma if weighted else None,
             )
             fit_params[key] = {
                 "kind": "poly",
@@ -590,8 +594,10 @@ def fit_all_trig_polynomials(dataset, order=2, max_trig_n=None):
                 "cov": cov,
                 "order": order,
                 "radii": radii.copy(),
-                "values": dataset[key].copy(),
-                "sigma": dataset.get(sigma_key),
+                "values": values,
+                "sigma": sigma,
+                "warning": "" if weighted else
+                f"{key} uses an unweighted fit because some uncertainties are unavailable or invalid.",
                 "model_kind": "poly",
             }
 
@@ -605,10 +611,8 @@ def build_all_trig_interpolators(dataset, max_trig_n=None):
     The extracted radii are fit exactly at the sampled points and clipped
     outside the sampled radial range to avoid unstable extrapolation.
     """
-    sort_idx = np.argsort(dataset["radii"])
-    radii = dataset["radii"][sort_idx]
-    if not np.isfinite(radii).all() or np.any(radii <= 0) or np.any(np.diff(radii) <= 0):
-        raise ValueError("Interpolation requires distinct, positive fitted ring radii.")
+    if not np.isfinite(dataset["radii"]).all() or np.any(dataset["radii"] <= 0):
+        raise ValueError("Interpolation requires finite, positive fitted ring radii.")
     fit_params = {}
     fit_meta = {}
 
@@ -624,8 +628,13 @@ def build_all_trig_interpolators(dataset, max_trig_n=None):
             if key not in dataset:
                 continue
 
-            radii_aug = np.concatenate(([0.0], radii))
-            values_aug = np.concatenate(([0.0], dataset[key][sort_idx]))
+            radii, values, sigma = _trig_samples(dataset, key)
+            sort_idx = np.argsort(radii)
+            sorted_radii = radii[sort_idx]
+            if np.any(np.diff(sorted_radii) <= 0):
+                raise ValueError(f"{key} requires distinct fitted ring radii for interpolation.")
+            radii_aug = np.concatenate(([0.0], sorted_radii))
+            values_aug = np.concatenate(([0.0], values[sort_idx]))
 
             interp = PchipInterpolator(radii_aug, values_aug, extrapolate=True)
             dinterp = interp.derivative()
@@ -636,12 +645,11 @@ def build_all_trig_interpolators(dataset, max_trig_n=None):
                 "r_min": 0.0,
                 "r_max": float(np.max(radii)),
             }
-            sigma = dataset.get(f"{key}_sigma")
             fit_meta[key] = {
                 "order": None,
-                "radii": radii_aug.copy(),
-                "values": values_aug.copy(),
-                "sigma": None if sigma is None else sigma[sort_idx],
+                "radii": radii,
+                "values": values,
+                "sigma": sigma,
                 "model_kind": "interp",
             }
 
@@ -660,10 +668,11 @@ def print_dataset_summary(dataset):
         key for key in dataset if key.startswith(("A", "B")) and not key.endswith("_sigma")
     )
     for key in keys:
-        vals = ", ".join(f"{v:.6f}" for v in dataset[key])
-        sigmas = ", ".join(f"{s:.6f}" for s in dataset[f"{key}_sigma"])
-        print(f"  {key}: [{vals}]")
-        print(f"  {key}_sigma: [{sigmas}]")
+        term_radii, values, sigma = _trig_samples(dataset, key)
+        print(f"  {key}: {len(values)} of {len(radii)} rings")
+        for i, (radius, value) in enumerate(zip(term_radii, values)):
+            error = f"{sigma[i]:.6g}" if sigma is not None and np.isfinite(sigma[i]) else "unavailable"
+            print(f"    r={radius:.6g} px  value={value:.6g}  sigma={error}")
 
 
 def plot_trig_fits(dataset, fit_params, fit_meta, output_dir, max_trig_n=None):
@@ -698,16 +707,14 @@ def plot_trig_fits(dataset, fit_params, fit_meta, output_dir, max_trig_n=None):
             axes = [axes]
 
         for ax, key in zip(axes, existing):
-            sigma_key = f"{key}_sigma"
-            y = dataset[key]
-            yerr = dataset.get(sigma_key)
+            samples = fit_meta[key]
             model = fit_params[key]
             y_plot, _ = eval_radial_model(model, r_plot)
 
             ax.errorbar(
-                radii,
-                y,
-                yerr=yerr,
+                samples["radii"],
+                samples["values"],
+                yerr=samples["sigma"],
                 fmt="o",
                 capsize=4,
                 label=f"{key} data",
@@ -932,6 +939,9 @@ def main():
             max_trig_n=args.max_trig_n,
         )
     print_fit_summary(fit_params)
+    for term in fit_meta.values():
+        if term.get("warning"):
+            print(f"Warning: {term['warning']}")
     summarize_delta_r_contributions(
         fit_params,
         max_radius=float(np.max(dataset["radii"])),

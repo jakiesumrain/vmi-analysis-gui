@@ -803,7 +803,7 @@ def reduce_rings(fits, model="poly", order=2):
                 key = f"{prefix}{n}"
                 if key in fit.params:
                     block[key] = fit.params[key]
-                    block[f"{key}_sigma"] = fit.sigmas.get(key, 0.0)
+                    block[f"{key}_sigma"] = fit.sigmas.get(key, np.nan)
         blocks.append(block)
     dataset = build_fit_dataset(blocks)
     if model == "poly":

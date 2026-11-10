@@ -130,6 +130,9 @@ def main(argv=None):
         except ValueError as exc:
             print(f"reduction skipped: {exc}")
         else:
+            for term in reduced["fit_meta"].values():
+                if term.get("warning"):
+                    print(f"Warning: {term['warning']}")
             print("coefficient preview:")
             for key, value in sorted(reduced["a"].items()):
                 if not key.endswith("_sigma"):

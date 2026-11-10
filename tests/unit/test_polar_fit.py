@@ -318,6 +318,36 @@ def make_cartesian_rings(size=257, center=128.0, rings=(60.0, 100.0),
 
 
 class EndToEndTests(unittest.TestCase):
+    def test_radial_models_use_only_the_rings_that_measured_each_term(self):
+        from vmi_analysis.circularization import circularization as circ
+
+        dataset = circ.build_fit_dataset([
+            {"radius": 30., "A1": 3.3, "A1_sigma": 0.1, "A3": 6., "A3_sigma": 0.1},
+            {"radius": 10., "A1": 1.01, "A1_sigma": 0.1, "A3": 2., "A3_sigma": 0.1},
+            {"radius": 40., "A1": 4.5, "A1_sigma": 0.1},
+        ])
+        models, samples = circ.build_all_trig_interpolators(dataset)
+        np.testing.assert_array_equal(samples["A3"]["radii"], [30., 10.])
+        np.testing.assert_allclose(circ.eval_radial_model(models["A3"], [10., 20., 40.])[0], [2., 4., 6.])
+        models, _ = circ.fit_all_trig_polynomials(dataset, order=1)
+        np.testing.assert_allclose(models["A3"]["coeffs"], [0.2])
+        with self.assertRaisesRegex(ValueError, r"A3 has 2 distinct measured radii.*order 3"):
+            circ.fit_all_trig_polynomials(dataset, order=3)
+
+    def test_poly_falls_back_to_unweighted_fit_for_invalid_uncertainties(self):
+        from vmi_analysis.circularization import circularization as circ
+
+        text = "\n".join(
+            f'{pf.EXTRACTED_HEADER}\n"Gaussian Centre" {radius} +- 0.1\n'
+            f'"Trig Term sin(1*theta)" {radius / 10} +- {sigma}'
+            for radius, sigma in ((10, "0"), (20, "nan"), (30, "unavailable"), (40, "0.2")))
+        dataset = circ.build_fit_dataset(parse_extracted_text(text))
+        models, samples = circ.fit_all_trig_polynomials(dataset, order=1)
+        np.testing.assert_allclose(models["A1"]["coeffs"], [0.1])
+        np.testing.assert_array_equal(samples["A1"]["radii"], [10, 20, 30, 40])
+        np.testing.assert_array_equal(samples["A1"]["sigma"], [np.nan, np.nan, np.nan, 0.2])
+        self.assertIn("A1 uses an unweighted fit", samples["A1"]["warning"])
+
     def test_reassignment_preserves_inner_interpolation_and_extends_last_offset(self):
         from vmi_analysis.circularization import circularization as circ
 

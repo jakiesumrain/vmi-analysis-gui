@@ -231,8 +231,7 @@ def _fit_comparison_figure(polar, theta, r, fit):
 
 
 def _radial_model_figures(reduced):
-    dataset = reduced["dataset"]
-    radii = dataset["radii"]
+    total_rings = len(reduced["dataset"]["radii"])
     sample_r, curves = pf.radial_model_curves(reduced)
     model_label = "PCHIP" if reduced["model"] == "interp" else f"Polynomial order {reduced['order']}"
     for prefix in ("A", "B"):
@@ -244,9 +243,11 @@ def _radial_model_figures(reduced):
             color = qualitative.Plotly[(n - 1) % len(qualitative.Plotly)]
             figure.add_scatter(x=sample_r, y=curve, name=f"{key} model",
                                mode="lines", line={"color": color}, legendgroup=key)
-            figure.add_scatter(x=radii, y=dataset[key], name=f"{key} rings",
+            samples = reduced["fit_meta"][key]
+            figure.add_scatter(x=samples["radii"], y=samples["values"],
+                               name=f"{key} rings ({len(samples['radii'])}/{total_rings})",
                                mode="markers", marker={"color": color}, legendgroup=key,
-                               error_y={"type": "data", "array": dataset[f"{key}_sigma"]})
+                               error_y={"type": "data", "array": samples["sigma"]})
         figure.update_layout(height=410, showlegend=True)
         figure.update_xaxes(title_text="Radius (pixels)")
         figure.update_yaxes(title_text=f"{prefix}ₙ (pixels)")
@@ -1083,20 +1084,21 @@ def build(jobs=None, *, use_calibration=None) -> None:
             return
         model = radial_model.value
         order = int(poly_order.value or 1)
-        if model == "poly" and len(rings) < order:
-            with model_plots:
-                ui.label(f"Accept at least {order} rings for polynomial order {order}.")
-            return
         try:
             reduced = await asyncio.to_thread(
                 pf.reduce_rings, rings, model=model, order=order)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            _notify_error(exc)
+            if rings == tuple(state["rings"]) and model == radial_model.value and order == int(poly_order.value or 1):
+                with model_plots:
+                    ui.label(str(exc)).classes("text-warning")
             return
         if rings != tuple(state["rings"]) or model != radial_model.value or order != int(poly_order.value or 1):
             return
         model_plots.clear()
         with model_plots:
+            for term in reduced["fit_meta"].values():
+                if term.get("warning"):
+                    ui.label(term["warning"]).classes("text-warning")
             for figure in _radial_model_figures(reduced):
                 ui.plotly(plot_options(figure)).classes("w-full")
 
