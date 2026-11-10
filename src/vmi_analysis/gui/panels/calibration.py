@@ -312,7 +312,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                                                  step=1.0), "calibration.r_max")
         with ui.row().classes("gap-2 items-center"):
             load_button = ui.button("Load image & remap", icon="refresh")
-            export_button = ui.button("Export to Circularize", icon="output").props("flat")
+            send_button = ui.button("Send to Circularize", icon="output").props("flat")
             remap_status = ui.label("").classes("vmi-caption")
 
         ui.label("Centre X and Y are the zero-based detector column and row.") \
@@ -496,6 +496,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                                  "calibration.slope_order")
             ui.button("Update radial model plots",
                       on_click=lambda: _update_reduction())
+            send_model_button = ui.button("Send to Circularize", icon="output").props("flat")
         ui.label("Interp uses shape-preserving cubic interpolation (PCHIP).") \
             .classes("vmi-subtitle")
         model_plots = ui.column().classes("w-full")
@@ -1084,7 +1085,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
         control.on_value_change(lambda _: _refresh_view())
     color_min.on_value_change(lambda _: _change_color_limit(color_min))
     color_max.on_value_change(lambda _: _change_color_limit(color_max))
-    export_button.on_click(_export_to_circularize)
+    send_button.on_click(_export_to_circularize)
+    send_model_button.on_click(_export_to_circularize)
     refresh_rings_button.on_click(_refresh_rings_from_file)
     clear_file_button.on_click(_confirm_clear_file)
 

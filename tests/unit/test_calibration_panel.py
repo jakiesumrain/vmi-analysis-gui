@@ -178,7 +178,7 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(any("Center X=10, Center Y=4" in line for line in lines), lines)
                     self.assertTrue(any("9 radial samples from 0 to 4 px at 0.5 px spacing" in line
                                         for line in lines), lines)
-                    callbacks["Export to Circularize"]()
+                    callbacks["Send to Circularize"]()
                     self.assertEqual(store["circularize.inp"], str(path))
                     with patch.object(circularize.JobView, "attach"):
                         callbacks["Run"]()
@@ -218,7 +218,7 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                     with patch.object(pf, "remap_polar", wraps=pf.remap_polar) as remap:
                         await callbacks["Load image & remap"]()
                     self.assertEqual(remap.call_args.args[1], (8.5, 5.5))
-                    callbacks["Export to Circularize"]()
+                    callbacks["Send to Circularize"]()
                     with patch.object(circularize.JobView, "attach"):
                         callbacks["Run"]()
                     cmd = manager.submit.call_args.args[0].cmd
