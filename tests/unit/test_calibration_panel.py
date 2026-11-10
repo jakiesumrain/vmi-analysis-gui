@@ -150,6 +150,86 @@ class PanelBuildTests(unittest.TestCase):
 
 
 class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_session_restores_pending_fit_only_for_matching_image(self):
+        from nicegui import Client, app, ui
+
+        with TemporaryDirectory() as tmp:
+            image_path = Path(tmp) / "raw.npy"
+            session_path = Path(tmp) / "session.json"
+            pixels = np.zeros((31, 31))
+            pixels[15, 15] = 10
+            np.save(image_path, pixels)
+            options = pf.process_options(abel=False, enhancement={"placement": "off"})
+            ring = pf.RingFit(params={"r0": 10, "sigma": 1, "offset": 0, "intensity": 5},
+                              sigmas={}, n_terms=0, use_beta=False, band=pf.Rect(8, 12),
+                              processing=options, unconstrained=[])
+            pf.save_session(session_path, {
+                "image": {"path": str(image_path), "center": [15, 15], "brightest_center": True,
+                          "radial_bin_size": 1, "n_theta": 24},
+                "processing": options, "band": [8, 12, 0, pf.TWO_PI],
+                "masks": [[8, 9, 0, 1]], "rings": [ring.to_dict()],
+            })
+            callbacks, buttons = {}, {}
+
+            def capture(button, callback):
+                callbacks[button.text] = callback
+                buttons[button.text] = button
+
+            def fit_ring(*_args, processing, **_kwargs):
+                fit = pf.RingFit.from_dict(ring.to_dict())
+                fit.processing = processing
+                return fit
+
+            client = Client(ui.page("/_test_calibration_session_image"))
+            try:
+                with client, patch.object(app.storage, "_general", {"calibration.session": str(session_path)}), \
+                        patch.object(ui.button, "on_click", capture), patch.object(ui, "notify") as notify, \
+                        patch.object(pf, "fit_ring", side_effect=fit_ring), \
+                        patch.object(calibration, "_fit_comparison_figure", return_value=None):
+                    calibration.build()
+                    await callbacks["Load session"]()
+                    await callbacks["Fit selection"]()
+                    callbacks["Save session"]()
+                    saved = pf.load_session(session_path)
+                    self.assertTrue(saved["image"]["fingerprint"])
+                    accept = buttons["Accept ring (append to file)"]
+
+                    await callbacks["Load session"]()
+                    self.assertTrue(accept.enabled)
+
+                    legacy = dict(saved, image={k: v for k, v in saved["image"].items()
+                                               if k != "fingerprint"})
+                    pf.save_session(session_path, legacy)
+                    notify.reset_mock()
+                    await callbacks["Load session"]()
+                    self.assertFalse(accept.enabled)
+                    self.assertTrue(any("no image fingerprint" in call.args[0]
+                                        for call in notify.call_args_list))
+
+                    pf.save_session(session_path, saved)
+                    pixels[15, 24] = 2  # Same path, shape, and brightest pixel.
+                    np.save(image_path, pixels)
+                    notify.reset_mock()
+                    await callbacks["Load session"]()
+                    self.assertFalse(accept.enabled)
+                    self.assertTrue(any("detector image changed" in call.args[0]
+                                        for call in notify.call_args_list))
+                    self.assertTrue(any(isinstance(el, ui.label) and el.text == "Masks: 1"
+                                        for el in client.elements.values()))
+                    self.assertTrue(any(isinstance(el, ui.table) and el.rows
+                                        and el.rows[0].get("radius") == "10.0000"
+                                        for el in client.elements.values()))
+                    pixels[15, 16] = 20  # The replacement also moved the brightest pixel.
+                    np.save(image_path, pixels)
+                    await callbacks["Load session"]()
+                    self.assertFalse(accept.enabled)
+                    await callbacks["Fit selection"]()
+                    self.assertTrue(accept.enabled)
+                    callbacks["Save session"]()
+                    self.assertEqual(pf.load_session(session_path)["image"]["center"], [16, 15])
+            finally:
+                client.delete()
+
     async def test_rebuild_confirms_removed_and_replaced_rings_and_rechecks_file(self):
         from nicegui import Client, app, ui
 

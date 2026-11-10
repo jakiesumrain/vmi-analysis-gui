@@ -1742,6 +1742,11 @@ If the data cannot determine some parameters, widen the selected angular
 range or reduce \emph{Trig terms N} and refit. The panel blocks export when
 the model is underdetermined or has nonfinite parameters.
 
+When loading a session, the panel checks the detector image fingerprint
+before restoring a pending fit. If the image changed or the fingerprint is
+missing, the session still restores the band, masks, and accepted rings, and
+asks you to refit the band.
+
 \textbf{Pitfalls.} Enhancement can move the fitted ridge. Use consistent
 processing settings for the rings in a calibration.
 Refit rings saved by the earlier fitting pipeline and export them to a new

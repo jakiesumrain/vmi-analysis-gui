@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 from base64 import b64encode
 from collections import Counter
+from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 import time
@@ -281,6 +282,13 @@ def _handoff_warnings(preview_rings, saved_rings, max_trig_n):
         if excluded:
             warnings.append(f"Circularize Max trig n = {max_trig_n} excludes {', '.join(excluded)} from the saved file.")
     return warnings
+
+
+def _image_fingerprint(image):
+    pixels = np.ascontiguousarray(image)
+    digest = sha256(f"{pixels.shape}:{pixels.dtype.str}:".encode("ascii"))
+    digest.update(memoryview(pixels).cast("B"))
+    return digest.hexdigest()
 
 
 def _rebuild_changes(saved_rings, blocks):
@@ -864,10 +872,9 @@ def build(jobs=None, *, use_calibration=None) -> None:
             r_max = float(widgets["r_max"].value or 0.0) or None
             options = _options()
             image = await asyncio.to_thread(pf.load_image, path)
+            fingerprint = await asyncio.to_thread(_image_fingerprint, image)
             if auto_center:
                 row, col = await asyncio.to_thread(brightest_pixel, image)
-                if saved_center is not None and saved_center != (col, row):
-                    raise ValueError("The saved fit center differs from the raw detector origin. Refit the rings.")
                 center = (col, row)
             radial_grid = ({"radial_bin_size": bin_size} if saved_radial_count is None else
                            {"n_r": saved_radial_count})
@@ -896,6 +903,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         state.update(raw=polar, theta=theta, r=r, dr=dr, ready=True,
                      image={"path": str(path), "center": list(center),
                             "shape": list(image.shape),
+                            "fingerprint": fingerprint,
                             "brightest_center": auto_center,
                             "radial_bin_size": dr, "n_theta": n_theta, "r_max": r_max},
                      band=None, masks=[], selection_history=[], last_fit=None, view_indices=None,
@@ -1020,10 +1028,20 @@ def build(jobs=None, *, use_calibration=None) -> None:
             state["masks"] = [pf.Rect(*item) for item in payload.get("masks", [])]
             state["rings"] = pf.session_rings(payload)
             fit_data = payload.get("fit")
-            if fit_data and fit_data.get("processing") != state["options"]:
-                ui.notify("Processing changed since this fit was saved. Fit the selected band again.",
-                          type="warning")
-                fit_data = None
+            if fit_data:
+                current_image = state["image"]
+                reason = None
+                if not image.get("fingerprint"):
+                    reason = "The saved fit has no image fingerprint."
+                elif image["fingerprint"] != current_image["fingerprint"]:
+                    reason = "The detector image changed since this fit was saved."
+                elif list(center) != current_image["center"]:
+                    reason = "The fit center changed since this fit was saved."
+                elif fit_data.get("processing") != state["options"]:
+                    reason = "Processing changed since this fit was saved."
+                if reason:
+                    ui.notify(f"{reason} Fit the selected band again.", type="warning")
+                    fit_data = None
             _show_fit(None if fit_data is None else pf.RingFit.from_dict(fit_data))
             rings_table.rows = _ring_rows()
             _refresh_view()
