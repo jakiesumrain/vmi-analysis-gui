@@ -722,18 +722,16 @@ def validate_block_text(text):
 
 
 def append_ring_block(path, text):
-    """Append one validated block to a trig-fit file, creating it if needed."""
+    """Publish a complete calibration with one new validated block."""
     validate_block_text(text)
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
-    if existing and not existing.endswith("\n"):
-        prefix = "\n"
-    else:
-        prefix = ""
-    with path.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(prefix + text)
-    return path
+    path = Path(path).resolve()
+    try:
+        with path.open(encoding="utf-8", newline="") as handle:
+            existing = handle.read()
+    except FileNotFoundError:
+        existing = ""
+    separator = "\n" if existing and not existing.endswith(("\n", "\r")) else ""
+    return _write_text_atomically(path, existing + separator + text)
 
 
 def existing_radii(path):

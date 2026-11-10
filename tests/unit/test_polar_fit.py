@@ -271,12 +271,28 @@ class OutputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "extracted.txt"
             first = pf.ring_block_text(self.fit, provenance=False)
-            second = first.replace("Gaussian Centre", "Gaussian Centre")
             pf.append_ring_block(path, first)
-            pf.append_ring_block(path, second)
+            pf.append_ring_block(path, first)
             blocks = parse_extracted_txt(path)
             self.assertEqual(len(blocks), 2)
             self.assertEqual(pf.existing_radii(path), [self.fit.params["r0"]] * 2)
+
+    def test_append_preserves_existing_file_if_replacement_fails(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "extracted.txt"
+            original = f'{pf.EXTRACTED_HEADER}\r\n"Gaussian Centre" 10 +- 0.1'.encode()
+            path.write_bytes(original)
+            block = pf.ring_block_text(self.fit)
+            with patch.object(Path, "replace", side_effect=OSError("destination is locked")):
+                with self.assertRaisesRegex(OSError, "destination is locked"):
+                    pf.append_ring_block(path, block)
+            self.assertEqual(path.read_bytes(), original)
+            self.assertEqual(list(path.parent.iterdir()), [path])
+            pf.append_ring_block(path, block)
+            self.assertEqual(path.read_bytes(), original + b"\n" + block.encode())
+            self.assertEqual(pf.existing_radii(path), [10.0, self.fit.params["r0"]])
 
     def test_validate_rejects_malformed_block(self):
         with self.assertRaises(ValueError):
