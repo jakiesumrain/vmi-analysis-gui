@@ -426,13 +426,15 @@ def auto_guess(polar, theta, r, band, masks=(), n_terms=3, use_beta=True):
     if r_indices.size < 3:
         raise ValueError("The selected band is narrower than three radial bins")
     selected = np.where(mask, polar, np.nan)[:, r_indices]
-    with np.errstate(invalid="ignore"):
-        values = np.nanmean(selected, axis=0)
-    finite = np.isfinite(values)
-    if not finite.any():
-        raise ValueError("The selected band contains no finite data")
-    values = np.where(finite, values, np.nanmin(values[finite]))
-    peak = int(np.argmax(values))
+    counts = np.count_nonzero(np.isfinite(selected), axis=0)
+    totals = np.nansum(selected, axis=0)
+    supported = counts > 0
+    values = np.divide(totals, counts, out=np.zeros_like(totals), where=supported)
+    # A bright remnant visible at only a few angles should not dominate the initial radius.
+    background = np.nanmedian(selected)
+    strength = np.where(supported, totals - counts * background, -np.inf)
+    peak = int(np.argmax(strength))
+    values[~supported] = np.min(values[supported])
     r0 = float(r[r_indices[peak]])
     baseline = float(np.median(np.concatenate([values[:max(1, peak // 4)],
                                                values[-max(1, peak // 4):]])))
@@ -508,6 +510,16 @@ class RingFit:
             centers += self.params[f"A{n}"] * np.sin(n * theta)
             centers += self.params[f"B{n}"] * np.cos(n * theta)
         return centers
+
+    def masked_ridge_fraction(self, theta):
+        angles = np.asarray(theta)[_angular_mask(theta, self.band.theta0, self.band.theta1)]
+        if not self.masks or not angles.size:
+            return 0.0
+        ridge = self.ridge_centers(angles)
+        masked = np.zeros(angles.size, dtype=bool)
+        for rect in self.masks:
+            masked |= rect.contains(ridge, angles)
+        return float(masked.mean())
 
     def export_issue(self):
         names = parameter_names(self.n_terms, self.use_beta)

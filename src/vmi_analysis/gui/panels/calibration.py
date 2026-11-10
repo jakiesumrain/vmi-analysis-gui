@@ -493,6 +493,10 @@ def build(jobs=None, *, use_calibration=None) -> None:
                            f"σ = {fit.params['sigma']:.3f} px, RMS = {fit.rms:.4g}, "
                            f"pixels = {fit.n_pixels}")
         with fit_preview:
+            masked_fraction = fit.masked_ridge_fraction(state["theta"])
+            if masked_fraction:
+                ui.label(f"The fitted ridge crosses a masked region at {masked_fraction:.1%} of the "
+                         "sampled angles. The fit excluded the masked intensities.").classes("text-warning")
             if issue:
                 ui.label(issue).classes("text-negative")
             if not fit.converged:

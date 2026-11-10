@@ -151,6 +151,19 @@ class SelectionTests(unittest.TestCase):
 
 
 class FitTests(unittest.TestCase):
+    def test_masked_inner_ring_remnants_do_not_seed_the_fit(self):
+        theta = np.linspace(0, 2 * np.pi, 180, endpoint=False)
+        radii = np.arange(205, 225.1, 0.5)
+        inner = 3 * np.exp(-0.5 * ((radii - 210) / 0.6) ** 2)
+        ridge = 218 + 1.3 * np.sin(theta)
+        outer = np.exp(-0.5 * ((radii - ridge[:, None]) / 0.9) ** 2)
+        mask = pf.Rect(207.5, 213, np.deg2rad(10), 2 * np.pi - 0.01)
+        fit = pf.fit_ring(outer + inner, theta, radii, pf.Rect(206, 224),
+                          masks=[mask], n_terms=1, use_beta=False)
+        self.assertAlmostEqual(fit.params["r0"], 218, delta=0.1)
+        self.assertAlmostEqual(fit.params["A1"], 1.3, delta=0.1)
+        self.assertEqual(fit.masked_ridge_fraction(theta), 0)
+
     def test_one_angle_shows_unconstrained_terms_and_blocks_export(self):
         polar, theta, r = make_polar_ridge()
         fit = pf.fit_ring(polar, theta, r, pf.Rect(34, 46, 0, 0.001),
@@ -197,6 +210,7 @@ class FitTests(unittest.TestCase):
                           n_terms=1)
         self.assertAlmostEqual(fit.params["A1"], 1.0, delta=0.2)
         self.assertAlmostEqual(fit.params["B1"], -2.0, delta=0.2)
+        self.assertAlmostEqual(fit.masked_ridge_fraction(theta), 0.25, delta=0.02)
 
     def test_fit_uses_beta_by_default(self):
         polar, theta, r = make_polar_ridge(n_theta=120, n_r=80, r0=40.0,
