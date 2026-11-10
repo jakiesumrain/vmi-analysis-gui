@@ -101,27 +101,13 @@ def eval_reassignment_model(model, r_fixed):
         r_min = model["r_min"]
         r_max = model["r_max"]
         r_fixed = np.asarray(r_fixed, dtype=float)
-        r_circ = np.empty_like(r_fixed, dtype=float)
-        dr_circ_dr_fixed = np.empty_like(r_fixed, dtype=float)
-
-        inside_mask = (r_fixed >= r_min) & (r_fixed <= r_max)
-        below_mask = r_fixed < r_min
-        above_mask = r_fixed > r_max
-
-        if np.any(inside_mask):
-            r_eval = r_fixed[inside_mask]
-            r_circ[inside_mask] = interp(r_eval)
-            dr_circ_dr_fixed[inside_mask] = dinterp(r_eval)
-
-        if np.any(below_mask):
-            r_circ[below_mask] = r_fixed[below_mask]
-            dr_circ_dr_fixed[below_mask] = 1.0
-
-        if np.any(above_mask):
-            r_circ[above_mask] = r_fixed[above_mask]
-            dr_circ_dr_fixed[above_mask] = 1.0
-
-        return r_circ, dr_circ_dr_fixed
+        r_eval = np.clip(r_fixed, r_min, r_max)
+        outside = (r_fixed < r_min) | (r_fixed > r_max)
+        fitted = interp(r_eval)
+        # Continue from the endpoint with unit slope and its measured offset.
+        r_circ = np.where(outside, r_fixed + (fitted - r_eval), fitted)
+        derivative = np.where(outside, 1.0, dinterp(r_eval))
+        return r_circ, derivative
 
     raise ValueError(f"Unknown reassignment model kind: {kind}")
 
@@ -146,17 +132,21 @@ def build_reassignment_interpolator(r_circ_points, r_fixed_points):
         raise ValueError("r_circ_points and r_fixed_points must have the same length")
     if len(r_circ_points) < 2:
         raise ValueError("Need at least two points to build a reassignment map")
+    if (not np.isfinite(r_circ_points).all() or not np.isfinite(r_fixed_points).all()
+            or np.any(r_circ_points < 0) or np.any(r_fixed_points < 0)):
+        raise ValueError("Reassignment radii must be finite and nonnegative.")
 
     sort_idx = np.argsort(r_fixed_points)
     r_fixed_sorted = r_fixed_points[sort_idx]
     r_circ_sorted = r_circ_points[sort_idx]
 
-    if r_fixed_sorted[0] > 0.0 or r_circ_sorted[0] > 0.0:
+    if np.any(np.diff(r_fixed_sorted) <= 0) or np.any(np.diff(r_circ_sorted) <= 0):
+        raise ValueError("Both reassignment columns must increase strictly when sorted by assigned radius.")
+    if (r_fixed_sorted[0] == 0.0) != (r_circ_sorted[0] == 0.0):
+        raise ValueError("The reassignment origin must map zero radius to zero radius.")
+    if r_fixed_sorted[0] > 0.0:
         r_fixed_sorted = np.concatenate(([0.0], r_fixed_sorted))
         r_circ_sorted = np.concatenate(([0.0], r_circ_sorted))
-
-    if np.any(np.diff(r_fixed_sorted) <= 0):
-        raise ValueError("r_fixed_points must be strictly increasing")
 
     interp = PchipInterpolator(r_fixed_sorted, r_circ_sorted, extrapolate=True)
     dinterp = interp.derivative()
@@ -366,6 +356,11 @@ def circularize_vmi(
 
     r_source_model = r_target_model + delta_r
     r_source = polar_dr * r_source_model
+    dr_source_dr_fixed = (1.0 + d_delta_r_dr) * dr_targetmodel_dr_fixedmodel
+    if (not np.isfinite(r_source).all() or not np.isfinite(dr_source_dr_fixed).all()
+            or np.any(r_source < 0.0) or np.any(dr_source_dr_fixed < -1e-12)):
+        raise ValueError("The combined radial warp folds or has invalid source radii on the output grid. "
+                         "Check the trig-fit model and radial reassignment table.")
     # Scale the original offsets so an identity map keeps boundary pixels
     # exactly on the grid, avoiding roundoff from converting back from theta.
     scale = np.divide(r_source, r_fixed, out=np.ones_like(r_source), where=r_fixed != 0)
@@ -384,11 +379,6 @@ def circularize_vmi(
     corrected = corrected_flat.reshape((ny, nx))
 
     if apply_jacobian:
-        dr_sourcemodel_dr_targetmodel = 1.0 + d_delta_r_dr
-        dr_source_dr_fixed = (
-            dr_sourcemodel_dr_targetmodel * dr_targetmodel_dr_fixedmodel
-        )
-
         r_safe = np.where(r_fixed > jacobian_eps, r_fixed, 1.0)
         jacobian = (r_source / r_safe) * dr_source_dr_fixed
 

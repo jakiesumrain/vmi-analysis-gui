@@ -318,6 +318,53 @@ def make_cartesian_rings(size=257, center=128.0, rings=(60.0, 100.0),
 
 
 class EndToEndTests(unittest.TestCase):
+    def test_reassignment_preserves_inner_interpolation_and_extends_last_offset(self):
+        from vmi_analysis.circularization import circularization as circ
+
+        model = circ.build_reassignment_interpolator([40, 20], [35, 15])
+        inner = np.linspace(0, 35, 20)
+        expected = circ.PchipInterpolator([0, 15, 35], [0, 20, 40])
+        radii, derivatives = circ.eval_reassignment_model(model, inner)
+        np.testing.assert_array_equal(radii, expected(inner))
+        np.testing.assert_array_equal(derivatives, expected.derivative()(inner))
+        radii, derivatives = circ.eval_reassignment_model(model, [35, 35 + 1e-6, 36, 37])
+        np.testing.assert_allclose(radii, [40, 40 + 1e-6, 41, 42], atol=1e-10, rtol=0)
+        np.testing.assert_array_equal(derivatives[1:], [1., 1., 1.])
+
+    def test_reassignment_rejects_invalid_pairs(self):
+        from vmi_analysis.circularization import circularization as circ
+
+        for old, new, error in (
+            ([30, 40, 50], [28, 46, 35], "increase strictly"),
+            ([10, 10], [8, 12], "increase strictly"),
+            ([10, 20], [8, 8], "increase strictly"),
+            ([0, 20], [1, 20], "map zero"),
+            ([1, 20], [0, 20], "map zero"),
+            ([-1, 20], [0, 20], "finite and nonnegative"),
+            ([0, np.inf], [0, 20], "finite and nonnegative"),
+        ):
+            with self.subTest(old=old, new=new), self.assertRaisesRegex(ValueError, error):
+                circ.build_reassignment_interpolator(old, new)
+
+    def test_circularize_identity_reassignment_preserves_image(self):
+        from vmi_analysis.circularization import circularization as circ
+
+        model = circ.build_reassignment_interpolator([1, 2], [1, 2])
+        image = np.arange(121, dtype=float).reshape(11, 11)
+        corrected = circ.circularize_vmi(image, (5, 5), {}, interp_order=1, reassignment_model=model)
+        np.testing.assert_array_equal(corrected, image)
+
+    def test_circularize_rejects_folding_warp_with_or_without_jacobian(self):
+        from vmi_analysis.circularization import circularization as circ
+
+        # Along +x, r_source = r - 0.02*r² turns backward beyond r=25.
+        fit_params = {"B1": {"kind": "poly", "coeffs": [-0.02, 0.]}}
+        model = circ.build_reassignment_interpolator([10, 20], [10, 20])
+        for enabled in (True, False):
+            with self.subTest(jacobian=enabled), self.assertRaisesRegex(ValueError, "warp folds"):
+                circ.circularize_vmi(np.ones((61, 61)), (30, 30), fit_params,
+                                     apply_jacobian=enabled, reassignment_model=model)
+
     def test_clamped_interpolant_has_zero_derivative_outside_fitted_range(self):
         from vmi_analysis.circularization import circularization as circ
 

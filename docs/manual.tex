@@ -1515,7 +1515,8 @@ trigonometric coefficients and uncertainties. Required. \\
 \addlinespace
 \emph{Reassignment file (optional)} & file,
 \code{circularization/\allowbreak{}reassignment-\allowbreak{}FOC100eV-\allowbreak{}20260710.txt} & \code{circularize.\allowbreak{}reassign} &
-\emph{-\allowbreak{}-\allowbreak{}reassign-\allowbreak{}file} & Two-column radial map \code{r\_\allowbreak{}circ} \code{r\_\allowbreak{}fixed}.
+\emph{-\allowbreak{}-\allowbreak{}reassign-\allowbreak{}file} & Two-column map from fitted to assigned radius.
+Both columns must increase together.
 Clear the field to use the identity map. \\
 \addlinespace
 \emph{Radial model} & select, \code{interp} & \code{circularize.\allowbreak{}radial\_\allowbreak{}model} &
@@ -1569,7 +1570,10 @@ the reassignment file is supplied separately (identity is valid). The panel
 does not pre-check them, so a missing file fails the job; because the
 reassignment path is pre-filled, a missing reassignment file also fails. Clear that field to use the identity map. The
 GUI's \emph{No Jacobian} default differs from the command-line default, which
-is the most consequential default difference in this panel. There are no
+is the most consequential default difference in this panel. Beyond the last
+assigned radius, reassignment keeps the final radial offset constant.
+Circularize checks the combined warp for invalid radii and folds on the output
+grid before resampling. There are no
 \code{View saved result} or \emph{Clear output} buttons, and the progress bar
 stays empty because the script does not print percentages.
 
