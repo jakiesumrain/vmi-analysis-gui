@@ -110,6 +110,12 @@ class JobManager:
         with self._lock:
             return [self._jobs[job_id] for job_id in self._workers]
 
+    def has_active(self) -> bool:
+        """True while any job is running or waiting in the queue."""
+        with self._lock:
+            return bool(self._workers) or any(
+                job.status == "queued" for job in self._jobs.values())
+
     @staticmethod
     def _validate_limit(value):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 1 or value != int(value):

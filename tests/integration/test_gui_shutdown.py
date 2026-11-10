@@ -28,6 +28,18 @@ settings.LEGACY_CONFIG = Path(os.environ['VMI_TEST_CONFIG_PATH'])
 from vmi_analysis.gui import app as gui
 from vmi_analysis.gui.jobs import MANAGER, Job
 app.storage.general['jobs.max_concurrent'] = 1
+app.storage.general['server.keep_alive_while_jobs'] = False
+
+@app.post('/_test/keepalive')
+def set_keepalive(value: bool):
+    app.storage.general['server.keep_alive_while_jobs'] = value
+
+@app.post('/_test/gated')
+def start_gated_job(gate: str, marker: str):
+    code = ('import sys, time; from pathlib import Path\\n'
+            'while not Path(sys.argv[1]).exists(): time.sleep(0.02)\\n'
+            'Path(sys.argv[2]).touch()')
+    MANAGER.submit(Job(name='gated', cmd=[sys.executable, '-c', code, gate, marker]))
 
 @app.post('/_test/jobs')
 def start_jobs(marker: str):
@@ -73,6 +85,8 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
                      PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8",
                      NICEGUI_STORAGE_PATH=self.storage_folder.name,
                      VMI_WORKSPACE_DIR=self.storage_folder.name,
+                     VMI_GUI_SHUTDOWN_GRACE="2.0",
+                     VMI_GUI_RECONNECT_TIMEOUT="4.0",
                      VMI_TEST_CONFIG_PATH=str(Path(self.storage_folder.name) / "absent.toml")),
             stdout=self.log, stderr=subprocess.STDOUT,
         )
@@ -125,7 +139,7 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
         start = time.monotonic()
         await client.disconnect()
         await self.wait_stopped()
-        self.assertLess(time.monotonic() - start, 3)
+        self.assertLess(time.monotonic() - start, 4)
 
     async def test_other_tab_keeps_server_alive(self):
         first, second = await self.connect(), await self.connect()
@@ -199,6 +213,51 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
     async def test_server_shutdown_hook_cleans_up_jobs(self):
         await self.check_running_job_cleanup(close_tab=False)
 
+    async def start_detached_job(self):
+        response = await self.http.post(self.url + "/_test/keepalive",
+                                        params={"value": "true"})
+        response.raise_for_status()
+        client = await self.connect()
+        gate = Path(self.storage_folder.name) / "finish-job"
+        marker = Path(self.storage_folder.name) / "job-finished"
+        response = await self.http.post(self.url + "/_test/gated", params={"gate": str(gate), "marker": str(marker)})
+        response.raise_for_status()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            jobs = (await self.http.get(self.url + "/_test/jobs")).json()
+            if jobs and jobs[0]["status"] == "running":
+                break
+            await asyncio.sleep(0.05)
+        self.assertTrue(jobs and jobs[0]["status"] == "running", jobs)
+        await client.disconnect()
+        # Wait longer than the configured 2-second shutdown grace.
+        await asyncio.sleep(2.5)
+        self.assertIsNone(self.proc.poll(), "keep-alive did not protect the job")
+        return gate, marker
+
+    async def test_keep_alive_keeps_server_and_jobs_after_disconnect(self):
+        gate, marker = await self.start_detached_job()
+        gate.touch()
+        await self.wait_stopped(timeout=8)
+        self.assertTrue(marker.is_file(), "the detached job did not complete")
+
+    async def test_keep_alive_can_be_cancelled_by_reconnecting(self):
+        gate, marker = await self.start_detached_job()
+        replacement = await self.connect()
+        gate.touch()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            jobs = (await self.http.get(self.url + "/_test/jobs")).json()
+            if jobs[0]["status"] == "done":
+                break
+            await asyncio.sleep(0.05)
+        self.assertEqual(jobs[0]["status"], "done")
+        self.assertTrue(marker.is_file())
+        await asyncio.sleep(3.2)
+        self.assertIsNone(self.proc.poll(), "reconnect did not cancel shutdown")
+        await replacement.disconnect()
+        await self.wait_stopped(timeout=8)
+
     async def test_last_tab_cleans_up_all_concurrent_jobs(self):
         client = await self.connect()
         marker = Path(self.storage_folder.name) / 'must-not-start.txt'
@@ -237,3 +296,4 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
