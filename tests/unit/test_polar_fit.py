@@ -318,6 +318,33 @@ def make_cartesian_rings(size=257, center=128.0, rings=(60.0, 100.0),
 
 
 class EndToEndTests(unittest.TestCase):
+    def test_clamped_interpolant_has_zero_derivative_outside_fitted_range(self):
+        from vmi_analysis.circularization import circularization as circ
+
+        models, _ = circ.build_all_trig_interpolators(
+            {"radii": np.array([10., 20.]), "B1": np.array([2., 4.])})
+        model = models["B1"]
+        r = np.array([-5., 5., 15., 30.])
+        values, derivatives = circ.eval_radial_model(model, r)
+        step = 1e-3
+        left, _ = circ.eval_radial_model(model, r - step)
+        right, _ = circ.eval_radial_model(model, r + step)
+        np.testing.assert_allclose(values, [0., 1., 3., 4.])
+        np.testing.assert_allclose(derivatives, (right - left) / (2 * step), atol=1e-10)
+        np.testing.assert_allclose(derivatives, [0., 0.2, 0.2, 0.])
+        _, edge_derivatives = circ.eval_radial_model(model, [0., 20.])
+        np.testing.assert_allclose(edge_derivatives, [0.2, 0.2])
+
+    def test_circularize_uses_clamped_derivative_in_jacobian(self):
+        from vmi_analysis.circularization import circularization as circ
+
+        models, _ = circ.build_all_trig_interpolators(
+            {"radii": np.array([10., 20.]), "B1": np.array([2., 4.])})
+        image = np.ones((151, 151))
+        corrected = circ.circularize_vmi(image, (75, 75), models, interp_order=1)
+        self.assertAlmostEqual(corrected[75, 90], 1.44)  # r_source/r = 1.2, dr_source/dr = 1.2
+        self.assertAlmostEqual(corrected[75, 105], 34 / 30)  # dr_source/dr = 1 beyond r=20
+
     def test_circularize_rejects_outputs_aliasing_its_inputs(self):
         import sys
         from unittest.mock import patch

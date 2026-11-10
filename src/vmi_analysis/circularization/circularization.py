@@ -68,8 +68,11 @@ def eval_radial_model(model, r):
         dinterp = model["dinterp"]
         r_min = model["r_min"]
         r_max = model["r_max"]
+        r = np.asarray(r)
         r_eval = np.clip(r, r_min, r_max)
-        return interp(r_eval), dinterp(r_eval)
+        # The clamped model is constant outside the fitted interval.
+        derivative = np.where((r < r_min) | (r > r_max), 0.0, dinterp(r_eval))
+        return interp(r_eval), derivative
 
     raise ValueError(f"Unknown radial model kind: {kind}")
 
