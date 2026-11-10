@@ -462,12 +462,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
                              {"name": "value", "label": "Value", "field": "value"},
                              {"name": "sigma", "label": "1σ", "field": "sigma"}],
                     rows=[], row_key="parameter").classes("w-full")
-                accept_button = ui.button("Accept ring (append to file)",
-                                           icon="save").disable()
         ui.label(
             "The fit uses the selected band from Processed polar, including any applied filter."
         ).classes("vmi-caption")
         fit_preview = ui.column().classes("w-full")
+        accept_button = ui.button("Accept ring (append to file)", icon="save").classes("self-center").disable()
 
     # ----------------------------------------------------- rings, file, session
     with theme.panel_card():
