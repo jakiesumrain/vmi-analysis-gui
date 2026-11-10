@@ -34,9 +34,12 @@ app.storage.general['server.keep_alive_while_jobs'] = False
 def set_keepalive(value: bool):
     app.storage.general['server.keep_alive_while_jobs'] = value
 
-@app.post('/_test/short')
-def start_short_job():
-    MANAGER.submit(Job(name='short', cmd=[sys.executable, '-c', 'import time; time.sleep(3)']))
+@app.post('/_test/gated')
+def start_gated_job(gate: str, marker: str):
+    code = ('import sys, time; from pathlib import Path\\n'
+            'while not Path(sys.argv[1]).exists(): time.sleep(0.02)\\n'
+            'Path(sys.argv[2]).touch()')
+    MANAGER.submit(Job(name='gated', cmd=[sys.executable, '-c', code, gate, marker]))
 
 @app.post('/_test/jobs')
 def start_jobs(marker: str):
@@ -210,12 +213,14 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
     async def test_server_shutdown_hook_cleans_up_jobs(self):
         await self.check_running_job_cleanup(close_tab=False)
 
-    async def test_keep_alive_keeps_server_and_jobs_after_disconnect(self):
+    async def start_detached_job(self):
         response = await self.http.post(self.url + "/_test/keepalive",
                                         params={"value": "true"})
         response.raise_for_status()
         client = await self.connect()
-        response = await self.http.post(self.url + "/_test/short")
+        gate = Path(self.storage_folder.name) / "finish-job"
+        marker = Path(self.storage_folder.name) / "job-finished"
+        response = await self.http.post(self.url + "/_test/gated", params={"gate": str(gate), "marker": str(marker)})
         response.raise_for_status()
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
@@ -223,25 +228,32 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
             if jobs and jobs[0]["status"] == "running":
                 break
             await asyncio.sleep(0.05)
-        self.assertEqual(jobs[0]["status"], "running")
+        self.assertTrue(jobs and jobs[0]["status"] == "running", jobs)
         await client.disconnect()
-        # The job sleeps 3 s; the server must still be alive halfway through.
-        await asyncio.sleep(2.0)
+        # Wait longer than the configured 2-second shutdown grace.
+        await asyncio.sleep(2.5)
         self.assertIsNone(self.proc.poll(), "keep-alive did not protect the job")
+        return gate, marker
+
+    async def test_keep_alive_keeps_server_and_jobs_after_disconnect(self):
+        gate, marker = await self.start_detached_job()
+        gate.touch()
         await self.wait_stopped(timeout=8)
+        self.assertTrue(marker.is_file(), "the detached job did not complete")
 
     async def test_keep_alive_can_be_cancelled_by_reconnecting(self):
-        response = await self.http.post(self.url + "/_test/keepalive",
-                                        params={"value": "true"})
-        response.raise_for_status()
-        client = await self.connect()
-        response = await self.http.post(self.url + "/_test/short")
-        response.raise_for_status()
-        await asyncio.sleep(0.2)
-        await client.disconnect()
-        await asyncio.sleep(0.4)
+        gate, marker = await self.start_detached_job()
         replacement = await self.connect()
-        await asyncio.sleep(2.0)
+        gate.touch()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            jobs = (await self.http.get(self.url + "/_test/jobs")).json()
+            if jobs[0]["status"] == "done":
+                break
+            await asyncio.sleep(0.05)
+        self.assertEqual(jobs[0]["status"], "done")
+        self.assertTrue(marker.is_file())
+        await asyncio.sleep(3.2)
         self.assertIsNone(self.proc.poll(), "reconnect did not cancel shutdown")
         await replacement.disconnect()
         await self.wait_stopped(timeout=8)

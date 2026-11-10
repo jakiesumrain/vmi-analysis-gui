@@ -81,10 +81,13 @@ Side tools (QC / helpers, not pipeline stages):
 - **Circularization calibration files are required** by `process_gmd_bins.py`:
   `extracted-FOC100eV-20260710.txt` and `reassignment-FOC100eV-20260710.txt`
   (trig-distortion fits + radial reassignment map) in `circularization/`.
-  They are per-experiment inputs, not generated here; supply them before
-  running stage 4. The reassignment file for the reference dataset was the
-  identity map — only the azimuthal (trig) terms act, so any radial
-  nonlinearity propagates into the energy axis.
+  They are per-experiment inputs. The GUI's **Trig Calibration** tab builds
+  the extracted trig-fit file from point-sampled polar intensities with
+  optional inverse Abel per angle and filtering before a Gaussian ridge fit
+  in the selected band. The
+  reassignment file is supplied separately. The reassignment file for the
+  reference dataset was the identity map — only the azimuthal (trig) terms
+  act, so any radial nonlinearity propagates into the energy axis.
 - **TOML is optional and never loaded implicitly by scripts.** Explicit CLI
   values override an explicitly supplied `--config PATH`. Relative analysis
   paths resolve from the subprocess cwd (GUI centroiding/binning jobs use

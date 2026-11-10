@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import patch
 
@@ -7,6 +8,15 @@ from vmi_analysis.gui.jobs import JobManager
 
 
 class ConcurrencyControlsTests(unittest.TestCase):
+    def test_server_timers_reject_nonfinite_and_invalid_values(self):
+        settings = (('VMI_GUI_SHUTDOWN_GRACE', gui.DEFAULT_SHUTDOWN_GRACE, 0.1),
+                    ('VMI_GUI_RECONNECT_TIMEOUT', gui.DEFAULT_RECONNECT_TIMEOUT, 4.0))
+        for name, default, minimum in settings:
+            for value, expected in (('nan', default), ('inf', default), ('-inf', default),
+                                    ('invalid', default), ('0', minimum), ('7.5', 7.5)):
+                with self.subTest(name=name, value=value), patch.dict(os.environ, {name: value}):
+                    self.assertEqual(gui._env_float(name, default, minimum), expected)
+
     def test_limit_control_updates_scheduler_and_persists_for_reload(self):
         manager = JobManager()
         self.addCleanup(manager.shutdown)

@@ -1,11 +1,18 @@
 import argparse
+import json
 from pathlib import Path
 import re
+from tempfile import NamedTemporaryFile
 
 import numpy as np
 from scipy.ndimage import map_coordinates
 from scipy.interpolate import PchipInterpolator
 from scipy.optimize import curve_fit
+
+from vmi_analysis.imaging.centering import brightest_pixel
+from vmi_analysis.paths import validate_distinct_output
+
+DETECTOR_GEOMETRY_PREFIX = "# detector geometry: "
 
 try:
     import matplotlib.pyplot as plt
@@ -64,8 +71,11 @@ def eval_radial_model(model, r):
         dinterp = model["dinterp"]
         r_min = model["r_min"]
         r_max = model["r_max"]
+        r = np.asarray(r)
         r_eval = np.clip(r, r_min, r_max)
-        return interp(r_eval), dinterp(r_eval)
+        # The clamped model is constant outside the fitted interval.
+        derivative = np.where((r < r_min) | (r > r_max), 0.0, dinterp(r_eval))
+        return interp(r_eval), derivative
 
     raise ValueError(f"Unknown radial model kind: {kind}")
 
@@ -94,27 +104,13 @@ def eval_reassignment_model(model, r_fixed):
         r_min = model["r_min"]
         r_max = model["r_max"]
         r_fixed = np.asarray(r_fixed, dtype=float)
-        r_circ = np.empty_like(r_fixed, dtype=float)
-        dr_circ_dr_fixed = np.empty_like(r_fixed, dtype=float)
-
-        inside_mask = (r_fixed >= r_min) & (r_fixed <= r_max)
-        below_mask = r_fixed < r_min
-        above_mask = r_fixed > r_max
-
-        if np.any(inside_mask):
-            r_eval = r_fixed[inside_mask]
-            r_circ[inside_mask] = interp(r_eval)
-            dr_circ_dr_fixed[inside_mask] = dinterp(r_eval)
-
-        if np.any(below_mask):
-            r_circ[below_mask] = r_fixed[below_mask]
-            dr_circ_dr_fixed[below_mask] = 1.0
-
-        if np.any(above_mask):
-            r_circ[above_mask] = r_fixed[above_mask]
-            dr_circ_dr_fixed[above_mask] = 1.0
-
-        return r_circ, dr_circ_dr_fixed
+        r_eval = np.clip(r_fixed, r_min, r_max)
+        outside = (r_fixed < r_min) | (r_fixed > r_max)
+        fitted = interp(r_eval)
+        # Continue from the endpoint with unit slope and its measured offset.
+        r_circ = np.where(outside, r_fixed + (fitted - r_eval), fitted)
+        derivative = np.where(outside, 1.0, dinterp(r_eval))
+        return r_circ, derivative
 
     raise ValueError(f"Unknown reassignment model kind: {kind}")
 
@@ -139,17 +135,21 @@ def build_reassignment_interpolator(r_circ_points, r_fixed_points):
         raise ValueError("r_circ_points and r_fixed_points must have the same length")
     if len(r_circ_points) < 2:
         raise ValueError("Need at least two points to build a reassignment map")
+    if (not np.isfinite(r_circ_points).all() or not np.isfinite(r_fixed_points).all()
+            or np.any(r_circ_points < 0) or np.any(r_fixed_points < 0)):
+        raise ValueError("Reassignment radii must be finite and nonnegative.")
 
     sort_idx = np.argsort(r_fixed_points)
     r_fixed_sorted = r_fixed_points[sort_idx]
     r_circ_sorted = r_circ_points[sort_idx]
 
-    if r_fixed_sorted[0] > 0.0 or r_circ_sorted[0] > 0.0:
+    if np.any(np.diff(r_fixed_sorted) <= 0) or np.any(np.diff(r_circ_sorted) <= 0):
+        raise ValueError("Both reassignment columns must increase strictly when sorted by assigned radius.")
+    if (r_fixed_sorted[0] == 0.0) != (r_circ_sorted[0] == 0.0):
+        raise ValueError("The reassignment origin must map zero radius to zero radius.")
+    if r_fixed_sorted[0] > 0.0:
         r_fixed_sorted = np.concatenate(([0.0], r_fixed_sorted))
         r_circ_sorted = np.concatenate(([0.0], r_circ_sorted))
-
-    if np.any(np.diff(r_fixed_sorted) <= 0):
-        raise ValueError("r_fixed_points must be strictly increasing")
 
     interp = PchipInterpolator(r_fixed_sorted, r_circ_sorted, extrapolate=True)
     dinterp = interp.derivative()
@@ -327,9 +327,8 @@ def circularize_vmi(
 
     Notes
     -----
-    The angle convention matches the paper:
-    - theta is measured anticlockwise from +x
-    - image y increases downward, so we use y_math = yc - y_image
+    The angle matches the Trig Calibration remap. Zero points toward
+    increasing columns, and +pi/2 points toward increasing array rows.
     """
     raw_image = np.asarray(raw_image, dtype=float)
     if raw_image.ndim != 2:
@@ -360,8 +359,17 @@ def circularize_vmi(
 
     r_source_model = r_target_model + delta_r
     r_source = polar_dr * r_source_model
-    x_source = xc + r_source * np.cos(theta)
-    y_source = yc + r_source * np.sin(theta)
+    dr_source_dr_fixed = (1.0 + d_delta_r_dr) * dr_targetmodel_dr_fixedmodel
+    if (not np.isfinite(r_source).all() or not np.isfinite(dr_source_dr_fixed).all()
+            or np.any(r_source < 0.0) or np.any(dr_source_dr_fixed < -1e-12)):
+        raise ValueError("The combined radial warp folds or has invalid source radii on the output grid. "
+                         "Check the trig-fit model and radial reassignment table.")
+    # Scale the original offsets so an identity map keeps boundary pixels
+    # exactly on the grid, avoiding roundoff from converting back from theta.
+    scale = np.divide(r_source, r_fixed, out=np.ones_like(r_source), where=r_fixed != 0)
+    x_source = x_grid + dx * (scale - 1.0)
+    y_source = y_grid + dy_math * (scale - 1.0)
+    x_source[r_fixed == 0] += r_source[r_fixed == 0]
 
     coords = np.vstack([y_source.ravel(), x_source.ravel()])
     corrected_flat = map_coordinates(
@@ -374,11 +382,6 @@ def circularize_vmi(
     corrected = corrected_flat.reshape((ny, nx))
 
     if apply_jacobian:
-        dr_sourcemodel_dr_targetmodel = 1.0 + d_delta_r_dr
-        dr_source_dr_fixed = (
-            dr_sourcemodel_dr_targetmodel * dr_targetmodel_dr_fixedmodel
-        )
-
         r_safe = np.where(r_fixed > jacobian_eps, r_fixed, 1.0)
         jacobian = (r_source / r_safe) * dr_source_dr_fixed
 
@@ -411,12 +414,44 @@ def load_image_txt(path, shape=None):
 
 
 def save_image_txt(path, image):
-    np.savetxt(path, image, fmt="%.18e")
+    """Publish a complete text image after writing it beside the destination."""
+    path = Path(path)
+    temporary = NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                   prefix=f".{path.name}.", suffix=".tmp", delete=False)
+    temp_path = Path(temporary.name)
+    try:
+        with temporary:
+            np.savetxt(temporary, image, fmt="%.18e")
+        temp_path.replace(path)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
-def parse_extracted_txt(path):
+def load_image_and_center(path, shape=None, center=None):
+    """Load a detector array as-is, or retain the legacy text geometry."""
+    path = Path(path)
+    if path.suffix.lower() != ".npy":
+        image = load_image_txt(path, shape=tuple(shape) if shape is not None else (1023, 1023))
+        return image, tuple(center) if center is not None else (511.0, 511.0)
+
+    image = np.load(path, allow_pickle=False)
+    if image.ndim != 2 or not image.size:
+        raise ValueError("Expected a nonempty 2D NumPy detector image.")
+    if shape is not None and tuple(shape) != image.shape:
+        raise ValueError(f"NumPy image shape is {image.shape}. It cannot be reshaped for circularization.")
+    if center is None:
+        row, col = brightest_pixel(image)
+        center = (col, row)
+    return image, tuple(center)
+
+
+def parse_extracted_text(text, source="<text>"):
     """
-    Parse the Gascooke software export in extracted.txt.
+    Parse the text of a Gascooke / clean-room trig-fit export.
+
+    A file holds one block per fitted ring; every block starts with the
+    quoted parameter header. A detector geometry comment immediately before
+    a block records its fit center and shape. Other comments are ignored.
 
     Returns
     -------
@@ -424,49 +459,53 @@ def parse_extracted_txt(path):
         One dict per fitted ring. Each dict contains:
         - "radius", "radius_sigma"
         - "A1", "A1_sigma", "B1", "B1_sigma", ...
+        - optional "detector_geometry" with center (X, Y) and shape (NY, NX)
     """
-    text = Path(path).read_text(encoding="utf-8")
     lines = [line.strip() for line in text.splitlines()]
 
     header = '"Parameter" "Value" "+-" "Uncertainty (1 std dev)"'
     blocks = []
     current = None
+    pending_geometry = geometry = None
 
     trig_pattern = re.compile(r'^Trig Term (sin|cos)\((\d+)\*theta\)$')
 
     for line in lines:
-        if not line:
+        if line.startswith(DETECTOR_GEOMETRY_PREFIX):
+            pending_geometry = _parse_detector_geometry(line[len(DETECTOR_GEOMETRY_PREFIX):])
+            continue
+        if not line or line.startswith("#"):
             continue
 
         if line == header:
             if current:
                 blocks.append(current)
             current = {}
+            geometry, pending_geometry = pending_geometry, None
             continue
 
         if current is None:
             continue
 
-        parts = re.findall(r'"([^"]+)"|([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(\+\-)', line)
-        tokens = []
-        for quoted, number, pm in parts:
-            if quoted:
-                tokens.append(quoted)
-            elif number:
-                tokens.append(number)
-            elif pm:
-                tokens.append(pm)
-
-        if len(tokens) < 4:
+        parameter = re.match(r'^"([^"]+)"\s*(.*)$', line)
+        if parameter is None:
             continue
-
-        name = tokens[0]
-        value = float(tokens[1])
-        sigma = float(tokens[3])
+        name, fields = parameter.groups()
+        value_text, _, sigma_text = fields.partition("+-")
+        try:
+            value = float(value_text)
+        except ValueError:
+            continue
+        try:
+            sigma = float(sigma_text.split(maxsplit=1)[0])
+        except (ValueError, IndexError):
+            sigma = np.nan
 
         if name == "Gaussian Centre":
             current["radius"] = value
             current["radius_sigma"] = sigma
+            if geometry is not None:
+                current["detector_geometry"] = geometry
             continue
 
         match = trig_pattern.match(name)
@@ -481,14 +520,49 @@ def parse_extracted_txt(path):
         blocks.append(current)
 
     if not blocks:
-        raise ValueError(f"No fit blocks found in {path}")
+        raise ValueError(f"No fit blocks found in {source}")
 
     return blocks
 
 
+def _parse_detector_geometry(text):
+    try:
+        data = json.loads(text)
+        x, y = data["center"]
+        ny, nx = data["shape"]
+        if (type(ny) is int and type(nx) is int and ny > 0 and nx > 0
+                and type(x) in (int, float) and type(y) in (int, float)
+                and 0 <= x < nx and 0 <= y < ny):
+            return {"center": [x, y], "shape": [ny, nx]}
+    except (TypeError, ValueError, KeyError):
+        pass
+    return None
+
+
+def detector_geometry_warnings(blocks, shape, center):
+    missing = 0
+    for block in blocks:
+        geometry = block.get("detector_geometry")
+        if geometry is None:
+            missing += 1
+        elif (tuple(geometry["shape"]) != tuple(shape)
+              or not np.allclose(geometry["center"], center, atol=1e-6, rtol=0)):
+            x, y = geometry["center"]
+            ny, nx = geometry["shape"]
+            yield (f"Ring r0={block['radius']:g} px was fitted on NY={ny}, NX={nx} "
+                   f"with Center X={x:g}, Center Y={y:g}. This differs from the input grid above.")
+    if missing:
+        yield f"Detector geometry is unverified for {missing} calibration ring(s) without valid geometry metadata."
+
+
+def parse_extracted_txt(path):
+    """Parse a Gascooke-style extracted trig-fit file from disk."""
+    return parse_extracted_text(Path(path).read_text(encoding="utf-8"), source=str(path))
+
+
 def build_fit_dataset(blocks, max_trig_n=None):
     """
-    Convert parsed blocks into arrays grouped by trig order.
+    Convert parsed blocks into arrays aligned by ring. Missing terms are NaN.
     """
     radii = np.array([block["radius"] for block in blocks], dtype=float)
     dataset = {"radii": radii}
@@ -503,24 +577,32 @@ def build_fit_dataset(blocks, max_trig_n=None):
     for n in range(1, max_trig_n + 1):
         for prefix in ("A", "B"):
             key = f"{prefix}{n}"
-            values = []
-            sigmas = []
-            for block in blocks:
-                if key in block:
-                    values.append(block[key])
-                    sigmas.append(block[f"{key}_sigma"])
-            if len(values) == len(blocks):
-                dataset[key] = np.array(values, dtype=float)
-                dataset[f"{key}_sigma"] = np.array(sigmas, dtype=float)
+            present = np.array([key in block for block in blocks], dtype=bool)
+            if present.any():
+                values = np.array([block.get(key, np.nan) for block in blocks], dtype=float)
+                if not np.isfinite(values[present]).all():
+                    raise ValueError(f"Measured {key} coefficients must be finite.")
+                dataset[key] = values
+                dataset[f"{key}_sigma"] = np.array(
+                    [block.get(f"{key}_sigma", np.nan) for block in blocks], dtype=float)
 
     return dataset
+
+
+def _trig_samples(dataset, key):
+    values = dataset[key]
+    measured = ~np.isnan(values)
+    sigma = dataset.get(f"{key}_sigma")
+    if sigma is not None:
+        sigma = sigma[measured]
+        sigma = np.where(np.isfinite(sigma) & (sigma > 0), sigma, np.nan)
+    return dataset["radii"][measured], values[measured], sigma
 
 
 def fit_all_trig_polynomials(dataset, order=2, max_trig_n=None):
     """
     Fit all available A_n(r), B_n(r) arrays in the dataset.
     """
-    radii = dataset["radii"]
     fit_params = {}
     fit_meta = {}
 
@@ -533,14 +615,16 @@ def fit_all_trig_polynomials(dataset, order=2, max_trig_n=None):
     for n in range(1, max_trig_n + 1):
         for prefix in ("A", "B"):
             key = f"{prefix}{n}"
-            sigma_key = f"{key}_sigma"
             if key not in dataset:
                 continue
+            radii, values, sigma = _trig_samples(dataset, key)
+            n_radii = np.unique(radii).size
+            if n_radii < order:
+                raise ValueError(f"{key} has {n_radii} distinct measured radii. "
+                                 f"Polynomial order {order} requires at least {order}.")
+            weighted = sigma is not None and np.isfinite(sigma).all()
             coeffs, cov = fit_distortion_polynomials(
-                radii,
-                dataset[key],
-                order=order,
-                sigma=dataset.get(sigma_key),
+                radii, values, order=order, sigma=sigma if weighted else None,
             )
             fit_params[key] = {
                 "kind": "poly",
@@ -550,8 +634,10 @@ def fit_all_trig_polynomials(dataset, order=2, max_trig_n=None):
                 "cov": cov,
                 "order": order,
                 "radii": radii.copy(),
-                "values": dataset[key].copy(),
-                "sigma": dataset.get(sigma_key),
+                "values": values,
+                "sigma": sigma,
+                "warning": "" if weighted else
+                f"{key} uses an unweighted fit because some uncertainties are unavailable or invalid.",
                 "model_kind": "poly",
             }
 
@@ -565,7 +651,8 @@ def build_all_trig_interpolators(dataset, max_trig_n=None):
     The extracted radii are fit exactly at the sampled points and clipped
     outside the sampled radial range to avoid unstable extrapolation.
     """
-    radii = dataset["radii"]
+    if not np.isfinite(dataset["radii"]).all() or np.any(dataset["radii"] <= 0):
+        raise ValueError("Interpolation requires finite, positive fitted ring radii.")
     fit_params = {}
     fit_meta = {}
 
@@ -581,8 +668,13 @@ def build_all_trig_interpolators(dataset, max_trig_n=None):
             if key not in dataset:
                 continue
 
-            radii_aug = np.concatenate(([0.0], radii))
-            values_aug = np.concatenate(([0.0], dataset[key]))
+            radii, values, sigma = _trig_samples(dataset, key)
+            sort_idx = np.argsort(radii)
+            sorted_radii = radii[sort_idx]
+            if np.any(np.diff(sorted_radii) <= 0):
+                raise ValueError(f"{key} requires distinct fitted ring radii for interpolation.")
+            radii_aug = np.concatenate(([0.0], sorted_radii))
+            values_aug = np.concatenate(([0.0], values[sort_idx]))
 
             interp = PchipInterpolator(radii_aug, values_aug, extrapolate=True)
             dinterp = interp.derivative()
@@ -595,9 +687,9 @@ def build_all_trig_interpolators(dataset, max_trig_n=None):
             }
             fit_meta[key] = {
                 "order": None,
-                "radii": radii_aug.copy(),
-                "values": values_aug.copy(),
-                "sigma": dataset.get(f"{key}_sigma"),
+                "radii": radii,
+                "values": values,
+                "sigma": sigma,
                 "model_kind": "interp",
             }
 
@@ -616,10 +708,11 @@ def print_dataset_summary(dataset):
         key for key in dataset if key.startswith(("A", "B")) and not key.endswith("_sigma")
     )
     for key in keys:
-        vals = ", ".join(f"{v:.6f}" for v in dataset[key])
-        sigmas = ", ".join(f"{s:.6f}" for s in dataset[f"{key}_sigma"])
-        print(f"  {key}: [{vals}]")
-        print(f"  {key}_sigma: [{sigmas}]")
+        term_radii, values, sigma = _trig_samples(dataset, key)
+        print(f"  {key}: {len(values)} of {len(radii)} rings")
+        for i, (radius, value) in enumerate(zip(term_radii, values)):
+            error = f"{sigma[i]:.6g}" if sigma is not None and np.isfinite(sigma[i]) else "unavailable"
+            print(f"    r={radius:.6g} px  value={value:.6g}  sigma={error}")
 
 
 def plot_trig_fits(dataset, fit_params, fit_meta, output_dir, max_trig_n=None):
@@ -654,16 +747,14 @@ def plot_trig_fits(dataset, fit_params, fit_meta, output_dir, max_trig_n=None):
             axes = [axes]
 
         for ax, key in zip(axes, existing):
-            sigma_key = f"{key}_sigma"
-            y = dataset[key]
-            yerr = dataset.get(sigma_key)
+            samples = fit_meta[key]
             model = fit_params[key]
             y_plot, _ = eval_radial_model(model, r_plot)
 
             ax.errorbar(
-                radii,
-                y,
-                yerr=yerr,
+                samples["radii"],
+                samples["values"],
+                yerr=samples["sigma"],
                 fmt="o",
                 capsize=4,
                 label=f"{key} data",
@@ -767,7 +858,7 @@ def parse_args():
         "--input",
         type=Path,
         default=Path("image.txt"),
-        help="Input text image file.",
+        help="Input detector array (.npy) or legacy text image (.txt).",
     )
     parser.add_argument(
         "--output",
@@ -779,17 +870,15 @@ def parse_args():
         "--shape",
         type=int,
         nargs=2,
-        default=(1023, 1023),
         metavar=("NY", "NX"),
-        help="Image shape if reshaping is needed.",
+        help="Legacy text image shape (default: 1023 1023). NumPy arrays retain their native shape.",
     )
     parser.add_argument(
         "--center",
         type=float,
         nargs=2,
-        default=(511.0, 511.0),
         metavar=("XC", "YC"),
-        help="Fixed center in Python indexing.",
+        help="Zero-based center (column, row). Defaults to the brightest pixel for .npy and (511, 511) for text.",
     )
     parser.add_argument(
         "--interp-order",
@@ -859,6 +948,13 @@ def parse_args():
 
 def main():
     args = parse_args()
+    inputs = (("input image", args.input), ("extracted calibration file", args.extracted),
+              ("radial reassignment file", args.reassign_file))
+    if not args.summary_only:
+        try:
+            output = validate_distinct_output(args.output, inputs)
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"Circularize: {exc}") from exc
 
     blocks = parse_extracted_txt(args.extracted)
     dataset = build_fit_dataset(blocks, max_trig_n=args.max_trig_n)
@@ -868,7 +964,11 @@ def main():
     if args.summary_only:
         return
 
-    raw_image = load_image_txt(args.input, shape=tuple(args.shape))
+    raw_image, center = load_image_and_center(args.input, args.shape, args.center)
+    print(f"Input grid: NY={raw_image.shape[0]}, NX={raw_image.shape[1]}. "
+          f"Center X={center[0]:g}, Center Y={center[1]:g}.")
+    for warning in detector_geometry_warnings(blocks, raw_image.shape, center):
+        print(f"Warning: {warning}")
     if args.radial_model == "poly":
         fit_params, fit_meta = fit_all_trig_polynomials(
             dataset,
@@ -881,6 +981,9 @@ def main():
             max_trig_n=args.max_trig_n,
         )
     print_fit_summary(fit_params)
+    for term in fit_meta.values():
+        if term.get("warning"):
+            print(f"Warning: {term['warning']}")
     summarize_delta_r_contributions(
         fit_params,
         max_radius=float(np.max(dataset["radii"])),
@@ -915,7 +1018,7 @@ def main():
 
     corrected = circularize_vmi(
         raw_image,
-        center=tuple(args.center),
+        center=center,
         fit_params=fit_params,
         max_trig_n=args.max_trig_n,
         interp_order=args.interp_order,
@@ -924,7 +1027,11 @@ def main():
         polar_dr=args.polar_dr,
     )
 
-    save_image_txt(args.output, corrected)
+    try:
+        output = validate_distinct_output(output, inputs)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"Circularize: {exc}") from exc
+    save_image_txt(output, corrected)
 
 
 if __name__ == "__main__":

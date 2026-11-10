@@ -4,9 +4,11 @@ import sys
 from pathlib import Path
 
 from nicegui import ui
+from vmi_analysis.paths import validate_distinct_output
 
 from ..jobs import Job, JobManager
 from .. import theme
+from ..settings import centroid_settings, output_dir
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
                      open_folder_button, path_input, persist,
                      render_txt_image, serve_dir, zoomable_image)
@@ -14,7 +16,7 @@ from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
 CIRC_DIR = REPO_ROOT / "circularization"
 
 
-def build(jobs: JobManager) -> None:
+def build(jobs: JobManager):
     theme.section_title(
         "Circularize",
         "Correct radial distortion of one VMI image using the Gascooke "
@@ -23,9 +25,9 @@ def build(jobs: JobManager) -> None:
     view = JobView(jobs, job_name='Circularize', results_builder=_results)
 
     with theme.panel_card():
-        inp = persist(path_input("Input image (.txt)",
-                                 str(CIRC_DIR / "image.txt"),
-                                 browse="file", filters=[".txt"]),
+        inp = persist(path_input("Input image (.npy or .txt)",
+                                 str(output_dir(centroid_settings()) / "vmi_2d_raw.npy"),
+                                 browse="file", filters=[".npy", ".txt"]),
                       "circularize.inp")
         out = persist(path_input("Output image (.txt)",
                                  str(CIRC_DIR / "image_circularized.txt"),
@@ -37,17 +39,18 @@ def build(jobs: JobManager) -> None:
                               "circularize.shape_y")
             shape_x = persist(num_input("Shape NX", 1023, step=1),
                               "circularize.shape_x")
-            center_x = persist(num_input("Center X", 511.0, step=1),
+            center_x = persist(num_input("Center X", 511.0, step="any"),
                                "circularize.center_x")
-            center_y = persist(num_input("Center Y", 511.0, step=1),
+            center_y = persist(num_input("Center Y", 511.0, step="any"),
                                "circularize.center_y")
+            brightest_center = persist(ui.checkbox("Use brightest pixel as center", value=True),
+                                       "circularize.brightest_center")
         extracted = persist(path_input(
             "Extracted trig-fit file",
             str(CIRC_DIR / "extracted-FOC100eV-20260710.txt"),
             browse="file", filters=[".txt"]), "circularize.extracted")
         reassign = persist(path_input(
             "Reassignment file (optional)",
-            str(CIRC_DIR / "reassignment-FOC100eV-20260710.txt"),
             browse="file", filters=[".txt"]), "circularize.reassign")
         with ui.row().classes("gap-4 flex-wrap"):
             radial_model = persist(ui.select(
@@ -56,6 +59,8 @@ def build(jobs: JobManager) -> None:
                 "circularize.radial_model")
             poly_order = persist(num_input("Poly order", 2, step=1),
                                  "circularize.poly_order")
+            poly_order.set_enabled(radial_model.value == "poly")
+            radial_model.on_value_change(lambda e: poly_order.set_enabled(e.value == "poly"))
             interp_order = persist(num_input("Interp order", 3, step=1),
                                    "circularize.interp_order")
             max_trig_n = persist(num_input("Max trig n (0 = auto)", 0, step=1),
@@ -73,18 +78,51 @@ def build(jobs: JobManager) -> None:
             "Plot output dir", str(CIRC_DIR / "trig_fit_plots"),
             browse="dir"), "circularize.plot_dir")
 
+        ui.label("NumPy input keeps its original grid. Use the same center as Trig Calibration.") \
+            .classes("vmi-subtitle")
+
+        def raw_input():
+            return Path(inp.value or "").suffix.lower() == ".npy"
+
+        def update_geometry():
+            raw = raw_input()
+            for field in (shape_y, shape_x, polar_dr):
+                field.set_enabled(not raw)
+            for field in (center_x, center_y):
+                field.set_enabled(not raw or not brightest_center.value)
+            brightest_center.set_visibility(raw)
+
+        inp.on_value_change(lambda _: update_geometry())
+        brightest_center.on_value_change(lambda _: update_geometry())
+        update_geometry()
+
         def run():
+            if not summary_only.value:
+                try:
+                    validate_distinct_output(out.value, (
+                        ("input image", inp.value), ("extracted calibration file", extracted.value),
+                        ("radial reassignment file", reassign.value),
+                    ), cwd=CIRC_DIR)
+                except (OSError, ValueError) as exc:
+                    ui.notify(str(exc), type="warning")
+                    return
             cmd = [sys.executable, "-m", "vmi_analysis.circularization.circularization",
                    "--input", inp.value,
                    "--output", out.value,
-                   "--shape", str(int(shape_y.value)), str(int(shape_x.value)),
-                   "--center", str(center_x.value), str(center_y.value),
                    "--extracted", extracted.value,
                    "--radial-model", radial_model.value,
-                   "--poly-order", str(int(poly_order.value)),
                    "--interp-order", str(int(interp_order.value)),
-                   "--polar-dr", str(polar_dr.value),
                    "--plot-dir", plot_dir.value]
+            if radial_model.value == "poly":
+                cmd += ["--poly-order", str(int(poly_order.value))]
+            if not raw_input():
+                cmd += ["--shape", str(int(shape_y.value)), str(int(shape_x.value)),
+                        "--polar-dr", str(polar_dr.value)]
+            if not raw_input() or not brightest_center.value:
+                if center_x.value is None or center_y.value is None:
+                    ui.notify("Enter both Center X and Center Y.", type="warning")
+                    return
+                cmd += ["--center", str(center_x.value), str(center_y.value)]
             if max_trig_n.value:
                 cmd += ["--max-trig-n", str(int(max_trig_n.value))]
             if reassign.value:
@@ -104,6 +142,22 @@ def build(jobs: JobManager) -> None:
         view.run_button(on_click=run)
 
     view.place_console()
+
+    def use_calibration(extracted_path, image_path=None, manual_center=None, *,
+                        radial_model_value=None, poly_order_value=None):
+        extracted.value = extracted_path
+        if image_path is not None:
+            inp.value = image_path
+            brightest_center.value = manual_center is None
+            if manual_center is not None:
+                center_x.value, center_y.value = manual_center
+        if radial_model_value is not None:
+            radial_model.value = radial_model_value
+        if poly_order_value is not None:
+            poly_order.value = poly_order_value
+        return int(max_trig_n.value or 0)
+
+    return use_calibration
 
 
 def _results(job: Job):

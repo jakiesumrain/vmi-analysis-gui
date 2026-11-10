@@ -4,6 +4,7 @@ Launch from the repository root:  uv run vmi-analysis
 """
 
 import asyncio
+from math import isfinite
 import os
 
 from nicegui import app, background_tasks, ui
@@ -11,8 +12,8 @@ from nicegui import app, background_tasks, ui
 from . import theme
 from .jobs import MANAGER
 from .startup import startup_port
-from .panels import (accumulate, binning, centroid, circularize, dark,
-                     gmd_map, movie, pes, pipeline)
+from .panels import (accumulate, binning, calibration, centroid, circularize,
+                     dark, gmd_map, movie, pes, pipeline)
 from .panels.common import init_zoom_overlay
 
 KEEP_ALIVE_KEY = "server.keep_alive_while_jobs"
@@ -30,7 +31,7 @@ def _env_float(name: str, default: float, minimum: float = 0.1) -> float:
         value = float(raw)
     except ValueError:
         return default
-    return max(value, minimum)
+    return max(value, minimum) if isfinite(value) else default
 
 
 def _keep_alive_enabled() -> bool:
@@ -112,6 +113,7 @@ TABS = [
     ("Accumulate", accumulate),
     ("Centroiding", centroid),
     ("Binning", binning),
+    ("Trig Calibration", calibration),
     ("Circularize", circularize),
     ("PES", pes),
     ("Pipeline", pipeline),
@@ -188,9 +190,17 @@ def index() -> None:
         with ui.tabs().classes("w-full") as tabs:
             tab_objs = [ui.tab(name) for name, _ in TABS]
         with ui.tab_panels(tabs, value=tab_objs[0]).classes("w-full bg-transparent"):
+            def export_calibration(extracted_path, image_path, manual_center, **settings):
+                return use_calibration(extracted_path, image_path, manual_center, **settings)
+
             for tab, (_, module) in zip(tab_objs, TABS):
                 with ui.tab_panel(tab):
-                    module.build(MANAGER)
+                    if module is circularize:
+                        use_calibration = module.build(MANAGER)
+                    elif module is calibration:
+                        module.build(MANAGER, use_calibration=export_calibration)
+                    else:
+                        module.build(MANAGER)
 
     with ui.footer().classes("px-6 py-2 items-center justify-between") \
             .style("background: #181715"):

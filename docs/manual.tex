@@ -272,7 +272,7 @@ opens a settings panel with two global controls: \emph{Maximum concurrent
 jobs} and \emph{Keep running on disconnect}. Both apply to every panel. Below
 the header is one row of tabs, in this order:
 \code{GMD Map}, \emph{Movie}, \emph{Dark Frame}, \emph{Accumulate},
-\code{Centroiding}, \emph{Binning}, \emph{Circularize}, \emph{PES},
+\code{Centroiding}, \emph{Binning}, \emph{Trig Calibration}, \emph{Circularize}, \emph{PES},
 \code{Pipeline}.
 
 Every panel is built when the page loads and keeps its own run state,
@@ -307,7 +307,7 @@ A job that had already finished before the reload is not restored.
 
 Jobs from all panels share one FIFO queue. The \emph{Settings} panel, opened
 from the button in the header, contains \code{Maximum concurrent jobs}; it
-sets how many may run at once, with default 2 and choices 1--9. Lowering the limit never kills running jobs:
+sets how many may run at once, with default 2 and choices 1--10. Lowering the limit never kills running jobs:
 they finish, and new jobs start more slowly. The value is saved and survives
 a restart.
 
@@ -433,9 +433,10 @@ trees are terminated, and cleanup is awaited. Multiple tabs keep it alive, and
 \code{Ctrl+C} in the terminal also shuts it down.
 
 The browser reconnect window is \code{VMI\_\allowbreak{}GUI\_\allowbreak{}RECONNECT\_\allowbreak{}TIMEOUT}
-seconds (default 30); it also sets the socket ping interval and timeout. A
-reload reconnects within that window. Silent connection loss is eventually
-detected through those socket pings.
+seconds (default 30). It also sets the socket ping interval and timeout.
+The browser can reconnect within that window while the server remains up.
+Silent connection loss is detected through the socket pings. Both timing
+settings use their defaults for invalid or non-finite values.
 
 \section{Data you must provide}
 \label{sec:data}
@@ -1493,6 +1494,189 @@ the files each stage wrote. The stage badges are not restored after a page
 reload (the job badge and console are). Deleting a stage's output is the way
 to force that stage to run again.
 
+\subsection{Trig Calibration}
+\label{sec:trigcal}
+
+\textbf{Purpose.} Build the extracted trig-fit calibration from a VMI image
+without the Gascooke executable. The panel remaps the image to polar
+coordinates ($x$ = radius, $y$ = angle, the orientation of the Gascooke
+\emph{Theta vs r} image) and optionally applies inverse Abel to each
+constant-angle line. The remap samples detector intensity at each polar
+coordinate and preserves that intensity without a $1/r$ correction.
+The fitter uses the processed polar data to estimate a Gaussian ridge whose centre varies as
+$r_g(\theta)=r_0+\sum_n[A_n\sin(n\theta)+B_n\cos(n\theta)]$. Accepted rings are
+appended to a trig-fit file in the format consumed by the Circularize and PES
+panels. This tab is an interactive tool: it submits no job and launches no
+external program. Selection is manual by design; there is no automatic ridge
+finder.
+
+\begin{center}
+\footnotesize
+\begin{longtable}{@{}L{3.6cm}L{3.1cm}L{2.9cm}L{6.3cm}@{}}
+\toprule
+Field & Type and default & Saved key & Meaning \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{VMI image} & file, Centroiding raw image &
+\code{calibration.\allowbreak{}image} & 2D NumPy detector image (\code{.\allowbreak{}npy})
+in its original orientation. \\
+\addlinespace
+\emph{Use brightest pixel as center} & checkbox, on &
+\code{calibration.\allowbreak{}brightest\_\allowbreak{}center} & Use the brightest
+pixel as the polar origin. Clear the checkbox to enter the origin manually. \\
+\addlinespace
+\emph{Centre X}, \emph{Centre Y} & numbers, 511.0 & \code{calibration.\allowbreak{}center\_\allowbreak{}x},
+\code{.\allowbreak{}center\_\allowbreak{}y} & Zero-based column and row of the fit
+origin in the detector image. \\
+\addlinespace
+\emph{Radial bin size (px)} & number, 1.0 &
+\code{calibration.\allowbreak{}radial\_\allowbreak{}bin\_\allowbreak{}size} &
+Spacing between radial samples in detector pixels. Sampling starts at $r=0$
+and stops at the last grid point at or below the maximum radius. A spacing of
+0.5 samples the image by interpolation every half pixel in radius. \\
+\addlinespace
+\emph{Angular bins} & number, 720 & \code{calibration.\allowbreak{}n\_\allowbreak{}theta} &
+Number of angular samples over one full turn. \\
+\addlinespace
+\emph{Max radius (0 = auto)} & number, 0.0 & \code{calibration.\allowbreak{}r\_\allowbreak{}max} &
+Largest radius to sample; 0 uses the largest circle inside the image. \\
+\addlinespace
+\emph{Inverse Abel per $\theta$} & checkbox, on & \code{calibration.\allowbreak{}abel} &
+Invert each constant-angle radial line to locate ridges. For anisotropic
+images this is a ridge-finding approximation. \\
+\addlinespace
+\emph{Abel method} & select, \code{hansenlaw} & \code{calibration.\allowbreak{}abel\_\allowbreak{}method} &
+Hansen--Law (the method used by the reference software); Dasch three-point,
+two-point and onion-peeling are available for comparison. \\
+\addlinespace
+\emph{Filter placement} & select, \code{post\_\allowbreak{}abel} & \code{calibration.\allowbreak{}placement} &
+With inverse Abel enabled, choose \emph{After Abel inversion} or \emph{Off}.
+With inverse Abel disabled, choose \emph{Raw polar} or \emph{Off}.
+\emph{Off} skips filtering. \\
+\addlinespace
+\emph{Enhancement} & select, \code{bandpass} & \code{calibration.\allowbreak{}enhance\_\allowbreak{}mode} &
+Choose \code{none}, \code{bandpass}, \code{ridge}, \code{unsharp} or \code{clahe}. \\
+\addlinespace
+\emph{Filter parameters} & expansion & \code{calibration.\allowbreak{}param.\allowbreak{}*} &
+Editable defaults: smooth $\theta$ 1.0, smooth $r$ 0.8; bandpass low $r$ 2.0
+and high $r$ 20.0; ridge background 8.0/25.0 and ridge $\sigma$ 1.2; unsharp
+blur 6.0/18.0; CLAHE clip 0.02 and kernel 24/96. \\
+\addlinespace
+\emph{Select band} / \emph{Mask} & toggle & --- & Drag with the left mouse button:
+a band (blue) selects the fit region, a mask (red) excludes interference. \\
+\addlinespace
+\emph{Full angular range} & checkbox, on & \code{calibration.\allowbreak{}full\_\allowbreak{}angle} &
+The band spans $0$--$360^\circ$; untick to use the drawn angular extent. \\
+\addlinespace
+\emph{Trig terms N} & number, 3 & \code{calibration.\allowbreak{}n\_\allowbreak{}terms} &
+Highest harmonic order fitted in $r_g(\theta)$. \\
+\addlinespace
+\emph{Fit beta} & checkbox, on & \code{calibration.\allowbreak{}beta} &
+Fit the $P_2(\cos\theta)$ anisotropy amplitude. \\
+\addlinespace
+\emph{Iterative terms} & checkbox, on & \code{calibration.\allowbreak{}iterative} &
+Fit $1,2,\ldots,N$ terms cumulatively instead of all at once. \\
+\addlinespace
+\emph{Extracted trig-fit file} & save, \code{circularization/\allowbreak{}extracted-\allowbreak{}YYYYMMDD.\allowbreak{}txt} &
+\code{calibration.\allowbreak{}output} & Accepted rings are appended here; create a fresh file per
+calibration. \\
+\addlinespace
+\emph{Provenance comments} & checkbox, on & \code{calibration.\allowbreak{}provenance} &
+Include band, filter, Abel method, and RMS comments. The fit center and
+detector shape are recorded independently of this setting. \\
+\addlinespace
+\emph{Radial model} & select, Interp & \code{calibration.\allowbreak{}radial\_\allowbreak{}model} &
+Use shape-preserving cubic interpolation (Interp) or a through-origin
+polynomial (Poly) to model $A_n(r)$ and $B_n(r)$. \\
+\addlinespace
+\emph{Poly order} & number, 1 & \code{calibration.\allowbreak{}slope\_\allowbreak{}order} &
+Degree of the through-origin polynomial. Order 1 gives a straight line. \\
+\addlinespace
+\emph{Session file} & save, \code{circularization/\allowbreak{}trig-\allowbreak{}calibration.\allowbreak{}session.\allowbreak{}json} &
+\code{calibration.\allowbreak{}session} & Save/load image geometry, processing, masks and
+accepted ring fits. Saves require a separate \code{.json} file. \\
+\end{longtable}
+\end{center}
+
+\textbf{Workflow.} (1) Choose the image and click \emph{Load image \& remap}.
+For Centroiding data, use its raw output \code{vmi\_2d\_raw.npy}. The console
+reports the origin and radial spacing. The polar remap uses this origin on
+the original detector grid.
+(2) Set inverse Abel and the display filter on their separate rows, then
+press \emph{Apply processing}. The processed preview appears directly below
+the raw polar remap. Both show the same band and masks. The fit uses the
+selected region of the processed image, including any applied filter.
+(3) With \emph{Select band} active, drag a rectangle around one ring.
+\emph{Zoom to band} zooms along the radius while keeping the angular view fixed.
+\emph{Inspect band} opens the clipped processed band at the same display
+height. Use horizontal zoom from 0.05 to 1 to narrow the band and draw masks
+that appear on both previews.
+\emph{Color scale}, \emph{Colormap}, and the percentile sliders update both
+previews as you adjust them. The sliders span 0 to 100 in steps of 0.1 and
+default to the 1st and 99.5th percentiles. Each preview computes its limits
+from the visible pixels. Log scaling uses only positive pixels.
+(4) Switch
+to \emph{Mask} and drag rectangles over overlapping rings, hot spots or bad
+sectors. \emph{Undo selection} reverses the last band or mask edit on both
+previews. Use \emph{Clear band} to remove the blue band or \emph{Clear masks}
+to remove all red masks. Undo also reverses either clear action.
+(5) Press \emph{Fit selection}.
+The comparison shows the processed band used for the fit and the model with shared axes and intensity
+scale. Grey regions mark excluded pixels, and the yellow line shows
+$r_g(\theta)$. Review the images before accepting the ring.
+(6) Press \emph{Accept ring} to append one block to the
+output file, then repeat from step 3 for the next ring. (7) Choose a radial
+model and use \emph{Update radial model plots} to compare its curves with the
+accepted ring measurements. Each harmonic uses the rings that measured it.
+In Poly mode, each term needs at least as many distinct measured radii as the
+polynomial degree. The panel reports terms fitted without weights when some
+uncertainties are missing or invalid. Click either \emph{Send to Circularize} button to pass the
+NumPy image, center, calibration file, and radial model to Circularize. The
+export includes the polynomial degree when Poly is selected.
+Sending the calibration warns if the saved rings differ from the preview or
+if Circularize's \emph{Max trig n} excludes a saved term.
+When Circularize runs, its console warns if any saved ring used a different
+center or detector shape, and reports rings whose geometry could not be verified.
+Use \emph{Refresh rings from file} to replace the accepted-ring list and plots
+with the contents of the selected calibration file. Use \emph{Clear calibration
+file} to delete that file and reset the ring list and plots after confirmation.
+
+\textbf{Results.} The panel shows both polar previews with band, masks and fitted
+ridge overlays, a fit comparison, the parameter table, the accepted-ring
+table, and separate $A_n(r)$ and $B_n(r)$ plots with ring measurements and
+their uncertainties. The parameter table reports local
+least-squares errors. These estimates do not account for correlations between
+interpolated pixels. \emph{Rebuild file from
+rings} rewrites the file from the accepted rings and is the recovery path after
+a wrong or duplicate append. If the rebuild would remove or replace saved
+rings, the panel lists their radii and asks for confirmation. Use
+\emph{Refresh rings from file} to bring the full saved set back into the table.
+
+The optimizer can report a warning while still returning a model for review.
+If the data cannot determine some parameters, widen the selected angular
+range or reduce \emph{Trig terms N} and refit. The panel blocks export when
+the model is underdetermined or has nonfinite parameters.
+
+When loading a session, the panel checks the detector image fingerprint
+before restoring a pending fit. If the image changed or the fingerprint is
+missing, the session still restores the band, masks, and accepted rings, and
+asks you to refit the band.
+
+\textbf{Pitfalls.} Enhancement can move the fitted ridge. Use consistent
+processing settings for the rings in a calibration.
+Refit rings saved by the earlier fitting pipeline and export them to a new
+calibration file. Calibrate in the same orientation and centre frame as the
+images you will correct: PES rotates and centres each bin before it applies the
+calibration. Hansen--Law assumes the first radial column is $r=0$; keep the
+default radial grid. Masks, processing settings and provenance live in the
+session file; the extracted \code{.\allowbreak{}txt} contains only the ring blocks.
+A ring whose radius is already present within 0.5\,px is refused to avoid
+duplicates. The file is append-only; use \emph{Rebuild} to rewrite it.
+Circularize sorts ring blocks by radius before building the interpolant and
+computes its radial model from the saved blocks.
+
 \subsection{Circularize}
 \label{sec:circularize}
 
@@ -1500,7 +1684,12 @@ to force that stage to run again.
 image using a Gascooke trig-fit calibration. The panel launches
 \code{vmi\_\allowbreak{}analysis.circularization.circularization} with working
 directory \code{circularization/\allowbreak{}}. It is a standalone tool for inspecting
-the calibration; the PES panel applies the same correction to each GMD bin.
+the calibration. The PES panel applies its correction to each GMD bin.
+
+For a raw detector-grid calibration, open the same \code{vmi\_2d\_raw.npy}
+in Trig Calibration and Circularize. Use the same origin in both panels.
+The default is the brightest pixel. The NumPy input keeps its native shape and orientation. Circularize
+applies the radial correction directly and writes the corrected image.
 
 \begin{center}
 \footnotesize
@@ -1511,35 +1700,36 @@ Field & Type and default & Saved key & CLI flag & Meaning \\
 \endhead
 \bottomrule
 \endfoot
-\code{Input image (.txt)} & file, \code{circularization/\allowbreak{}image.\allowbreak{}txt} &
-\emph{circularize.inp} & \code{-\allowbreak{}-\allowbreak{}input} & Text image to correct
-(whitespace-separated values). \\
+\code{Input image (.npy or .txt)} & file, Centroiding raw image &
+\emph{circularize.inp} & \code{-\allowbreak{}-\allowbreak{}input} & NumPy detector array or legacy text image. \\
 \addlinespace
 \code{Output image (.txt)} & save, \code{circularization/\allowbreak{}image\_\allowbreak{}circularized.\allowbreak{}txt} &
 \emph{circularize.out} & \code{-\allowbreak{}-\allowbreak{}output} & Corrected image, written as text
 in scientific notation. \\
 \addlinespace
 \emph{Shape NY} & number, 1023 & \code{circularize.\allowbreak{}shape\_\allowbreak{}y} & \code{-\allowbreak{}-\allowbreak{}shape} (first) &
-Number of rows used to reshape the input. An odd size gives a single-pixel
-centre; the GMD pipeline relies on 1023. \\
+Number of rows for legacy text input. NumPy input uses its native shape. \\
 \addlinespace
 \emph{Shape NX} & number, 1023 & \code{circularize.\allowbreak{}shape\_\allowbreak{}x} & \code{-\allowbreak{}-\allowbreak{}shape} (second) &
-Number of columns, same rules. \\
+Number of columns for legacy text input. \\
+\addlinespace
+\emph{Use brightest pixel as center} & checkbox, on & \code{circularize.\allowbreak{}brightest\_\allowbreak{}center} & --- &
+For NumPy input, use the brightest pixel or clear the checkbox to enter a center. \\
 \addlinespace
 \emph{Center X} & number, 511.0 & \code{circularize.\allowbreak{}center\_\allowbreak{}x} & \code{-\allowbreak{}-\allowbreak{}center} (first) &
-Distortion centre, in Python indexing (column, not row). \\
+Zero-based column of the manually specified origin. \\
 \addlinespace
 \emph{Center Y} & number, 511.0 & \code{circularize.\allowbreak{}center\_\allowbreak{}y} & \code{-\allowbreak{}-\allowbreak{}center} (second) &
-Distortion centre row. \\
+Zero-based row of the manually specified origin. \\
 \addlinespace
 \emph{Extracted trig-\allowbreak{}fit file} & file,
 \code{circularization/\allowbreak{}extracted-\allowbreak{}FOC100eV-\allowbreak{}20260710.txt} & \code{circularize.\allowbreak{}extracted} &
 \emph{-\allowbreak{}-\allowbreak{}extracted} & Gascooke export with one block per fitted ring: radius,
 trigonometric coefficients and uncertainties. Required. \\
 \addlinespace
-\emph{Reassignment file (optional)} & file,
-\code{circularization/\allowbreak{}reassignment-\allowbreak{}FOC100eV-\allowbreak{}20260710.txt} & \code{circularize.\allowbreak{}reassign} &
-\emph{-\allowbreak{}-\allowbreak{}reassign-\allowbreak{}file} & Two-column radial map \code{r\_\allowbreak{}circ} \code{r\_\allowbreak{}fixed}.
+\emph{Reassignment file (optional)} & file, blank by default & \code{circularize.\allowbreak{}reassign} &
+\emph{-\allowbreak{}-\allowbreak{}reassign-\allowbreak{}file} & Two-column map from fitted to assigned radius.
+Both columns must increase together.
 Clear the field to use the identity map. \\
 \addlinespace
 \emph{Radial model} & select, \code{interp} & \code{circularize.\allowbreak{}radial\_\allowbreak{}model} &
@@ -1547,8 +1737,8 @@ Clear the field to use the identity map. \\
 the coefficients; \code{poly} fits a polynomial that vanishes at the centre. \\
 \addlinespace
 \emph{Poly order} & number, 2 & \code{circularize.\allowbreak{}poly\_\allowbreak{}order} &
-\emph{-\allowbreak{}-\allowbreak{}poly-\allowbreak{}order} & Polynomial order for the \code{poly} model; ignored by
-\code{interp}. \\
+\emph{-\allowbreak{}-\allowbreak{}poly-\allowbreak{}order} & Degree of the polynomial. This field is enabled when the
+radial model is \code{poly}. \\
 \addlinespace
 \emph{Interp order} & number, 3 & \code{circularize.\allowbreak{}interp\_\allowbreak{}order} &
 \emph{-\allowbreak{}-\allowbreak{}interp-\allowbreak{}order} & Spline order used for the inverse warp (3 = cubic). \\
@@ -1558,7 +1748,8 @@ the coefficients; \code{poly} fits a polynomial that vanishes at the centre. \\
 flag and lets the script infer the order from the file. \\
 \addlinespace
 \emph{Polar dr} & number, 1.0 & \code{circularize.\allowbreak{}polar\_\allowbreak{}dr} &
-\emph{-\allowbreak{}-\allowbreak{}polar-\allowbreak{}dr} & Cartesian pixels per polar radial unit; must be positive. \\
+\emph{-\allowbreak{}-\allowbreak{}polar-\allowbreak{}dr} & Cartesian pixels per polar radial unit for legacy text input.
+NumPy calibration uses detector pixels directly. \\
 \addlinespace
 \emph{No Jacobian} & checkbox, on & \code{circularize.\allowbreak{}no\_\allowbreak{}jacobian} &
 \emph{-\allowbreak{}-\allowbreak{}no-\allowbreak{}jacobian} & Checked skips the Jacobian intensity correction. Note
@@ -1586,12 +1777,15 @@ term, and the applied reassignment. Outputs are the corrected text image and
 the diagnostic PNGs; \emph{reassignment\_map.png} is written whenever a
 reassignment file is supplied.
 
-\textbf{Pitfalls.} The calibration files are per-experiment inputs and are
-not generated here. The panel does not pre-check them, so a missing file
-fails the job; because the reassignment path is pre-filled, a missing
-reassignment file also fails. Clear that field to use the identity map. The
-GUI's \emph{No Jacobian} default differs from the command-line default, which
-is the most consequential default difference in this panel. There are no
+\textbf{Pitfalls.} The calibration files are per-experiment inputs. The
+extracted trig-fit file can be built clean-room with the Trig Calibration tab.
+Supply a reassignment file only when the experiment needs radial remapping.
+A blank field uses the identity map. A missing file at a specified path fails
+the job. The GUI's \emph{No Jacobian} default differs from the command-line default, which
+is the most consequential default difference in this panel. Beyond the last
+assigned radius, reassignment keeps the final radial offset constant.
+Circularize checks the combined warp for invalid radii and folds on the output
+grid before resampling. There are no
 \code{View saved result} or \emph{Clear output} buttons, and the progress bar
 stays empty because the script does not print percentages.
 
