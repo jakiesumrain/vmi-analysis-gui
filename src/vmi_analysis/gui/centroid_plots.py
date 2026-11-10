@@ -10,6 +10,12 @@ from vmi_analysis.centroiding.plot_data import load_plot_data
 
 PLOT_HEIGHT = 1200
 COLORMAPS = ("Viridis", "Cividis", "Plasma", "Inferno", "Magma", "Turbo", "Gray", "Hot")
+RESULT_COLORMAP_DEFAULTS = {
+    "accumulate.colormap": "Viridis",
+    "centroid.tuning_colormap": "Gray",
+    "centroid.raw_colormap": "Turbo",
+    "centroid.abel_colormap": "Turbo",
+}
 
 PLOT_CONFIG = {"scrollZoom": True, "displaylogo": False, "responsive": True,
                "doubleClick": "reset", "toImageButtonOptions": {"format": "png", "scale": 2}}

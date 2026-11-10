@@ -9,12 +9,15 @@ import os
 
 from nicegui import app, background_tasks, ui
 
-from . import theme
-from .jobs import MANAGER
+from vmi_analysis.paths import WORKSPACE_ROOT
+
+from . import theme, workflow
+from .jobs import MANAGER, ResourceBusyError
 from .startup import startup_port
 from .panels import (accumulate, binning, calibration, centroid, circularize,
                      dark, gmd_map, movie, pes, pipeline)
 from .panels.common import init_zoom_overlay
+from .panels.picker import LocalFilePicker
 
 KEEP_ALIVE_KEY = "server.keep_alive_while_jobs"
 DEFAULT_RECONNECT_TIMEOUT = 30.0
@@ -123,6 +126,33 @@ TABS = [
 @ui.page("/")
 def index() -> None:
     theme.apply_theme()
+    store = app.storage.general
+    workflow_fields = workflow.result_fields(store)
+
+    async def save_workflow():
+        path = await LocalFilePicker(start=WORKSPACE_ROOT, mode="save", filters=[".json"],
+                                     default_name="vmi-workflow.json")
+        if not path:
+            return
+        try:
+            with MANAGER.write_access([path]):
+                workflow.save_workflow(path, workflow_fields)
+        except (OSError, ValueError, ResourceBusyError) as exc:
+            ui.notify(f"Could not save workflow. {exc}", type="negative")
+            return
+        ui.notify(f"Workflow saved to {path}", type="positive")
+
+    async def load_workflow():
+        path = await LocalFilePicker(start=WORKSPACE_ROOT, filters=[".json"])
+        if not path:
+            return
+        try:
+            settings = workflow.load_workflow(path, workflow_fields)
+        except (OSError, ValueError) as exc:
+            ui.notify(f"Could not load workflow. {exc}", type="negative")
+            return
+        store.update(settings)
+        ui.navigate.reload()
 
     def change_limit(event):
         if event.value is None:
@@ -164,6 +194,11 @@ def index() -> None:
         concurrency.on_value_change(change_limit)
         concurrency.tooltip("Lowering the limit lets running jobs finish; "
                             "conflicts remain queued.")
+        ui.separator()
+        ui.label("Workflow files restore panel inputs and parameters.").classes("vmi-subtitle")
+        with ui.row().classes("w-full gap-2"):
+            ui.button("Save workflow", icon="save", on_click=save_workflow).props("flat")
+            ui.button("Load workflow", icon="folder_open", on_click=load_workflow).props("flat")
         with ui.row().classes("w-full justify-end"):
             ui.button("Close", on_click=lambda: settings_dialog.close()).props("flat")
 
@@ -193,14 +228,15 @@ def index() -> None:
             def export_calibration(extracted_path, image_path, manual_center, **settings):
                 return use_calibration(extracted_path, image_path, manual_center, **settings)
 
-            for tab, (_, module) in zip(tab_objs, TABS):
-                with ui.tab_panel(tab):
-                    if module is circularize:
-                        use_calibration = module.build(MANAGER)
-                    elif module is calibration:
-                        module.build(MANAGER, use_calibration=export_calibration)
-                    else:
-                        module.build(MANAGER)
+            with workflow.collect_fields(workflow_fields):
+                for tab, (_, module) in zip(tab_objs, TABS):
+                    with ui.tab_panel(tab):
+                        if module is circularize:
+                            use_calibration = module.build(MANAGER)
+                        elif module is calibration:
+                            module.build(MANAGER, use_calibration=export_calibration)
+                        else:
+                            module.build(MANAGER)
 
     with ui.footer().classes("px-6 py-2 items-center justify-between") \
             .style("background: #181715"):
