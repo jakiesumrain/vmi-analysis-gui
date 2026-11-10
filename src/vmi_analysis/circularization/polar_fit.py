@@ -34,6 +34,8 @@ import numpy as np
 from scipy.ndimage import gaussian_filter, gaussian_filter1d, map_coordinates
 from scipy.optimize import least_squares
 
+from vmi_analysis.paths import validate_distinct_output
+
 from .circularization import DETECTOR_GEOMETRY_PREFIX, parse_extracted_text
 
 TWO_PI = 2.0 * np.pi
@@ -787,11 +789,8 @@ def parse_accepted_rings(text, *, source="<text>"):
     return rings
 
 
-def write_ring_blocks(path, blocks):
-    """Atomically replace a trig-fit file with the rendered blocks."""
-    path = Path(path).resolve()
+def _write_text_atomically(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
-    text = "\n".join(block.rstrip("\n") + "\n" for block in blocks)
     temporary = NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
                                    dir=path.parent, suffix=".tmp", delete=False)
     temp_path = Path(temporary.name)
@@ -802,6 +801,12 @@ def write_ring_blocks(path, blocks):
     finally:
         temp_path.unlink(missing_ok=True)
     return path
+
+
+def write_ring_blocks(path, blocks):
+    """Atomically replace a trig-fit file with the rendered blocks."""
+    text = "\n".join(block.rstrip("\n") + "\n" for block in blocks)
+    return _write_text_atomically(Path(path).resolve(), text)
 
 
 # ---------------------------------------------------------------------------
@@ -867,18 +872,27 @@ def radial_model_curves(reduced):
 SESSION_SCHEMA = "vmi-trig-calibration/2"
 
 
+def session_output_path(path, *, image=None, calibration=None):
+    """Validate the session destination before touching any file."""
+    if not path or Path(path).suffix.lower() != ".json":
+        raise ValueError("Choose a session file ending in .json.")
+    inputs = (("detector image", image), ("calibration file", calibration))
+    target = validate_distinct_output(
+        Path(path).expanduser(), ((label, Path(source).expanduser()) for label, source in inputs if source),
+        output_label="session file")
+    if target.suffix.lower() != ".json":
+        raise ValueError("The session destination must resolve to a .json file.")
+    return target
+
+
 def save_session(path, session):
     """Atomically write the panel session JSON."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = session_output_path(path, image=(session.get("image") or {}).get("path"),
+                               calibration=session.get("output"))
     payload = dict(session)
     payload.setdefault("schema", SESSION_SCHEMA)
     payload["saved_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True),
-                         encoding="utf-8")
-    temporary.replace(path)
-    return path
+    return _write_text_atomically(path, json.dumps(payload, indent=2, sort_keys=True))
 
 
 def load_session(path):

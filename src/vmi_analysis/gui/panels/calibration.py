@@ -972,7 +972,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
             "masks": [[m.r0, m.r1, m.theta0, m.theta1] for m in state["masks"]],
             "rings": [fit.to_dict() for fit in state["rings"]],
             "fit": None if state["last_fit"] is None else state["last_fit"].to_dict(),
-            "output": widgets["output"].value,
+            "output": (widgets["output"].value or "").strip(),
         }
 
     def _save_session():
@@ -980,7 +980,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
             ui.notify("Nothing to save yet.", type="warning")
             return
         try:
-            pf.save_session(widgets["session"].value, _session_payload())
+            path = (widgets["session"].value or "").strip()
+            if not path:
+                raise ValueError("Choose a session file ending in .json.")
+            with MANAGER.write_access([Path(path).expanduser()]):
+                pf.save_session(path, _session_payload())
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             _notify_error(exc)
             return

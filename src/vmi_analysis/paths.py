@@ -24,14 +24,14 @@ CPBASEX_DIR = Path(os.environ.get("CPBASEX_DIR", _old_cpbasex if _old_cpbasex.is
                                 else WORKSPACE_ROOT / "vendor" / "pbasex-matlab"))
 
 
-def validate_distinct_output(output, inputs, *, cwd=None):
+def validate_distinct_output(output, inputs, *, cwd=None, output_label="output image"):
     """Resolve an output path and reject aliases of the named input files."""
     if not output:
-        raise ValueError("Choose an output image file.")
+        raise ValueError(f"Choose a file for the {output_label}.")
     base = Path.cwd() if cwd is None else Path(cwd)
     target = (base / output).resolve()
     if target.is_dir():
-        raise ValueError("Choose an output image file.")
+        raise ValueError(f"Choose a file for the {output_label}.")
     for label, source in inputs:
         if not source:
             continue
@@ -43,7 +43,7 @@ def validate_distinct_output(output, inputs, *, cwd=None):
             except FileNotFoundError:
                 pass
         if same_file:
-            raise ValueError(f"The output image points to the {label}. Choose a different output file.")
+            raise ValueError(f"The {output_label} points to the {label}. Choose a different output file.")
     return target
 
 

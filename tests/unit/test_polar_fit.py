@@ -302,6 +302,24 @@ class OutputTests(unittest.TestCase):
             ring = pf.session_rings(loaded)[0]
             self.assertAlmostEqual(ring.params["r0"], self.fit.params["r0"])
 
+    def test_session_rejects_wrong_suffix_and_input_aliases(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            image, calibration = root / "detector.npy", root / "extracted.txt"
+            image.write_bytes(b"detector data")
+            calibration.write_bytes(b"calibration data")
+            session = {"image": {"path": str(image)}, "output": str(calibration)}
+            with self.assertRaisesRegex(ValueError, r"ending in \.json"):
+                pf.save_session(calibration, session)
+            for source, label in ((image, "detector image"), (calibration, "calibration file")):
+                alias = root / f"{source.stem}.json"
+                alias.hardlink_to(source)
+                with self.assertRaisesRegex(ValueError, label):
+                    pf.save_session(alias, session)
+                self.assertTrue(alias.samefile(source))
+            self.assertEqual(image.read_bytes(), b"detector data")
+            self.assertEqual(calibration.read_bytes(), b"calibration data")
+
     def test_legacy_session_requires_refitting(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "session.json"
@@ -603,7 +621,7 @@ class EndToEndTests(unittest.TestCase):
             self.assertAlmostEqual(fit.params[name], 0.0, delta=0.02)
 
     def test_cli_writes_blocks_and_session(self):
-        from contextlib import redirect_stdout
+        from contextlib import redirect_stderr, redirect_stdout
         import io
 
         from vmi_analysis.circularization import trig_fit
@@ -620,6 +638,10 @@ class EndToEndTests(unittest.TestCase):
                     "--band", "54", "66", "--band", "94", "106",
                     "--n-terms", "2", "--output", str(output),
                     "--session", str(session)]
+            with redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit):
+                trig_fit.main(argv[:-1] + [str(output)])
+            self.assertIn("session file ending in .json", errors.getvalue())
+            self.assertFalse(output.exists())
             with redirect_stdout(io.StringIO()):
                 code = trig_fit.main(argv)
             self.assertEqual(code, 0)

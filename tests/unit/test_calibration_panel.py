@@ -156,6 +156,7 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp:
             image_path = Path(tmp) / "raw.npy"
             session_path = Path(tmp) / "session.json"
+            calibration_path = Path(tmp) / "extracted.txt"
             pixels = np.zeros((31, 31))
             pixels[15, 15] = 10
             np.save(image_path, pixels)
@@ -168,6 +169,7 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                           "radial_bin_size": 1, "n_theta": 24},
                 "processing": options, "band": [8, 12, 0, pf.TWO_PI],
                 "masks": [[8, 9, 0, 1]], "rings": [ring.to_dict()],
+                "output": str(calibration_path),
             })
             callbacks, buttons = {}, {}
 
@@ -227,6 +229,20 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(accept.enabled)
                     callbacks["Save session"]()
                     self.assertEqual(pf.load_session(session_path)["image"]["center"], [16, 15])
+
+                    original = f'{pf.EXTRACTED_HEADER}\n"Gaussian Centre" 5 +- 0.1\n'
+                    calibration_path.write_text(original, encoding="utf-8")
+                    session_input = next(el for el in client.elements.values()
+                                         if isinstance(el, ui.input)
+                                         and el._props.get("label") == "Session file (.json)")
+                    session_input.value = str(calibration_path)
+                    callbacks["Save session"]()
+                    self.assertIn("ending in .json", notify.call_args.args[0])
+                    self.assertEqual(calibration_path.read_text(encoding="utf-8"), original)
+                    notify.reset_mock()
+                    await callbacks["Accept ring (append to file)"]()
+                    self.assertTrue(any("ending in .json" in call.args[0] for call in notify.call_args_list))
+                    self.assertEqual(pf.existing_radii(calibration_path), [5, 10])
             finally:
                 client.delete()
 

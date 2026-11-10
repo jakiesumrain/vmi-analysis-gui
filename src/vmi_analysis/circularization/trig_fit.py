@@ -75,6 +75,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if Path(args.image).suffix.lower() != ".npy":
         parser.error("--image must be a NumPy detector image (.npy)")
+    if args.session:
+        try:
+            pf.session_output_path(args.session, image=args.image, calibration=args.output)
+        except (OSError, ValueError) as exc:
+            parser.error(str(exc))
     image = pf.load_image(args.image)
     auto_center = args.center is None
     if auto_center:
