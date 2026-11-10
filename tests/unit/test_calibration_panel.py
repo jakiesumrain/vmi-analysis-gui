@@ -22,6 +22,22 @@ def make_state():
 
 
 class PanelHelperTests(unittest.TestCase):
+    def test_radial_plots_follow_both_models_with_unsorted_rings(self):
+        fits = [pf.RingFit(
+            params={"r0": radius, "A1": radius / 100, "B1": -radius / 200},
+            sigmas={"A1": 0.1, "B1": 0.2}, n_terms=1, use_beta=False,
+            band=pf.Rect(radius - 5, radius + 5))
+            for radius in (100, 50)]
+        for mode in ("interp", "poly"):
+            with self.subTest(mode=mode):
+                reduced = pf.reduce_rings(fits, model=mode, order=1)
+                a, b = calibration._radial_model_figures(reduced)
+                for figure, slope, sigma in ((a, 0.01, 0.1), (b, -0.005, 0.2)):
+                    curve, points = figure.data
+                    np.testing.assert_allclose(curve.y, np.asarray(curve.x) * slope)
+                    np.testing.assert_array_equal(points.x, [100, 50])
+                    np.testing.assert_array_equal(points.error_y.array, [sigma, sigma])
+
     def test_fit_comparison_uses_shared_scale_and_marks_excluded_pixels(self):
         theta = np.linspace(0, pf.TWO_PI, 36, endpoint=False)
         r = np.arange(24, dtype=float)
@@ -117,7 +133,9 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
             store = {"calibration.image": str(path), "calibration.abel": False,
                      "calibration.rotation": 90, "calibration.brightest_center": True,
                      "calibration.output": str(Path(tmp) / "extracted.txt"),
-                     "calibration.radial_bin_size": 0.5, "calibration.n_theta": 24}
+                     "calibration.radial_bin_size": 0.5, "calibration.n_theta": 24,
+                     "calibration.radial_model": "poly", "calibration.slope_order": 2,
+                     "calibration.interp_order": 1}
             callbacks = {}
             manager = Mock()
             manager.jobs.return_value = []
@@ -153,6 +171,8 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                     cmd = manager.submit.call_args.args[0].cmd
                     self.assertEqual(cmd[cmd.index("--input") + 1], str(path))
                     self.assertEqual(cmd[cmd.index("--extracted") + 1], store["calibration.output"])
+                    for flag, value in (("--radial-model", "poly"), ("--poly-order", "2"), ("--interp-order", "1")):
+                        self.assertEqual(cmd[cmd.index(flag) + 1], value)
                     self.assertTrue({"--shape", "--center", "--polar-dr"}.isdisjoint(cmd))
 
                     auto = [element for element in client.elements.values()

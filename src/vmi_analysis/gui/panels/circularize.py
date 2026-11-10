@@ -131,13 +131,20 @@ def build(jobs: JobManager):
 
     view.place_console()
 
-    def use_calibration(extracted_path, image_path=None, manual_center=None):
+    def use_calibration(extracted_path, image_path=None, manual_center=None, *,
+                        radial_model_value=None, poly_order_value=None, interp_order_value=None):
         extracted.value = extracted_path
         if image_path is not None:
             inp.value = image_path
             brightest_center.value = manual_center is None
             if manual_center is not None:
                 center_x.value, center_y.value = manual_center
+        if radial_model_value is not None:
+            radial_model.value = radial_model_value
+        if poly_order_value is not None:
+            poly_order.value = poly_order_value
+        if interp_order_value is not None:
+            interp_order.value = interp_order_value
 
     return use_calibration
 

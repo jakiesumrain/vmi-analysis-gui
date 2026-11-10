@@ -600,7 +600,10 @@ def build_all_trig_interpolators(dataset, max_trig_n=None):
     The extracted radii are fit exactly at the sampled points and clipped
     outside the sampled radial range to avoid unstable extrapolation.
     """
-    radii = dataset["radii"]
+    sort_idx = np.argsort(dataset["radii"])
+    radii = dataset["radii"][sort_idx]
+    if not np.isfinite(radii).all() or np.any(radii <= 0) or np.any(np.diff(radii) <= 0):
+        raise ValueError("Interpolation requires distinct, positive fitted ring radii.")
     fit_params = {}
     fit_meta = {}
 
@@ -617,7 +620,7 @@ def build_all_trig_interpolators(dataset, max_trig_n=None):
                 continue
 
             radii_aug = np.concatenate(([0.0], radii))
-            values_aug = np.concatenate(([0.0], dataset[key]))
+            values_aug = np.concatenate(([0.0], dataset[key][sort_idx]))
 
             interp = PchipInterpolator(radii_aug, values_aug, extrapolate=True)
             dinterp = interp.derivative()
@@ -628,11 +631,12 @@ def build_all_trig_interpolators(dataset, max_trig_n=None):
                 "r_min": 0.0,
                 "r_max": float(np.max(radii)),
             }
+            sigma = dataset.get(f"{key}_sigma")
             fit_meta[key] = {
                 "order": None,
                 "radii": radii_aug.copy(),
                 "values": values_aug.copy(),
-                "sigma": dataset.get(f"{key}_sigma"),
+                "sigma": None if sigma is None else sigma[sort_idx],
                 "model_kind": "interp",
             }
 

@@ -23,6 +23,7 @@ from matplotlib.colors import LogNorm, Normalize
 from nicegui import ui
 from PIL import Image
 import plotly.graph_objects as go
+from plotly.colors import qualitative
 from plotly.subplots import make_subplots
 
 from vmi_analysis.circularization import polar_fit as pf
@@ -205,6 +206,29 @@ def _fit_comparison_figure(polar, theta, r, fit):
                       coloraxis={"colorscale": "Viridis", "cmin": float(finite.min()),
                                  "cmax": float(finite.max()), "colorbar": {"title": "Intensity"}})
     return fig
+
+
+def _radial_model_figures(reduced):
+    dataset = reduced["dataset"]
+    radii = dataset["radii"]
+    sample_r, curves = pf.radial_model_curves(reduced)
+    model_label = "PCHIP" if reduced["model"] == "interp" else f"Polynomial order {reduced['order']}"
+    for prefix in ("A", "B"):
+        figure = _style(go.Figure(), f"{prefix}ₙ(r) · {model_label}")
+        for key, curve in curves.items():
+            if not key.startswith(prefix):
+                continue
+            n = int(key[1:])
+            color = qualitative.Plotly[(n - 1) % len(qualitative.Plotly)]
+            figure.add_scatter(x=sample_r, y=curve, name=f"{key} model",
+                               mode="lines", line={"color": color}, legendgroup=key)
+            figure.add_scatter(x=radii, y=dataset[key], name=f"{key} rings",
+                               mode="markers", marker={"color": color}, legendgroup=key,
+                               error_y={"type": "data", "array": dataset[f"{key}_sigma"]})
+        figure.update_layout(height=410, showlegend=True)
+        figure.update_xaxes(title_text="Radius (pixels)")
+        figure.update_yaxes(title_text=f"{prefix}ₙ (pixels)")
+        yield figure
 
 
 def build(jobs=None, *, use_calibration=None) -> None:
@@ -411,15 +435,18 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 "calibration.provenance")
             ui.button("Rebuild file from rings", on_click=lambda: _rebuild_file())
         with ui.row().classes("gap-4 items-end flex-wrap"):
-            widgets["order"] = persist(num_input("Slope order", 1, step=1),
-                                       "calibration.slope_order")
-            ui.button("Update a_n/b_n preview",
+            radial_model = persist(ui.select({"interp": "Interp", "poly": "Poly"},
+                                             label="Radial model", value="interp")
+                                   .props("outlined dense").classes("w-36"), "calibration.radial_model")
+            poly_order = persist(num_input("Poly order", 1, min=1, step=1),
+                                 "calibration.slope_order")
+            interp_order = persist(num_input("Image interpolation order", 3, min=0, max=5, step=1),
+                                   "calibration.interp_order")
+            ui.button("Update radial model plots",
                       on_click=lambda: _update_reduction())
-        coefficients_table = ui.table(
-            columns=[{"name": "coefficient", "label": "Coefficient",
-                      "field": "coefficient"},
-                     {"name": "value", "label": "Value", "field": "value"}],
-            rows=[], row_key="coefficient").classes("w-full")
+        ui.label("Interp uses PCHIP. Image interpolation order controls pixel resampling in Circularize.") \
+            .classes("vmi-subtitle")
+        model_plots = ui.column().classes("w-full")
         with ui.row().classes("gap-4 items-end flex-wrap w-full"):
             widgets["session"] = persist(path_input(
                 "Session file (.json)",
@@ -680,7 +707,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                      rings=[], view={"r0": 0.0, "r1": float(r[-1]),
                                      "theta0": 0.0, "theta1": float(pf.TWO_PI)})
         rings_table.rows = []
-        coefficients_table.rows = []
+        model_plots.clear()
         remap_status.text = "processing…"
         await _apply_processing()
         if state["processed"] is None:
@@ -858,24 +885,28 @@ def build(jobs=None, *, use_calibration=None) -> None:
         ui.notify(f"Appended ring r0 = {fit.params['r0']:.3f} px")
 
     async def _update_reduction():
-        if len(state["rings"]) < 2:
-            coefficients_table.rows = []
+        model_plots.clear()
+        rings = tuple(state["rings"])
+        if not rings:
+            return
+        model = radial_model.value
+        order = int(poly_order.value or 1)
+        if model == "poly" and len(rings) < order:
+            with model_plots:
+                ui.label(f"Accept at least {order} rings for polynomial order {order}.")
             return
         try:
             reduced = await asyncio.to_thread(
-                pf.reduce_rings, state["rings"], model="poly",
-                order=int(widgets["order"].value or 1))
+                pf.reduce_rings, rings, model=model, order=order)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             _notify_error(exc)
             return
-        rows = []
-        for key, value in sorted(reduced["a"].items()):
-            if key.endswith("_sigma"):
-                continue
-            sigma = reduced["a"].get(f"{key}_sigma", float("nan"))
-            rows.append({"coefficient": key,
-                         "value": f"{value:.6g} ± {sigma:.3g}"})
-        coefficients_table.rows = rows
+        if rings != tuple(state["rings"]) or model != radial_model.value or order != int(poly_order.value or 1):
+            return
+        model_plots.clear()
+        with model_plots:
+            for figure in _radial_model_figures(reduced):
+                ui.plotly(plot_options(figure)).classes("w-full")
 
     def _export_to_circularize():
         if not widgets["output"].value:
@@ -886,7 +917,9 @@ def build(jobs=None, *, use_calibration=None) -> None:
         manual_center = image["center"] if image and not image["brightest_center"] else None
         if use_calibration is None:
             return
-        use_calibration(str(Path(widgets["output"].value).expanduser().resolve()), raw_path, manual_center)
+        use_calibration(str(Path(widgets["output"].value).expanduser().resolve()), raw_path, manual_center,
+                        radial_model_value=radial_model.value, poly_order_value=int(poly_order.value or 1),
+                        interp_order_value=int(interp_order.value if interp_order.value is not None else 3))
         ui.notify("Set the Circularize calibration file and NumPy input." if raw_path else
                   "Set the Circularize calibration file.")
 
@@ -905,3 +938,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
     color_min.on_value_change(lambda _: _change_color_limit(color_min))
     color_max.on_value_change(lambda _: _change_color_limit(color_max))
     export_button.on_click(_export_to_circularize)
+
+    async def _change_radial_model():
+        poly_order.set_enabled(radial_model.value == "poly")
+        await _update_reduction()
+
+    poly_order.set_enabled(radial_model.value == "poly")
+    radial_model.on_value_change(_change_radial_model)
+    poly_order.on_value_change(_update_reduction)

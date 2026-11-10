@@ -781,6 +781,16 @@ def reduce_rings(fits, model="poly", order=2):
     raise ValueError("model must be 'poly' or 'interp'")
 
 
+def radial_model_curves(reduced):
+    """Sample the Circularize models from the origin to the outermost fitted ring."""
+    from .circularization import eval_radial_model
+
+    radii = np.linspace(0, float(np.max(reduced["dataset"]["radii"])), 500)
+    curves = {key: eval_radial_model(model, radii)[0]
+              for key, model in reduced["fit_params"].items()}
+    return radii, curves
+
+
 # ---------------------------------------------------------------------------
 # Session persistence
 # ---------------------------------------------------------------------------

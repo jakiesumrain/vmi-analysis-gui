@@ -113,8 +113,8 @@ def index() -> None:
         with ui.tabs().classes("w-full") as tabs:
             tab_objs = [ui.tab(name) for name, _ in TABS]
         with ui.tab_panels(tabs, value=tab_objs[0]).classes("w-full bg-transparent"):
-            def export_calibration(extracted_path, image_path, manual_center):
-                use_calibration(extracted_path, image_path, manual_center)
+            def export_calibration(extracted_path, image_path, manual_center, **settings):
+                use_calibration(extracted_path, image_path, manual_center, **settings)
 
             for tab, (_, module) in zip(tab_objs, TABS):
                 with ui.tab_panel(tab):

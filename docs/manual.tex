@@ -1666,9 +1666,15 @@ calibration. \\
 Write \code{\#} comment lines before each block (band, filter, Abel method,
 RMS). Parsers ignore them. \\
 \addlinespace
-\emph{Slope order} & number, 1 & \code{calibration.\allowbreak{}slope\_\allowbreak{}order} &
-Order of the through-origin polynomial used only for the $a_n,b_n$ preview;
-order 1 reproduces the reference software. \\
+\emph{Radial model} & select, Interp & \code{calibration.\allowbreak{}radial\_\allowbreak{}model} &
+Use shape-preserving cubic interpolation (Interp) or a through-origin
+polynomial (Poly) to model $A_n(r)$ and $B_n(r)$. \\
+\addlinespace
+\emph{Poly order} & number, 1 & \code{calibration.\allowbreak{}slope\_\allowbreak{}order} &
+Degree of the through-origin polynomial. Order 1 gives a straight line. \\
+\addlinespace
+\emph{Image interpolation order} & number, 3 & \code{calibration.\allowbreak{}interp\_\allowbreak{}order} &
+Order used by Circularize to resample the detector image with either radial model. \\
 \addlinespace
 \emph{Session file} & save, \code{circularization/\allowbreak{}trig-\allowbreak{}calibration.\allowbreak{}session.\allowbreak{}json} &
 \code{calibration.\allowbreak{}session} & Save/load image geometry, processing, masks and
@@ -1700,15 +1706,15 @@ The comparison shows the processed band used for the fit and the model with shar
 scale. Grey regions mark excluded pixels, and the yellow line shows
 $r_g(\theta)$. Review the images before accepting the ring.
 (6) Press \emph{Accept ring} to append one block to the
-output file, then repeat from step 3 for the next ring. (7) After at least two
-rings, \emph{Update a\_n/b\_n preview} shows the through-origin slopes. The
-session file can be saved at any point and loaded later. After exporting the
-rings, click \emph{Export to Circularize} to pass the NumPy image, center
-setting, and calibration file to Circularize.
+output file, then repeat from step 3 for the next ring. (7) Choose a radial
+model and use \emph{Update radial model plots} to compare its curves with the
+accepted ring measurements. Click \emph{Export to Circularize} to pass the
+NumPy image, center, calibration file, radial model, and orders to Circularize.
 
 \textbf{Results.} The panel shows both polar previews with band, masks and fitted
 ridge overlays, a fit comparison, the parameter table, the accepted-ring
-table, and the $a_n,b_n$ preview. The parameter table reports local
+table, and separate $A_n(r)$ and $B_n(r)$ plots with ring measurements and
+their uncertainties. The parameter table reports local
 least-squares errors. These estimates do not account for correlations between
 interpolated pixels. \emph{Rebuild file from
 rings} rewrites the file from the accepted rings and is the recovery path after
@@ -1728,9 +1734,9 @@ calibration. Hansen--Law assumes the first radial column is $r=0$; keep the
 default radial grid. Masks, processing settings and provenance live in the
 session file; the extracted \code{.\allowbreak{}txt} contains only the ring blocks.
 A ring whose radius is already present within 0.5\,px is refused to avoid
-duplicates. The file is append-only; use \emph{Rebuild} to rewrite it. The
-$a_n,b_n$ preview is diagnostic only --- Circularize and PES recompute the
-slopes from the blocks.
+duplicates. The file is append-only; use \emph{Rebuild} to rewrite it.
+Circularize sorts ring blocks by radius before building the interpolant and
+computes its radial model from the saved blocks.
 
 \subsection{PES / Abel inversion}
 \label{sec:pes}
