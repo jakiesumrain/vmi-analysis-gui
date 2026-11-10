@@ -77,7 +77,7 @@ def index() -> None:
     with ui.header().classes("items-center justify-between px-6 py-3") \
             .style("background: #faf9f5; border-bottom: 1px solid #e6dfd8"):
         with ui.row().classes("items-baseline gap-3"):
-            ui.label("VMI Analysis").classes("vmi-title vmi-title-md")
+            ui.label("VMI Analysis").classes("vmi-title vmi-title-md vmi-title-bold")
             ui.label("photoelectron imaging toolbox").classes("vmi-subtitle")
         with ui.row().classes("items-center gap-4"):
             def change_limit(event):

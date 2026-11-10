@@ -22,7 +22,8 @@ mle_convergence = 0.1
 mle_max_iterations = 50
 mle_method = "sigma"
 fitting_method = "mle"
-tuning_frame_index = 0
+# Omit tuning_frame_index to select a random tuning frame.
+# tuning_frame_index = 0
 tuning_bins_photons = 40
 tuning_bins_net_gradient = 40
 tuning_bins_precision = 40
@@ -41,6 +42,8 @@ tuning_only = false
 [vmi_picasso.histogram]
 resolution_factor = 1
 enable_abel = true
+# Rotation after centering and before Abel inversion. Positive is counterclockwise.
+abel_rotation_deg = 0.0
 
 [vmi_picasso.energy_calibration]
 fit_xe_4d = false

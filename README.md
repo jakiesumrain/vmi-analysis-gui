@@ -57,8 +57,8 @@ That is the whole setup. The app starts with one tab per script:
 | Accumulate | `vmi_analysis.imaging.h5_accumulate_fast_gmd` | fast threshold+denoise accumulation with live preview (QC) |
 | Centroiding | `vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch` | Picasso localization → checkpoint + 2D VMI histogram |
 | Binning | `vmi_analysis.centroiding.vmi_histogram_gmd_bins` | split events into GMD bins, one 2D histogram per bin |
+| Trig Calibration | `vmi_analysis.circularization.polar_fit` (interactive tool) | fit ring ridges in a processed polar image with optional inverse Abel and filtering |
 | Circularize | `vmi_analysis.circularization.circularization` | correct radial distortion on the original NumPy detector grid or on a legacy text image |
-| Trig Calibration | `vmi_analysis.circularization.polar_fit` (interactive tool) | fit ring ridges in a point-sampled polar image with optional inverse Abel and display enhancement |
 | PES | `vmi_analysis.circularization.process_gmd_bins` | per-bin chain → Abel inversion → spectra + betas |
 | Pipeline | all four pipeline stages | GMD map → centroiding → binning → PES, in one job |
 
@@ -115,10 +115,7 @@ The repository contains **no data**. You need:
    `circularization/`: `extracted-FOC100eV-20260710.txt` (trig-fit
    coefficients) and `reassignment-FOC100eV-20260710.txt` (radial
    reassignment map; an identity map is valid). These are per-experiment
-   inputs. The **Trig Calibration** tab can build the extracted file
-   by fitting ring ridges on a polar remap with optional inverse Abel.
-   Enhancement helps select rings. The fitter uses unenhanced data.
-   The PES panel warns when calibration files are missing.
+   inputs; the PES panel warns while they are missing.
 
 ## A first end-to-end run
 
@@ -131,9 +128,8 @@ The repository contains **no data**. You need:
    Produces a checkpoint `.h5` and a 2D histogram in the output directory.
 3. **Binning tab** — choose the checkpoint, GMD map, and output directory; Run produces one
    GMD-binned 2D histogram `.npy` per bin.
-4. **PES tab** — build or drop the two calibration files into
-   `circularization/` (the Trig Calibration tab can produce the extracted
-   file), keep the PyAbel backend, Run. Produces energy spectra, betas, and an
+4. **PES tab** — drop the two calibration files into `circularization/`,
+   keep the PyAbel backend, Run. Produces energy spectra, betas, and an
    `.npz` with everything under `circularization/gmd_bins_results_*/`.
 
 Or press **Run pipeline** on the Pipeline tab after step 1 — it chains
@@ -176,13 +172,15 @@ the original downloadable/croppable figure, and standalone PNG export is unchang
 Accumulate uses the same interactive controls for its live preview and final
 image, with equal pixel scales and original counts on hover. The final view
 reads the saved `.txt` array directly; **View saved result** opens existing
-outputs without rerunning. **Frame histogram**, beside the Threshold field,
-renders the pixel-value distribution of one frame — enter a 0-based index or
-leave it blank for a random frame — with the current threshold marked and the
-share of pixels above it, before and after the 2×2 denoise, so the threshold
-can be chosen from the data. When a dark frame is set, the preview is
-dark-subtracted exactly like the accumulation run. Its Viridis log color range matches the standalone
+outputs without rerunning. Its Viridis log color range matches the standalone
 script, and the original PNG remains available under **Saved PNG**.
+**Histogram frame** plots the pixel values of one HDF5 frame. Enter a
+0-based frame index or leave it blank to pick a random frame.
+**Histogram average** plots the pixel-by-pixel mean of every frame in the
+specified number of randomly chosen, distinct HDF5 files. Both previews
+subtract the selected dark frame when one is supplied.
+Set **Histogram X min**, **Histogram X max**, or **Bin width (counts)** to
+control the range and binning. Blank fields use automatic values.
 The **Colormap** dropdown above the image changes colors immediately without
 rerunning or resetting the zoom, and remembers the selection for future views.
 

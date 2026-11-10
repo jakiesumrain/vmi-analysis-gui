@@ -132,6 +132,26 @@ class CentroidScriptCalibrationTests(unittest.TestCase):
             cls.namespace = runpy.run_module(module, run_name="calibration_test")
         cls.env = cls.namespace["perform_abel_transform"].__globals__
 
+    def test_abel_preprocessing_centers_then_applies_requested_rotation(self):
+        raw = np.zeros((9, 9))
+        raw[2, 3] = 10.0
+        centered = np.zeros_like(raw)
+        centered[4, 4] = 10.0
+        centered[4, 6] = 4.0
+        with patch.object(self.env["abel"].tools.center, "center_image",
+                          return_value=centered) as center:
+            for angle, turns in ((0, 0), (90, 1), (-90, 3), (180, 2)):
+                with self.subTest(angle=angle), patch.dict(self.env, ABEL_ROTATION_DEG=angle):
+                    image = self.env["center_and_rotate"](raw, verbose=False)
+                    np.testing.assert_array_equal(image, np.rot90(centered, turns))
+            with patch.dict(self.env, ABEL_ROTATION_DEG=45.0):
+                image = self.env["center_and_rotate"](raw, verbose=False)
+            self.assertEqual(image.shape, centered.shape)
+            self.assertAlmostEqual(image[4, 4], 10.0)
+            self.assertGreater(image[3, 5], 1.0)
+            self.assertEqual(image[5, 5], 0.0)
+        self.assertEqual(center.call_args.args[1], (2, 3))
+
     def test_script_csv_and_console_use_input_alpha_independently_of_fit(self):
         q, y, _, _, _, _ = synthetic_spectrum()
         radius = np.sqrt(q)
@@ -193,15 +213,18 @@ class CentroidScriptCalibrationTests(unittest.TestCase):
             raw = np.arange(64, dtype=np.uint16).reshape(8, 8)
             path = Path(folder) / "frame.h5"
             with h5py.File(path, "w") as handle:
-                handle.create_dataset("raw/data", data=raw[None])
-            with patch.dict(self.env, OUTPUT_DIR=folder, TUNING_FRAME_INDEX=0,
+                handle.create_dataset("raw/data", data=np.stack([raw, raw + 100]))
+            output = io.StringIO()
+            with patch.dict(self.env, OUTPUT_DIR=folder, TUNING_FRAME_INDEX=None,
                             _run_picasso_batch=lambda *args: locs,
                             sigma_clipped_stats=lambda *args, **kw: (2., 2., 0.)), \
-                    patch.object(self.env["plt"], "show"), redirect_stdout(io.StringIO()):
-                self.env["run_tuning_check"]([(str(path), 0)], None, None)
+                    patch.dict(self.env, randrange=lambda count: count - 1), \
+                    patch.object(self.env["plt"], "show"), redirect_stdout(output):
+                self.env["run_tuning_check"]([(str(path), 0), (str(path), 1)], None, None)
+            self.assertIn("Global frame index: 1", output.getvalue())
             metadata, arrays = load_plot_data(Path(folder) / TUNING_DATA)
             self.assertEqual(metadata["n_events"], 2)
-            np.testing.assert_array_equal(arrays["frame"], raw.astype(float) - 2)
+            np.testing.assert_array_equal(arrays["frame"], raw.astype(float) + 98)
             np.testing.assert_array_equal(arrays["x"], locs.x)
             np.testing.assert_array_equal(arrays["photons"], locs.photons)
 

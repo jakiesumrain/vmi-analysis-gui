@@ -48,6 +48,25 @@ class FramePreviewTests(unittest.TestCase):
             with self.assertRaises(IndexError):
                 frame_preview.pick_frame(refs, bad)
 
+    def test_average_weights_each_frame_and_samples_distinct_files(self):
+        write_h5(self.folder / "RAW-0001.h5", np.full((1, 8, 8), 2, dtype=np.uint16))
+        write_h5(self.folder / "RAW-0002.h5", np.full((3, 8, 8), 8, dtype=np.uint16))
+        average, count = frame_preview.average_raw_frames(self.folder, 2)
+        self.assertEqual(count, 4)
+        np.testing.assert_array_equal(average, np.full((8, 8), 6.5))
+        with self.assertRaisesRegex(ValueError, "between 1 and 2"):
+            frame_preview.average_raw_frames(self.folder, 3)
+        with self.assertRaises(InterruptedError):
+            frame_preview.average_raw_frames(self.folder, 1, stopping=lambda: True)
+
+    def test_dark_subtraction_preserves_negative_values_and_checks_shape(self):
+        path = self.folder / "dark.npy"
+        np.save(path, np.array([[3, 7]]))
+        values = np.array([[1, 8]], dtype=np.uint16)
+        np.testing.assert_array_equal(frame_preview.subtract_dark(values, path), [[-2, 1]])
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            frame_preview.subtract_dark(values.T, path)
+
     def test_cache_rebuilds_when_a_file_is_added(self):
         self.assertEqual(len(frame_preview.list_raw_frames(self.folder)), 4)
         write_h5(self.folder / "RAW-0003.h5", np.zeros((1, 8, 8), dtype=np.uint16))
@@ -61,29 +80,40 @@ class FramePreviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             frame_preview.list_raw_frames(self.folder)
 
-    def test_statistics_count_threshold_and_denoise(self):
-        frame = np.zeros((8, 8), dtype=np.uint16)
-        frame[3, 3] = 40        # isolated pixel: removed by the 2×2 opening
-        frame[5:7, 5:7] = 40    # solid 2×2 block: survives
-        stats = frame_preview.frame_statistics(frame, 10, denoise=True)
-        self.assertEqual(stats["n_pixels"], 64)
-        self.assertEqual(stats["above"], 5)
-        self.assertEqual(stats["after_denoise"], 4)
-        self.assertEqual(stats["maximum"], 40)
-        linear = frame_preview.frame_statistics(frame, 10, denoise=False)
-        self.assertIsNone(linear["after_denoise"])
-        self.assertEqual(linear["above"], 5)
-
-    def test_histogram_figure_marks_threshold_and_serialises(self):
+    def test_histogram_counts_raw_pixel_values_and_serialises(self):
         values = np.array([[0, 1, 2], [3, 100, 1000]], dtype=np.uint16)
-        figure = frame_histogram_figure(values, 50)
+        figure = frame_histogram_figure(values, bins=4)
         self.assertEqual(figure.data[0].type, "bar")
-        self.assertEqual(int(np.sum(figure.data[0].y)), values.size)
+        np.testing.assert_array_equal(figure.data[0].y, [5, 0, 0, 1])
         self.assertEqual(figure.layout.yaxis.type, "log")
-        self.assertTrue(figure.layout.shapes)
+        self.assertFalse(figure.layout.shapes)
+        self.assertFalse(figure.layout.annotations)
         figure.to_json()
         with self.assertRaises(ValueError):
-            frame_histogram_figure(np.array([]), 5)
+            frame_histogram_figure(np.array([]))
+
+    def test_histogram_limits_and_bin_width_include_a_partial_last_bin(self):
+        values = np.array([0, 2, 3, 4, 5, 6, 7, 8, 9])
+        figure = frame_histogram_figure(values, x_min=2, x_max=8, bin_width=2.5)
+        self.assertEqual(figure.layout.xaxis.range, (2, 8))
+        np.testing.assert_array_equal(figure.data[0].y, [3, 2, 2])
+        np.testing.assert_allclose(figure.data[0].width, [2.5, 2.5, 1])
+
+    def test_histogram_defaults_missing_limits_and_width(self):
+        values = np.array([0, 1, 2, 3, 4])
+        figure = frame_histogram_figure(values, x_max=2, bins=2)
+        self.assertEqual(figure.layout.xaxis.range, (0, 2))
+        np.testing.assert_array_equal(figure.data[0].y, [1, 2])
+        constant = frame_histogram_figure(np.zeros(4), bin_width=1)
+        np.testing.assert_array_equal(constant.data[0].y, [4])
+
+    def test_histogram_rejects_invalid_limits_and_bin_width(self):
+        values = np.array([0, 10])
+        for options in ({"x_min": 5, "x_max": 5}, {"x_max": np.inf},
+                        {"bin_width": 0}, {"bin_width": -1},
+                        {"bin_width": np.nan}, {"bin_width": 0.00001}):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                frame_histogram_figure(values, **options)
 
 
 if __name__ == "__main__":

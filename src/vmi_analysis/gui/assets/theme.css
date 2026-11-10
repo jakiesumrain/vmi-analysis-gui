@@ -37,6 +37,9 @@ body {
   letter-spacing: -0.5px;
   color: var(--vmi-ink);
 }
+/* Opt-in bold wordmark for the app header; panel headings keep the weight-400
+   display rule from DESIGN.md. */
+.vmi-title-bold { font-weight: 700; }
 .vmi-title-lg { font-size: 36px; line-height: 1.15; }
 .vmi-title-md { font-size: 28px; line-height: 1.2; letter-spacing: -0.3px; }
 .vmi-title-sm { font-size: 22px; line-height: 1.3; letter-spacing: -0.2px; }

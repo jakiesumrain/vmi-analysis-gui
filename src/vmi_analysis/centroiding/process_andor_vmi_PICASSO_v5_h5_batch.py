@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import sys
 import glob
+from random import randrange
 import pandas as pd
 import numpy as np
 from vmi_analysis.imaging.centering import brightest_pixel
@@ -137,7 +138,7 @@ FITTING_METHOD = vmi_cfg.get("fitting_method", "mle")
 TUNING_BINS_PHOTONS = vmi_cfg.get("tuning_bins_photons", 50)
 TUNING_BINS_NET_GRADIENT = vmi_cfg.get("tuning_bins_net_gradient", 50)
 TUNING_BINS_PRECISION = vmi_cfg.get("tuning_bins_precision", 50)
-TUNING_FRAME_INDEX = vmi_cfg.get("tuning_frame_index", 10000)
+TUNING_FRAME_INDEX = vmi_cfg["tuning_frame_index"]
 
 # --- PARALLEL PROCESSING ---
 ENABLE_PARALLEL = proc_cfg["enable_parallel"]
@@ -163,6 +164,7 @@ MASK_RADIUS = proc_cfg.get("mask_radius", None)
 
 # --- HISTOGRAM PARAMETERS ---
 HISTOGRAM_RESOLUTION_FACTOR = hist_cfg["resolution_factor"]
+ABEL_ROTATION_DEG = float(hist_cfg["abel_rotation_deg"])
 
 # --- SUMMARY SPECTRUM PLOT AXES ---
 # Optional [vmi_picasso.spectrum_plot] section: axis limits for the
@@ -783,20 +785,20 @@ def build_vmi_histogram_from_checkpoint(
 # ==============================================================================
 
 def center_and_rotate(vmi_2d, verbose=True):
-    """Center the image on its brightest spot (the VMI center) with
-    abel.tools.center.center_image, so the spot sits at the geometrical
-    center of the matrix (PyAbel convention rows//2, cols//2), then rotate
-    by 90 deg so the laser polarization axis is vertical. The rotation and
-    the Abel transform need no explicit origin afterwards: the default
-    PyAbel center is the spot itself.
-    """
+    """Center on the brightest spot and apply the configured Abel rotation."""
     row, col = brightest_pixel(vmi_2d)
     if verbose:
         print(f"[Abel] Brightest spot: row={row}, col={col}")
     vmi_2d = abel.tools.center.center_image(vmi_2d, (row, col), odd_size=True, square=True)
-    vmi_2d = np.rot90(vmi_2d)
+    angle = ABEL_ROTATION_DEG % 360
+    if angle % 90 == 0:
+        vmi_2d = np.rot90(vmi_2d, int(angle // 90))
+    else:
+        from scipy.ndimage import rotate
+
+        vmi_2d = rotate(vmi_2d, angle, reshape=False, order=1)
     if verbose:
-        print("[Abel] Centered on brightest spot, rotated 90 deg (polarization vertical)")
+        print(f"[Abel] Centered on brightest spot. Configured rotation: {ABEL_ROTATION_DEG:g} deg CCW.")
     return vmi_2d
 
 def fit_xe_energy_calibration(q, pes_px2):
@@ -825,11 +827,8 @@ def perform_abel_transform(vmi_2d):
     photoelectron energy spectrum with PyAbel's angular_integration_3D + toPES.
 
     PyAbel assumes the cylindrical symmetry axis (the laser polarization for
-    VMI) is vertical, but the raw image has horizontal polarization. The image
-    is first centered on its brightest spot with abel.tools.center.center_image
-    (spot -> geometrical matrix center) and then rotated by 90 deg, so neither
-    the rotation nor the transform needs an explicit origin. Inversion method:
-    Hansen–Law.
+    VMI) is vertical. The image is centered on its brightest spot and rotated
+    by the user-specified angle before Hansen–Law inversion.
     Energy calibration:
     E = alpha * r^2 (eV if alpha is supplied, otherwise pixel^2).
     Optionally fit the Xe 4d peaks before scaling. Outputs energy_spectrum.csv and
@@ -950,12 +949,8 @@ def plot_final_summary(vmi_2d, vmi_3d, n_events, n_frames, energy=None, pes=None
         return im
 
     ax1 = plt.subplot(2, 2, 1)
-    # same center + rotate as the Abel transform, so both panels are framed
-    # identically with the polarization vertical
-    if abel_available:
-        raw_disp = center_and_rotate(vmi_2d, verbose=False)
-    else:
-        raw_disp = np.rot90(vmi_2d)
+    # Use the same geometry as the Abel transform when displaying both images.
+    raw_disp = center_and_rotate(vmi_2d, verbose=False) if abel_available else vmi_2d
     save_plot_data(os.path.join(OUTPUT_DIR, SUMMARY_DATA), {
         "n_events": int(n_events), "n_frames": int(n_frames),
         "box_size": BOX_SIZE, "min_net_gradient": MIN_NET_GRADIENT,
@@ -1042,12 +1037,18 @@ Output:
 
 def run_tuning_check(frame_info, dark_frame, flat_field_normalized):
     """Run detection on one frame (from HDF5) to tune parameters"""
+    if not frame_info:
+        raise ValueError("No HDF5 frames are available for the tuning check.")
 
     print("=" * 80)
     print("TUNING CHECK")
     print("=" * 80)
 
-    test_global_idx = min(TUNING_FRAME_INDEX, len(frame_info) - 1)
+    if TUNING_FRAME_INDEX is None:
+        test_global_idx = randrange(len(frame_info))
+        print("[Tuning] Selected a random frame.")
+    else:
+        test_global_idx = min(int(TUNING_FRAME_INDEX), len(frame_info) - 1)
     h5_path, frame_in_h5 = frame_info[test_global_idx]
 
     print(f"[Tuning] Global frame index: {test_global_idx}")
