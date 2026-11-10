@@ -431,12 +431,12 @@ def build(jobs=None, *, use_calibration=None) -> None:
                     ui.button("Close", on_click=inspection_dialog.close).props("flat")
                 with ui.row().classes("items-center gap-4"):
                     zoom_label = ui.label()
-                    horizontal_zoom = ui.slider(min=0.25, max=8, step=0.25, value=1).classes("w-52").props(
+                    horizontal_zoom = ui.slider(min=0.05, max=1, step=0.05, value=1).classes("w-52").props(
                         'aria-label="Horizontal zoom"')
                     zoom_label.bind_text_from(horizontal_zoom, "value", lambda value: f"Horizontal zoom {value:g}×")
                     inspection_undo = ui.button("Undo selection", icon="undo",
                                                 on_click=lambda: _undo_selection()).disable()
-                ui.label("Drag to mask. Scroll horizontally when zoomed in.").classes("vmi-subtitle")
+                ui.label("Drag to mask. Adjust horizontal zoom to narrow the band.").classes("vmi-subtitle")
                 with ui.element("div").classes("w-full overflow-x-auto"):
                     inspection_image = _polar_image("inspection")
                 inspection_status = ui.label().classes("vmi-subtitle")
