@@ -156,6 +156,7 @@ def build(jobs: JobManager):
             radial_model.value = radial_model_value
         if poly_order_value is not None:
             poly_order.value = poly_order_value
+        return int(max_trig_n.value or 0)
 
     return use_calibration
 

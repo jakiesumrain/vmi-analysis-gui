@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from base64 import b64encode
+from collections import Counter
 from io import BytesIO
 from pathlib import Path
 import time
@@ -252,6 +253,34 @@ def _radial_model_figures(reduced):
         figure.update_xaxes(title_text="Radius (pixels)")
         figure.update_yaxes(title_text=f"{prefix}ₙ (pixels)")
         yield figure
+
+
+def _handoff_warnings(preview_rings, saved_rings, max_trig_n):
+    def terms(ring):
+        return sorted(key for key in ring.params if key.startswith(("A", "B")) and key[1:].isdigit())
+
+    def number(value):
+        # Match the precision used when exporting a ring to text.
+        return float(f"{value:.10g}") if np.isfinite(value) else None
+
+    def signature(ring):
+        return tuple((key, number(ring.params[key]), number(ring.sigmas.get(key, np.nan)))
+                     for key in ("r0", *terms(ring)))
+
+    warnings = []
+    if not saved_rings:
+        warnings.append("The saved file contains no rings.")
+    if len(preview_rings) != len(saved_rings):
+        warnings.append(f"The preview has {len(preview_rings)} ring(s) and the saved file has "
+                        f"{len(saved_rings)}. Use Refresh rings from file to compare.")
+    elif Counter(map(signature, preview_rings)) != Counter(map(signature, saved_rings)):
+        warnings.append("Saved ring measurements differ from the preview. Use Refresh rings from file to compare.")
+    if max_trig_n > 0:
+        excluded = sorted({key for ring in saved_rings for key in terms(ring) if int(key[1:]) > max_trig_n},
+                          key=lambda key: (int(key[1:]), key[0]))
+        if excluded:
+            warnings.append(f"Circularize Max trig n = {max_trig_n} excludes {', '.join(excluded)} from the saved file.")
+    return warnings
 
 
 def build(jobs=None, *, use_calibration=None) -> None:
@@ -1111,11 +1140,25 @@ def build(jobs=None, *, use_calibration=None) -> None:
         manual_center = image["center"] if image and not image["brightest_center"] else None
         if use_calibration is None:
             return
-        use_calibration(str(Path(widgets["output"].value).expanduser().resolve()), raw_path, manual_center,
-                        radial_model_value=radial_model.value,
-                        poly_order_value=int(poly_order.value or 1) if radial_model.value == "poly" else None)
-        ui.notify("Set the Circularize calibration file and NumPy input." if raw_path else
-                  "Set the Circularize calibration file.")
+        path = Path(widgets["output"].value).expanduser().resolve()
+        max_trig_n = use_calibration(
+            str(path), raw_path, manual_center, radial_model_value=radial_model.value,
+            poly_order_value=int(poly_order.value or 1) if radial_model.value == "poly" else None)
+        message = (
+            "Sent calibration file and NumPy input to Circularize."
+            if raw_path else "Sent calibration file path to Circularize."
+        )
+        try:
+            saved_rings = pf.load_accepted_rings(path)
+            warnings = _handoff_warnings(state["rings"], saved_rings, max_trig_n)
+        except FileNotFoundError:
+            warnings = ["The calibration file has not been saved yet."]
+        except (OSError, ValueError) as exc:
+            warnings = [f"Could not check the saved calibration. {exc}"]
+        if warnings:
+            ui.notify(" ".join([message, *warnings]), type="warning", timeout=10000)
+        else:
+            ui.notify(message)
 
     # ------------------------------------------------------------- wiring
     async def _load_clicked():

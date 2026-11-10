@@ -23,6 +23,19 @@ def make_state():
 
 
 class PanelHelperTests(unittest.TestCase):
+    def test_handoff_compares_ring_values_without_order_or_export_rounding(self):
+        a = pf.RingFit(
+            params={"r0": 10.1234567894, "A3": 0.125}, sigmas={"A3": 0.05},
+            n_terms=3, use_beta=False, band=pf.Rect(9, 11))
+        saved_a = pf.RingFit.from_dict(a.to_dict())
+        saved_a.params["r0"] = 10.12345679
+        b = pf.RingFit(params={"r0": 20., "B1": 1.}, sigmas={"B1": 0.1},
+                       n_terms=1, use_beta=False, band=pf.Rect(19, 21))
+        self.assertEqual(calibration._handoff_warnings([a, b], [b, saved_a], 0), [])
+        self.assertIn("excludes A3", calibration._handoff_warnings([a, b], [b, saved_a], 1)[0])
+        saved_a.params["A3"] = 0.25
+        self.assertIn("measurements differ", calibration._handoff_warnings([a, b], [b, saved_a], 0)[0])
+
     def test_radial_plots_follow_both_models_with_unsorted_rings(self):
         fits = [pf.RingFit(
             params={"r0": radius, "A1": radius / 100, "B1": -radius / 200},
@@ -234,7 +247,8 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                      "calibration.output": str(Path(tmp) / "extracted.txt"),
                      "calibration.radial_bin_size": 0.5, "calibration.n_theta": 24,
                      "calibration.radial_model": "poly", "calibration.slope_order": 2,
-                     "calibration.interp_order": 5, "circularize.interp_order": 1}
+                     "calibration.interp_order": 5, "circularize.interp_order": 1,
+                     "circularize.max_trig_n": 1}
             callbacks = {}
             manager = Mock()
             manager.jobs.return_value = []
@@ -263,7 +277,14 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(any("Center X=10, Center Y=4" in line for line in lines), lines)
                     self.assertTrue(any("9 radial samples from 0 to 4 px at 0.5 px spacing" in line
                                         for line in lines), lines)
-                    callbacks["Send to Circularize"]()
+                    Path(store["calibration.output"]).write_text(
+                        f'{pf.EXTRACTED_HEADER}\n"Gaussian Centre" 12 +- 0.1\n'
+                        '"Trig Term sin(3*theta)" 0.2 +- 0.1\n', encoding="utf-8")
+                    with patch.object(ui, "notify") as notify:
+                        callbacks["Send to Circularize"]()
+                    message = notify.call_args.args[0]
+                    self.assertIn("preview has 0 ring(s) and the saved file has 1", message)
+                    self.assertIn("Max trig n = 1 excludes A3", message)
                     self.assertEqual(store["circularize.inp"], str(path))
                     output = next(element for element in client.elements.values()
                                   if isinstance(element, ui.input)
