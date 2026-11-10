@@ -221,6 +221,24 @@ class OutputTests(unittest.TestCase):
         self.assertAlmostEqual(blocks[0]["A1"], self.fit.params["A1"])
         self.assertAlmostEqual(blocks[0]["B1_sigma"], self.fit.sigmas["B1"])
 
+    def test_refresh_preserves_saved_ring_data_and_source_for_rebuild(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "extracted.txt"
+            first = pf.ring_block_text(self.fit)
+            second = (f"{pf.EXTRACTED_HEADER}\n"
+                      '"Gaussian Centre" 90 +- 0.1\n'
+                      '"Trig Term cos(3*theta)" 2 +- 0.4\n')
+            path.write_text(first + "\n" + second, encoding="utf-8")
+            expected = parse_extracted_txt(path)
+            rings = pf.load_accepted_rings(path)
+            self.assertAlmostEqual(rings[0].rms, self.fit.rms, places=3)
+            self.assertTrue(np.isnan(rings[1].rms))
+            self.assertEqual(rings[1].n_terms, 3)
+            restored = [pf.RingFit.from_dict(ring.to_dict()) for ring in rings]
+            pf.write_ring_blocks(path, [ring.source_block for ring in restored])
+            self.assertEqual(parse_extracted_txt(path), expected)
+            self.assertIn("# ring", path.read_text(encoding="utf-8"))
+
     def test_append_and_parse_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "extracted.txt"

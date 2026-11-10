@@ -31,8 +31,9 @@ from vmi_analysis.imaging.centering import brightest_pixel
 
 from .. import theme
 from ..centroid_plots import COLORMAPS, _style, plot_options
+from ..jobs import MANAGER
 from ..settings import centroid_settings, output_dir
-from .common import REPO_ROOT, num_input, path_input, persist
+from .common import REPO_ROOT, delete_outputs, num_input, path_input, persist
 
 CIRC_DIR = REPO_ROOT / "circularization"
 
@@ -434,6 +435,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 ui.checkbox("Provenance comments", value=True),
                 "calibration.provenance")
             ui.button("Rebuild file from rings", on_click=lambda: _rebuild_file())
+            refresh_rings_button = ui.button("Refresh rings from file", icon="refresh").props("flat")
+            clear_file_button = ui.button("Clear calibration file", icon="delete").props("flat color=negative")
         with ui.row().classes("gap-4 items-end flex-wrap"):
             radial_model = persist(ui.select({"interp": "Interp", "poly": "Poly"},
                                              label="Radial model", value="interp")
@@ -442,6 +445,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                                  "calibration.slope_order")
             interp_order = persist(num_input("Image interpolation order", 3, min=0, max=5, step=1),
                                    "calibration.interp_order")
+            interp_order.classes("w-56")
             ui.button("Update radial model plots",
                       on_click=lambda: _update_reduction())
         ui.label("Interp uses PCHIP. Image interpolation order controls pixel resampling in Circularize.") \
@@ -751,7 +755,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
 
     def _ring_rows():
         return [{"radius": f"{fit.params['r0']:.4f}", "terms": fit.n_terms,
-                 "rms": f"{fit.rms:.4g}"} for fit in state["rings"]]
+                 "rms": f"{fit.rms:.4g}" if np.isfinite(fit.rms) else "—"} for fit in state["rings"]]
 
     def _session_payload():
         return {
@@ -836,14 +840,68 @@ def build(jobs=None, *, use_calibration=None) -> None:
             ui.notify("No accepted rings to write.", type="warning")
             return
         try:
-            blocks = [pf.ring_block_text(fit,
-                                         provenance=bool(widgets["provenance"].value))
+            path = _calibration_path()
+            blocks = [fit.source_block if fit.source_block is not None else
+                      pf.ring_block_text(fit, provenance=bool(widgets["provenance"].value))
                       for fit in state["rings"]]
-            pf.write_ring_blocks(widgets["output"].value, blocks)
+            with MANAGER.write_access([path]):
+                pf.write_ring_blocks(path, blocks)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             _notify_error(exc)
             return
         ui.notify(f"Wrote {len(blocks)} ring block(s) to {widgets['output'].value}")
+
+    def _calibration_path():
+        value = (widgets["output"].value or "").strip()
+        if not value or Path(value).suffix.lower() != ".txt":
+            raise ValueError("Choose an extracted trig-fit .txt file.")
+        return Path(value).expanduser().absolute()
+
+    async def _refresh_rings_from_file():
+        try:
+            path = _calibration_path()
+            rings = pf.load_accepted_rings(path)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            _notify_error(exc)
+            return
+        state["rings"] = rings
+        rings_table.rows = _ring_rows()
+        await _update_reduction()
+        ui.notify(f"Loaded {len(rings)} ring(s) from {path.name}.")
+
+    def _confirm_clear_file():
+        try:
+            path = _calibration_path()
+        except ValueError as exc:
+            _notify_error(exc)
+            return
+
+        def clear():
+            failed = delete_outputs([path])
+            if failed is None:
+                return
+            if failed:
+                _notify_error(OSError(failed[0]))
+                return
+            if widgets["output"].value and Path(widgets["output"].value.strip()).expanduser().absolute() == path:
+                state["rings"] = []
+                state["band"] = None
+                state["masks"] = []
+                state["selection_history"].clear()
+                rings_table.rows = []
+                model_plots.clear()
+                _show_fit(None)
+                _update_overlay()
+            dialog.close()
+            ui.notify(f"Cleared {path.name}. Accept a ring to create it again.")
+
+        with ui.dialog() as dialog, ui.card():
+            ui.label("Clear the calibration file?").classes("text-lg")
+            ui.label(str(path)).classes("break-all")
+            with ui.row():
+                ui.button("Cancel", on_click=dialog.close).props("flat")
+                ui.button("Clear file", on_click=clear).props("color=negative")
+        dialog.open()
 
     async def _accept():
         if state["last_fit"] is None:
@@ -854,20 +912,15 @@ def build(jobs=None, *, use_calibration=None) -> None:
             ui.notify(issue, type="warning")
             return
         try:
-            radii = await asyncio.to_thread(pf.existing_radii,
-                                            widgets["output"].value)
-        except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            _notify_error(exc)
-            return
-        if any(abs(radius - fit.params["r0"]) < 0.5 for radius in radii):
-            ui.notify("A ring at this radius is already in the file; adjust the "
-                      "band or output path.", type="warning")
-            return
-        try:
+            path = _calibration_path()
             block = pf.ring_block_text(
                 fit, provenance=bool(widgets["provenance"].value))
-            await asyncio.to_thread(pf.append_ring_block,
-                                    widgets["output"].value, block)
+            with MANAGER.write_access([path]):
+                if any(abs(radius - fit.params["r0"]) < 0.5 for radius in pf.existing_radii(path)):
+                    ui.notify("A ring at this radius is already in the file. Adjust the band or output path.",
+                              type="warning")
+                    return
+                pf.append_ring_block(path, block)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             _notify_error(exc)
             return
@@ -938,6 +991,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
     color_min.on_value_change(lambda _: _change_color_limit(color_min))
     color_max.on_value_change(lambda _: _change_color_limit(color_max))
     export_button.on_click(_export_to_circularize)
+    refresh_rings_button.on_click(_refresh_rings_from_file)
+    clear_file_button.on_click(_confirm_clear_file)
 
     async def _change_radial_model():
         poly_order.set_enabled(radial_model.value == "poly")

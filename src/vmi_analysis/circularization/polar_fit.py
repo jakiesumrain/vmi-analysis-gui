@@ -24,6 +24,7 @@ axis, one constant-angle line at a time, as in the paper.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -499,6 +500,7 @@ class RingFit:
     processing: dict = field(default_factory=dict)
     created: str = ""
     unconstrained: list[str] | None = None
+    source_block: str | None = None
 
     def ridge_centers(self, theta):
         centers = np.full_like(theta, self.params["r0"], dtype=float)
@@ -536,6 +538,7 @@ class RingFit:
             "processing": self.processing,
             "created": self.created,
             "unconstrained": self.unconstrained,
+            "source_block": self.source_block,
         }
 
     @classmethod
@@ -551,7 +554,7 @@ class RingFit:
                    message=str(data.get("message", "")),
                    processing=dict(data.get("processing", {})),
                    created=str(data.get("created", "")),
-                   unconstrained=data.get("unconstrained"))
+                   unconstrained=data.get("unconstrained"), source_block=data.get("source_block"))
 
 
 def fit_comparison(polar, theta, r, fit):
@@ -724,6 +727,40 @@ def existing_radii(path):
         return []
     return [float(block["radius"]) for block in
             parse_extracted_text(text, source=str(path))]
+
+
+def load_accepted_rings(path):
+    """Load measurements and preserve the source blocks for a later rebuild."""
+    path = Path(path)
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    if not any(line.strip() and not line.lstrip().startswith("#") for line in lines):
+        return []
+    starts = []
+    for index, line in enumerate(lines):
+        if line.strip() == EXTRACTED_HEADER:
+            start = index
+            while start > 0 and lines[start - 1].lstrip().startswith("#"):
+                start -= 1
+            starts.append(start)
+    if not starts:
+        raise ValueError(f"No fit blocks found in {path}")
+    starts[0] = 0
+    rings = []
+    for start, end in zip(starts, [*starts[1:], len(lines)]):
+        text = "".join(lines[start:end])
+        block, = parse_extracted_text(text, source=str(path))
+        if "radius" not in block or not np.isfinite(block["radius"]):
+            raise ValueError(f"Missing or invalid Gaussian Centre in {path}")
+        terms = [key for key in block if re.fullmatch(r"[AB]\d+", key)]
+        rms = re.search(r"^# ring .*\brms=([\d.eE+-]+)\s*$", text, re.MULTILINE)
+        rings.append(RingFit(
+            params={"r0": block["radius"], **{key: block[key] for key in terms}},
+            sigmas={"r0": block["radius_sigma"], **{key: block[f"{key}_sigma"] for key in terms}},
+            n_terms=max((int(key[1:]) for key in terms), default=0),
+            use_beta=False, band=Rect(block["radius"], block["radius"]),
+            rms=float(rms[1]) if rms else float("nan"), source_block=text,
+        ))
+    return rings
 
 
 def write_ring_blocks(path, blocks):
