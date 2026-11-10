@@ -135,7 +135,7 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                      "calibration.output": str(Path(tmp) / "extracted.txt"),
                      "calibration.radial_bin_size": 0.5, "calibration.n_theta": 24,
                      "calibration.radial_model": "poly", "calibration.slope_order": 2,
-                     "calibration.interp_order": 1}
+                     "calibration.interp_order": 5, "circularize.interp_order": 1}
             callbacks = {}
             manager = Mock()
             manager.jobs.return_value = []
@@ -174,6 +174,21 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                     for flag, value in (("--radial-model", "poly"), ("--poly-order", "2"), ("--interp-order", "1")):
                         self.assertEqual(cmd[cmd.index(flag) + 1], value)
                     self.assertTrue({"--shape", "--center", "--polar-dr"}.isdisjoint(cmd))
+                    model = next(element for element in client.elements.values()
+                                 if isinstance(element, ui.select) and element.label == "Radial model")
+                    poly = next(element for element in client.elements.values()
+                                if isinstance(element, ui.number) and element._props.get("label") == "Poly order")
+                    self.assertTrue(poly.enabled)
+                    model.value = "interp"
+                    self.assertFalse(poly.enabled)
+                    with patch.object(circularize.JobView, "attach"):
+                        callbacks["Run"]()
+                    cmd = manager.submit.call_args.args[0].cmd
+                    self.assertNotIn("--poly-order", cmd)
+                    self.assertEqual(cmd[cmd.index("--interp-order") + 1], "1")
+                    model.value = "poly"
+                    self.assertTrue(poly.enabled)
+                    self.assertEqual(poly.value, 2)
 
                     auto = [element for element in client.elements.values()
                             if isinstance(element, ui.checkbox)

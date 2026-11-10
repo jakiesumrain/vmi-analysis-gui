@@ -443,12 +443,9 @@ def build(jobs=None, *, use_calibration=None) -> None:
                                    .props("outlined dense").classes("w-36"), "calibration.radial_model")
             poly_order = persist(num_input("Poly order", 1, min=1, step=1),
                                  "calibration.slope_order")
-            interp_order = persist(num_input("Image interpolation order", 3, min=0, max=5, step=1),
-                                   "calibration.interp_order")
-            interp_order.classes("w-56")
             ui.button("Update radial model plots",
                       on_click=lambda: _update_reduction())
-        ui.label("Interp uses PCHIP. Image interpolation order controls pixel resampling in Circularize.") \
+        ui.label("Interp uses shape-preserving cubic interpolation (PCHIP).") \
             .classes("vmi-subtitle")
         model_plots = ui.column().classes("w-full")
         with ui.row().classes("gap-4 items-end flex-wrap w-full"):
@@ -971,8 +968,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
         if use_calibration is None:
             return
         use_calibration(str(Path(widgets["output"].value).expanduser().resolve()), raw_path, manual_center,
-                        radial_model_value=radial_model.value, poly_order_value=int(poly_order.value or 1),
-                        interp_order_value=int(interp_order.value if interp_order.value is not None else 3))
+                        radial_model_value=radial_model.value,
+                        poly_order_value=int(poly_order.value or 1) if radial_model.value == "poly" else None)
         ui.notify("Set the Circularize calibration file and NumPy input." if raw_path else
                   "Set the Circularize calibration file.")
 

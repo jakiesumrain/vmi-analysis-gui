@@ -59,6 +59,8 @@ def build(jobs: JobManager):
                 "circularize.radial_model")
             poly_order = persist(num_input("Poly order", 2, step=1),
                                  "circularize.poly_order")
+            poly_order.set_enabled(radial_model.value == "poly")
+            radial_model.on_value_change(lambda e: poly_order.set_enabled(e.value == "poly"))
             interp_order = persist(num_input("Interp order", 3, step=1),
                                    "circularize.interp_order")
             max_trig_n = persist(num_input("Max trig n (0 = auto)", 0, step=1),
@@ -100,9 +102,10 @@ def build(jobs: JobManager):
                    "--output", out.value,
                    "--extracted", extracted.value,
                    "--radial-model", radial_model.value,
-                   "--poly-order", str(int(poly_order.value)),
                    "--interp-order", str(int(interp_order.value)),
                    "--plot-dir", plot_dir.value]
+            if radial_model.value == "poly":
+                cmd += ["--poly-order", str(int(poly_order.value))]
             if not raw_input():
                 cmd += ["--shape", str(int(shape_y.value)), str(int(shape_x.value)),
                         "--polar-dr", str(polar_dr.value)]
@@ -132,7 +135,7 @@ def build(jobs: JobManager):
     view.place_console()
 
     def use_calibration(extracted_path, image_path=None, manual_center=None, *,
-                        radial_model_value=None, poly_order_value=None, interp_order_value=None):
+                        radial_model_value=None, poly_order_value=None):
         extracted.value = extracted_path
         if image_path is not None:
             inp.value = image_path
@@ -143,8 +146,6 @@ def build(jobs: JobManager):
             radial_model.value = radial_model_value
         if poly_order_value is not None:
             poly_order.value = poly_order_value
-        if interp_order_value is not None:
-            interp_order.value = interp_order_value
 
     return use_calibration
 
