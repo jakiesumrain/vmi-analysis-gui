@@ -74,6 +74,15 @@ class PanelHelperTests(unittest.TestCase):
         self.assertEqual(calibration._px_to_data(state, -5, 375), (0.0, pf.TWO_PI))
         self.assertEqual(calibration._px_to_data(state, 105, -20), (100.0, 0.0))
 
+    def test_pointer_reads_displayed_samples_after_crop(self):
+        raw = np.arange(20).reshape(4, 5)
+        state = {"raw": raw, "processed": raw * 2, "r": np.arange(5) / 2,
+                 "theta": np.deg2rad([0, 90, 180, 270]),
+                 "view_indices": (np.array([1, 2]), np.array([2, 3, 4]))}
+        self.assertEqual(calibration._polar_sample(state, "raw", 1.9, 0.9), (1.5, 90, 8))
+        self.assertEqual(calibration._polar_sample(state, "processed", 1.9, 0.9), (1.5, 90, 16))
+        self.assertIsNone(calibration._polar_sample(state, "raw", 3, 0.9))
+
     def test_overlay_draws_band_mask_and_ridge(self):
         state = make_state()
         band_only = calibration._overlay_svg(state)

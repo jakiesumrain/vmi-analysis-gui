@@ -87,6 +87,17 @@ def _px_to_data(state, x, y):
     return r, theta
 
 
+def _polar_sample(state, key, x, y):
+    indices = state["view_indices"]
+    if indices is None or state[key] is None:
+        return None
+    ti, ri = indices
+    if not (0 <= x < ri.size and 0 <= y < ti.size):
+        return None
+    row, col = ti[int(y)], ri[int(x)]
+    return state["r"][col], np.degrees(state["theta"][row]), state[key][row, col]
+
+
 def _data_to_px(state, r, theta):
     width, height = state["img_size"]
     view = state["view"]
@@ -246,7 +257,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
 
     state = {
         "raw": None, "processed": None, "theta": None, "r": None, "dr": None,
-        "options": None, "view": None, "img_size": (0, 0),
+        "options": None, "view": None, "view_indices": None, "img_size": (0, 0),
         "tool": "band", "drag_start": None, "drag_now": None,
         "drag_rect": None, "band": None, "masks": [], "last_fit": None,
         "selection_history": [],
@@ -369,10 +380,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 ui.label("Percentiles use each visible image separately. Log scale uses positive pixels.") \
                     .classes("vmi-subtitle")
                 polar_images = {}
+                pointer_readouts = {}
                 for key, label in (("raw", "Raw polar"), ("processed", "Processed polar")):
                     ui.label(label).classes("vmi-subtitle")
                     polar_images[key] = ui.interactive_image(
-                        "", on_mouse=lambda e: _on_mouse(e),
+                        "", on_mouse=lambda e, key=key: _on_mouse(e, key),
                         events=["mousedown", "mousemove", "mouseup", "mouseleave"],
                         sanitize=False,
                     ).classes("w-full").style(
@@ -382,6 +394,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
                             event.target.setPointerCapture(event.pointerId);
                         }
                     }""")
+                    pointer_readouts[key] = ui.label().classes(
+                        "polar-pointer-readout w-full text-right font-mono text-xs min-h-4")
                 widgets["tool"] = ui.toggle(
                     {"band": "Select band", "mask": "Mask"}, value="band")
                 with ui.row().classes("gap-2 items-center"):
@@ -564,6 +578,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 image.save(buffer, format="PNG")
                 encoded = b64encode(buffer.getbuffer()).decode("ascii")
             polar_images[key].set_source(f"data:image/png;base64,{encoded}")
+            pointer_readouts[key].text = ""
+        state["view_indices"] = (ti, ri)
         color_status.text = " ".join(warnings)
         color_status.visible = bool(warnings)
         state["img_size"] = (int(ri.size), int(ti.size))
@@ -601,9 +617,19 @@ def build(jobs=None, *, use_calibration=None) -> None:
         _show_fit(None)
         _update_overlay()
 
-    def _on_mouse(event):
+    def _on_mouse(event, key):
+        if event.type == "mouseleave":
+            pointer_readouts[key].text = ""
         if not state["ready"]:
             return
+        if event.type == "mousemove":
+            sample = _polar_sample(state, key, event.image_x, event.image_y)
+            if sample is None:
+                pointer_readouts[key].text = ""
+            else:
+                radius, angle, value = sample
+                intensity = f"{value:.6g}" if np.isfinite(value) else "—"
+                pointer_readouts[key].text = f"r {radius:.3f} px · θ {angle:.2f}° · Intensity {intensity}"
         if event.type == "mousedown" and event.button == 0:
             state["drag_start"] = _px_to_data(state, event.image_x, event.image_y)
             state["drag_now"] = state["drag_start"]
@@ -713,7 +739,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                      image={"path": str(path), "center": list(center),
                             "brightest_center": auto_center,
                             "radial_bin_size": dr, "n_theta": n_theta, "r_max": r_max},
-                     band=None, masks=[], selection_history=[], last_fit=None,
+                     band=None, masks=[], selection_history=[], last_fit=None, view_indices=None,
                      processed=None,
                      rings=[], view={"r0": 0.0, "r1": float(r[-1]),
                                      "theta0": 0.0, "theta1": float(pf.TWO_PI)})
