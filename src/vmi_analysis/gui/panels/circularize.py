@@ -51,7 +51,6 @@ def build(jobs: JobManager):
             browse="file", filters=[".txt"]), "circularize.extracted")
         reassign = persist(path_input(
             "Reassignment file (optional)",
-            str(CIRC_DIR / "reassignment-FOC100eV-20260710.txt"),
             browse="file", filters=[".txt"]), "circularize.reassign")
         with ui.row().classes("gap-4 flex-wrap"):
             radial_model = persist(ui.select(

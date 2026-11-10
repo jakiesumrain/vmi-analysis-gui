@@ -133,6 +133,40 @@ class PanelHelperTests(unittest.TestCase):
 
 
 class PanelBuildTests(unittest.TestCase):
+    def test_circularize_reassignment_is_opt_in_and_restores_saved_path(self):
+        from nicegui import Client, app, ui
+
+        page = ui.page("/_test_circularize_reassignment")
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            saved_path = str(root / "custom-reassignment.txt")
+            for saved in ({}, {"circularize.reassign": saved_path}):
+                with self.subTest(saved=saved):
+                    store = {"circularize.inp": str(root / "raw.npy"),
+                             "circularize.out": str(root / "corrected.txt"),
+                             "circularize.extracted": str(root / "extracted.txt"), **saved}
+                    client = Client(page)
+                    manager = Mock()
+                    manager.jobs.return_value = []
+                    callbacks = {}
+
+                    def capture(button, callback):
+                        callbacks[button.text] = callback
+
+                    try:
+                        with client, patch.object(app.storage, "_general", store), \
+                                patch.object(ui.button, "on_click", capture), \
+                                patch.object(circularize.JobView, "attach"):
+                            circularize.build(manager)
+                            callbacks["Run"]()
+                        cmd = manager.submit.call_args.args[0].cmd
+                        if saved:
+                            self.assertEqual(cmd[cmd.index("--reassign-file") + 1], saved_path)
+                        else:
+                            self.assertNotIn("--reassign-file", cmd)
+                    finally:
+                        client.delete()
+
     def test_panel_builds(self):
         from nicegui import Client, ui
 
