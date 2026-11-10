@@ -11,6 +11,7 @@ from nicegui import app, ui
 
 from ..jobs import Job, JobManager, MANAGER, ResourceBusyError
 from .. import theme
+from ..workflow import register_field
 
 from importlib.resources import files
 from vmi_analysis.paths import WORKSPACE_ROOT as REPO_ROOT, GENERATED_DIR as GENERATED
@@ -213,6 +214,7 @@ def persist(widget, key: str):
     are shared across browsers. Keys are '<panel>.<field>'.
     """
     store = app.storage.general
+    register_field(key, widget)
     if key in store:
         widget.value = store[key]
     widget.on_value_change(lambda e: store.__setitem__(key, e.value))

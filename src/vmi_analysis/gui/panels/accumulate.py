@@ -15,7 +15,7 @@ from plotly.colors import get_colorscale
 from ..accumulate_plot import (ACCUMULATE_HEIGHT, COLORMAPS,
                                FRAME_HISTOGRAM_HEIGHT, accumulation_figure,
                                frame_histogram_figure)
-from ..centroid_plots import plot_options
+from ..centroid_plots import RESULT_COLORMAP_DEFAULTS, plot_options
 from ..frame_preview import (average_raw_frames, list_raw_frames, load_raw_frame,
                              pick_frame, subtract_dark)
 from ..jobs import Job, JobManager, ResourceBusyError
@@ -100,8 +100,8 @@ def build(jobs: JobManager) -> None:
                     num_input("Bin width (counts)", None, step="any").classes("w-36")
                     .props('placeholder="Auto"'), "accumulate.histogram_bin_width")
             with ui.row().classes("gap-3 items-end flex-wrap"):
-                frame_index = num_input("Frame index (0-based)", None).classes("w-56") \
-                    .props('placeholder="blank = random"')
+                frame_index = persist(num_input("Frame index (0-based)", None).classes("w-56")
+                                      .props('placeholder="blank = random"'), "accumulate.frame_index")
                 frame_button = ui.button("Histogram frame", icon="bar_chart").props("flat color=primary")
                 file_count = persist(num_input("Files to average", 1, step=1).classes("w-36"),
                                      "accumulate.histogram_file_count")
@@ -298,8 +298,9 @@ def _results(job: Job):
 
 
 def _interactive_plot(figure=None):
-    colors = persist(ui.select(list(COLORMAPS), value="Viridis", label="Colormap")
-                     .classes("w-48").props("outlined dense"), "accumulate.colormap")
+    key = "accumulate.colormap"
+    colors = persist(ui.select(list(COLORMAPS), value=RESULT_COLORMAP_DEFAULTS[key], label="Colormap")
+                     .classes("w-48").props("outlined dense"), key)
     if figure is not None:
         figure.update_traces(colorscale=colors.value)
     plot = ui.plotly(plot_options(figure) if figure is not None else {"data": [], "layout": {}}) \

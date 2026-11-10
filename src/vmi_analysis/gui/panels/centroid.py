@@ -10,7 +10,8 @@ from vmi_analysis.centroiding.plot_data import TUNING_DATA, SUMMARY_DATA
 
 from ..jobs import Job, JobManager
 from .. import theme
-from ..centroid_plots import COLORMAPS, PLOT_HEIGHT, tuning_figure, summary_figure, plot_options
+from ..centroid_plots import (COLORMAPS, PLOT_HEIGHT, RESULT_COLORMAP_DEFAULTS,
+                              tuning_figure, summary_figure, plot_options)
 from ..settings import centroid_settings, storage_key, output_dir as _output_dir
 from .common import (JobView, REPO_ROOT, file_url, open_folder_button,
                      path_input, persist, zoomable_image, delete_outputs)
@@ -267,10 +268,11 @@ def _interactive_plot(figure, *, tuning=False):
             if trace.type != "heatmap":
                 continue
             name = "Tuning" if tuning else "Raw VMI" if index == 0 else "Abel VMI"
-            key = "tuning" if tuning else "raw" if index == 0 else "abel"
-            colors = persist(ui.select(list(COLORMAPS), value="Gray" if tuning else "Turbo",
+            kind = "tuning" if tuning else "raw" if index == 0 else "abel"
+            key = f"centroid.{kind}_colormap"
+            colors = persist(ui.select(list(COLORMAPS), value=RESULT_COLORMAP_DEFAULTS[key],
                                        label=f"{name} colormap").classes("w-52").props("outlined dense"),
-                             f"centroid.{key}_colormap")
+                             key)
             trace.colorscale = get_colorscale(colors.value)
             controls.append((index, colors))
     plot = ui.plotly(plot_options(figure)).classes("w-full").style(f"height: {PLOT_HEIGHT}px")
