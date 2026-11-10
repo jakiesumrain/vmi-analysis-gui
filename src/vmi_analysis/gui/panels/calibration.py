@@ -36,6 +36,7 @@ from ..settings import centroid_settings, output_dir
 from .common import REPO_ROOT, delete_outputs, num_input, path_input, persist
 
 CIRC_DIR = REPO_ROOT / "circularization"
+POLAR_HEIGHT = "calc(clamp(220px, 38vh, 360px) * 2 / 3)"
 
 FILTER_FIELDS = [
     ("smooth_theta", "Smooth θ", 1.0, 0.1),
@@ -96,6 +97,14 @@ def _polar_sample(state, key, x, y):
         return None
     row, col = ti[int(y)], ri[int(x)]
     return state["r"][col], np.degrees(state["theta"][row]), state[key][row, col]
+
+
+def _polar_view_indices(theta, r, view):
+    ti = np.flatnonzero((theta >= view["theta0"] - 1e-12)
+                        & (theta <= view["theta1"] + 1e-12))
+    ri = np.flatnonzero((r >= view["r0"] - 1e-12)
+                        & (r <= view["r1"] + 1e-12))
+    return ti, ri
 
 
 def _data_to_px(state, r, theta):
@@ -264,8 +273,21 @@ def build(jobs=None, *, use_calibration=None) -> None:
         "rings": [], "ready": False,
         "last_overlay": 0.0,
         "image": None,
+        "inspection": None,
     }
     widgets = {}
+
+    def _polar_image(key):
+        image = ui.interactive_image(
+            "", on_mouse=lambda event: _on_mouse(event, key),
+            events=["mousedown", "mousemove", "mouseup", "mouseleave"], sanitize=False,
+        ).classes("w-full").style(f"height: {POLAR_HEIGHT}; border: 1px solid #e0ddd6")
+        image.on("pointerdown", js_handler="""(event) => {
+            if (event.button === 0 && event.target instanceof HTMLImageElement) {
+                event.target.setPointerCapture(event.pointerId);
+            }
+        }""")
+        return image
 
     # ---------------------------------------------------------------- inputs
     with theme.panel_card():
@@ -383,17 +405,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 pointer_readouts = {}
                 for key, label in (("raw", "Raw polar"), ("processed", "Processed polar")):
                     ui.label(label).classes("vmi-subtitle")
-                    polar_images[key] = ui.interactive_image(
-                        "", on_mouse=lambda e, key=key: _on_mouse(e, key),
-                        events=["mousedown", "mousemove", "mouseup", "mouseleave"],
-                        sanitize=False,
-                    ).classes("w-full").style(
-                        "height: calc(clamp(220px, 38vh, 360px) * 2 / 3); border: 1px solid #e0ddd6")
-                    polar_images[key].on("pointerdown", js_handler="""(event) => {
-                        if (event.button === 0 && event.target instanceof HTMLImageElement) {
-                            event.target.setPointerCapture(event.pointerId);
-                        }
-                    }""")
+                    polar_images[key] = _polar_image(key)
                     pointer_readouts[key] = ui.label().classes(
                         "polar-pointer-readout w-full text-right font-mono text-xs min-h-4")
                 widgets["tool"] = ui.toggle(
@@ -409,9 +421,29 @@ def build(jobs=None, *, use_calibration=None) -> None:
                     clear_masks_button = ui.button(
                         "Clear masks", on_click=lambda: _set_selection(state["band"], [])).disable()
                     ui.button("Zoom to band", on_click=lambda: _zoom_band()).tooltip("Zoom along radius only")
+                    inspect_button = ui.button("Inspect band", on_click=lambda: _inspect_band()).disable()
                     ui.button("Reset view", on_click=lambda: _reset_view())
                 band_label = ui.label("").classes("vmi-caption")
                 mask_label = ui.label("").classes("vmi-caption")
+            with ui.dialog() as inspection_dialog, ui.card().style("width: 94vw; max-width: 1400px"):
+                with ui.row().classes("w-full items-center justify-between"):
+                    ui.label("Inspect processed band").classes("text-lg")
+                    ui.button("Close", on_click=inspection_dialog.close).props("flat")
+                with ui.row().classes("items-center gap-4"):
+                    zoom_label = ui.label()
+                    horizontal_zoom = ui.slider(min=1, max=8, step=0.25, value=1).classes("w-52").props(
+                        'aria-label="Horizontal zoom"')
+                    zoom_label.bind_text_from(horizontal_zoom, "value", lambda value: f"Horizontal zoom {value:g}×")
+                    inspection_undo = ui.button("Undo selection", icon="undo",
+                                                on_click=lambda: _undo_selection()).disable()
+                ui.label("Drag to mask. Scroll horizontally when zoomed in.").classes("vmi-subtitle")
+                with ui.element("div").classes("w-full overflow-x-auto"):
+                    inspection_image = _polar_image("inspection")
+                inspection_status = ui.label().classes("vmi-subtitle")
+                pointer_readouts["inspection"] = ui.label().classes(
+                    "w-full text-right font-mono text-xs min-h-4")
+                horizontal_zoom.on_value_change(lambda e: inspection_image.style(f"width: {e.value * 100}%"))
+            inspection_dialog.on("before-hide", lambda: _close_inspection())
             with ui.column().classes("w-full gap-3"):
                 with ui.row().classes("gap-3 items-center flex-wrap"):
                     widgets["n_terms"] = persist(
@@ -541,7 +573,13 @@ def build(jobs=None, *, use_calibration=None) -> None:
         overlay = _overlay_svg(state)
         for image in polar_images.values():
             image.content = overlay
-        undo_button.set_enabled(bool(state["selection_history"]))
+        inspection = state["inspection"]
+        if inspection is not None:
+            inspection_image.content = _overlay_svg(state | inspection | {"band": None})
+        inspect_button.set_enabled(state["band"] is not None and state["processed"] is not None)
+        history = state["selection_history"]
+        undo_button.set_enabled(bool(history))
+        inspection_undo.set_enabled(bool(history) and history[-1][0] == state["band"])
         clear_band_button.set_enabled(state["band"] is not None)
         clear_masks_button.set_enabled(bool(state["masks"]))
         _update_labels()
@@ -554,35 +592,56 @@ def build(jobs=None, *, use_calibration=None) -> None:
     def _refresh_view():
         if not state["ready"] or state["processed"] is None:
             return
-        view = state["view"]
-        theta, r = state["theta"], state["r"]
-        ti = np.flatnonzero((theta >= view["theta0"] - 1e-12)
-                            & (theta <= view["theta1"] + 1e-12))
-        ri = np.flatnonzero((r >= view["r0"] - 1e-12)
-                            & (r <= view["r1"] + 1e-12))
+        ti, ri = _polar_view_indices(state["theta"], state["r"], state["view"])
         if ti.size < 2 or ri.size < 2:
             return
         indices = np.ix_(ti, ri)
         warnings = []
         for key, label in (("raw", "Raw polar"), ("processed", "Processed polar")):
-            patch = state[key][indices]
-            try:
-                image = _render_polar_image(patch, cmap=colormap.value,
-                                            log_scale=color_scale.value == "Log",
-                                            vmin_pct=color_min.value, vmax_pct=color_max.value)
-            except ValueError as exc:
-                warnings.append(f"{label} uses automatic linear colors. {exc}")
-                image = _render_polar_image(patch, cmap=colormap.value)
-            # Give each update its own bytes so in-flight requests cannot read a changing file.
-            with BytesIO() as buffer:
-                image.save(buffer, format="PNG")
-                encoded = b64encode(buffer.getbuffer()).decode("ascii")
-            polar_images[key].set_source(f"data:image/png;base64,{encoded}")
+            warning = _set_polar_source(polar_images[key], state[key][indices])
+            if warning:
+                warnings.append(f"{label} uses automatic linear colors. {warning}")
             pointer_readouts[key].text = ""
         state["view_indices"] = (ti, ri)
         color_status.text = " ".join(warnings)
         color_status.visible = bool(warnings)
         state["img_size"] = (int(ri.size), int(ti.size))
+        _update_overlay()
+
+    def _set_polar_source(element, data):
+        warning = ""
+        try:
+            image = _render_polar_image(data, cmap=colormap.value, log_scale=color_scale.value == "Log",
+                                        vmin_pct=color_min.value, vmax_pct=color_max.value)
+        except ValueError as exc:
+            warning = str(exc)
+            image = _render_polar_image(data, cmap=colormap.value)
+        # Give each update its own bytes so in-flight requests cannot read a changing file.
+        with BytesIO() as buffer:
+            image.save(buffer, format="PNG")
+            encoded = b64encode(buffer.getbuffer()).decode("ascii")
+        element.set_source(f"data:image/png;base64,{encoded}")
+        return warning
+
+    def _inspect_band():
+        band = state["band"]
+        if band is None or state["processed"] is None:
+            return
+        view = {"r0": band.r0, "r1": band.r1, "theta0": band.theta0, "theta1": band.theta1}
+        ti, ri = _polar_view_indices(state["theta"], state["r"], view)
+        if not ti.size or not ri.size:
+            ui.notify("The selected band contains no polar samples.", type="warning")
+            return
+        state["inspection"] = {"view": view, "view_indices": (ti, ri), "img_size": (ri.size, ti.size)}
+        warning = _set_polar_source(inspection_image, state["processed"][np.ix_(ti, ri)])
+        inspection_status.text = f"Showing automatic linear colors. {warning}" if warning else ""
+        horizontal_zoom.value = 1
+        _update_overlay()
+        inspection_dialog.open()
+
+    def _close_inspection():
+        state.update(inspection=None, drag_start=None, drag_now=None, drag_rect=None)
+        pointer_readouts["inspection"].text = ""
         _update_overlay()
 
     def _zoom_band():
@@ -620,10 +679,12 @@ def build(jobs=None, *, use_calibration=None) -> None:
     def _on_mouse(event, key):
         if event.type == "mouseleave":
             pointer_readouts[key].text = ""
-        if not state["ready"]:
+        inspection = key == "inspection"
+        if not state["ready"] or (inspection and state["inspection"] is None):
             return
+        viewport = state | state["inspection"] if inspection else state
         if event.type == "mousemove":
-            sample = _polar_sample(state, key, event.image_x, event.image_y)
+            sample = _polar_sample(viewport, "processed" if inspection else key, event.image_x, event.image_y)
             if sample is None:
                 pointer_readouts[key].text = ""
             else:
@@ -631,11 +692,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 intensity = f"{value:.6g}" if np.isfinite(value) else "—"
                 pointer_readouts[key].text = f"r {radius:.3f} px · θ {angle:.2f}° · Intensity {intensity}"
         if event.type == "mousedown" and event.button == 0:
-            state["drag_start"] = _px_to_data(state, event.image_x, event.image_y)
+            state["drag_start"] = _px_to_data(viewport, event.image_x, event.image_y)
             state["drag_now"] = state["drag_start"]
             return
         if event.type == "mousemove" and state["drag_start"] is not None:
-            state["drag_now"] = _px_to_data(state, event.image_x, event.image_y)
+            state["drag_now"] = _px_to_data(viewport, event.image_x, event.image_y)
             now = time.monotonic()
             if now - state["last_overlay"] > 0.06:
                 state["last_overlay"] = now
@@ -645,7 +706,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         if event.type in ("mouseup", "mouseleave"):
             if state["drag_start"] is None:
                 return
-            state["drag_now"] = _px_to_data(state, event.image_x, event.image_y)
+            state["drag_now"] = _px_to_data(viewport, event.image_x, event.image_y)
             rect = _drag_rect()
             state["drag_start"] = None
             state["drag_now"] = None
@@ -656,7 +717,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
             if event.type == "mouseleave":
                 _update_overlay()
                 return
-            if state["tool"] == "band":
+            if not inspection and state["tool"] == "band":
                 full = bool(widgets["full_angle"].value)
                 band = pf.Rect(
                     rect.r0, rect.r1, 0.0 if full else rect.theta0,
@@ -680,6 +741,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
             ui.notify("Load an image first.", type="warning")
             return
         state["processed"] = None
+        inspect_button.disable()
         _show_fit(None)
         try:
             options = _options()

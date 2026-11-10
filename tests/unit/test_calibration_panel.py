@@ -166,7 +166,7 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                     with patch.object(pf, "remap_polar", wraps=pf.remap_polar) as remap:
                         await callbacks["Load image & remap"]()
                     sources = [element.source for element in client.elements.values()
-                               if isinstance(element, ui.interactive_image)]
+                               if isinstance(element, ui.interactive_image) and element.source]
                     self.assertEqual(len(sources), 2)
                     self.assertTrue(all(source.startswith("data:image/png;base64,") for source in sources))
                     np.testing.assert_array_equal(remap.call_args.args[0], image)
