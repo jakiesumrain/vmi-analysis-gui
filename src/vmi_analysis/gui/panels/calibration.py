@@ -274,6 +274,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
         "last_overlay": 0.0,
         "image": None,
         "inspection": None,
+        "request_id": 0,
+        "request_kind": None,
     }
     widgets = {}
 
@@ -578,7 +580,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
         inspection = state["inspection"]
         if inspection is not None:
             inspection_image.content = _overlay_svg(state | inspection | {"band": None})
-        inspect_button.set_enabled(state["band"] is not None and state["processed"] is not None)
+        inspect_button.set_enabled(state["request_kind"] is None and state["band"] is not None
+                                   and state["processed"] is not None)
         history = state["selection_history"]
         undo_button.set_enabled(bool(history))
         inspection_undo.set_enabled(bool(history) and history[-1][0] == state["band"])
@@ -682,7 +685,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
         if event.type == "mouseleave":
             pointer_readouts[key].text = ""
         inspection = key == "inspection"
-        if not state["ready"] or (inspection and state["inspection"] is None):
+        if (not state["ready"] or state["request_kind"] is not None
+                or (inspection and state["inspection"] is None)):
             return
         viewport = state | state["inspection"] if inspection else state
         if event.type == "mousemove":
@@ -738,19 +742,47 @@ def build(jobs=None, *, use_calibration=None) -> None:
             return None
         return pf.Rect(min(r0, r1), max(r0, r1), min(t0, t1), max(t0, t1))
 
+    def _start_processing_request(kind, status):
+        state["request_id"] += 1
+        state["request_kind"] = kind
+        state.update(drag_start=None, drag_now=None, drag_rect=None)
+        fit_button.disable()
+        apply_button.set_enabled(kind != "remap")
+        remap_status.text = status
+        _show_fit(None)
+        _update_overlay()
+        return state["request_id"]
+
+    def _finish_processing_request(request):
+        if request == state["request_id"]:
+            state["request_kind"] = None
+            fit_button.enable()
+            apply_button.enable()
+            _update_overlay()
+
+    def _processing_error(request, status, exc):
+        if request == state["request_id"]:
+            remap_status.text = f"{status}. Showing previous preview." if state["ready"] else status
+            _notify_error(exc)
+
     async def _apply_processing():
+        if state["request_kind"] == "remap":
+            return
         if not state["ready"]:
             ui.notify("Load an image first.", type="warning")
             return
-        state["processed"] = None
-        inspect_button.disable()
-        _show_fit(None)
+        request = _start_processing_request("apply", "processing…")
+        raw, dr = state["raw"], state["dr"]
         try:
             options = _options()
             processed, _, options = await asyncio.to_thread(
-                pf.process_polar, state["raw"], state["dr"], **options)
+                pf.process_polar, raw, dr, **options)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            _notify_error(exc)
+            _processing_error(request, "Processing failed", exc)
+            return
+        finally:
+            _finish_processing_request(request)
+        if request != state["request_id"]:
             return
         state["processed"] = processed
         state["options"] = options
@@ -759,11 +791,10 @@ def build(jobs=None, *, use_calibration=None) -> None:
 
     async def _load_image(saved_center=None, saved_radial_count=None):
         path = widgets["image"].value
-        if not path:
-            ui.notify("Choose an image.", type="warning")
-            return False
-        remap_status.text = "loading and remapping…"
+        request = _start_processing_request("remap", "loading and remapping…")
         try:
+            if not path:
+                raise ValueError("Choose an image.")
             path = Path(path).expanduser().resolve()
             auto_center = bool(widgets["brightest_center"].value)
             center = saved_center
@@ -776,11 +807,10 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 raise ValueError("Enter a radial bin size in pixels.")
             n_theta = int(widgets["n_theta"].value)
             r_max = float(widgets["r_max"].value or 0.0) or None
+            options = _options()
             image = await asyncio.to_thread(pf.load_image, path)
             if auto_center:
                 row, col = await asyncio.to_thread(brightest_pixel, image)
-                console.push(f"[Trig Calibration] Brightest pixel in {path.name} "
-                             f"(zero-based): row={row}, col={col}.")
                 if saved_center is not None and saved_center != (col, row):
                     raise ValueError("The saved fit center differs from the raw detector origin. Refit the rings.")
                 center = (col, row)
@@ -788,10 +818,19 @@ def build(jobs=None, *, use_calibration=None) -> None:
                            {"n_r": saved_radial_count})
             polar, theta, r, dr, _valid = await asyncio.to_thread(
                 pf.remap_polar, image, center, n_theta=n_theta, r_max=r_max, **radial_grid)
+            if request != state["request_id"]:
+                return False
+            processed, _, options = await asyncio.to_thread(pf.process_polar, polar, dr, **options)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            remap_status.text = "remap failed"
-            _notify_error(exc)
+            _processing_error(request, "Remap failed", exc)
             return False
+        finally:
+            _finish_processing_request(request)
+        if request != state["request_id"]:
+            return False
+        if auto_center:
+            console.push(f"[Trig Calibration] Brightest pixel in {path.name} "
+                         f"(zero-based): row={row}, col={col}.")
         widgets["cx"].value, widgets["cy"].value = center
         if saved_radial_count is not None:
             widgets["radial_bin_size"].value = dr
@@ -804,20 +843,18 @@ def build(jobs=None, *, use_calibration=None) -> None:
                             "brightest_center": auto_center,
                             "radial_bin_size": dr, "n_theta": n_theta, "r_max": r_max},
                      band=None, masks=[], selection_history=[], last_fit=None, view_indices=None,
-                     processed=None,
+                     processed=processed, options=options,
                      rings=[], view={"r0": 0.0, "r1": float(r[-1]),
                                      "theta0": 0.0, "theta1": float(pf.TWO_PI)})
         rings_table.rows = []
         model_plots.clear()
-        remap_status.text = "processing…"
-        await _apply_processing()
-        if state["processed"] is None:
-            state["ready"] = False
-        param_table.rows = []
-        fit_status.text = "No fit yet."
-        return state["ready"]
+        _refresh_view()
+        remap_status.text = f"{processed.shape[1]} radial × {processed.shape[0]} angular bins"
+        return True
 
     async def _fit_selection():
+        if state["request_kind"] is not None:
+            return
         if not state["ready"]:
             ui.notify("Load an image first.", type="warning")
             return
@@ -828,6 +865,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
             ui.notify("Drag a band around one ring first.", type="warning")
             return
         fit_button.disable()
+        request = state["request_id"]
         _show_fit(None)
         fit_status.text = "fitting…"
         image, theta, radii = state["processed"], state["theta"], state["r"]
@@ -840,12 +878,14 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 iterative=bool(widgets["iterative"].value),
                 processing=state["options"])
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
-            fit_status.text = "fit failed"
-            _notify_error(exc)
+            if request == state["request_id"]:
+                fit_status.text = "fit failed"
+                _notify_error(exc)
             return
         finally:
-            fit_button.enable()
-        if image is not state["processed"] or band != state["band"] or masks != tuple(state["masks"]):
+            if request == state["request_id"]:
+                fit_button.enable()
+        if request != state["request_id"] or band != state["band"] or masks != tuple(state["masks"]):
             return
         _show_fit(fit)
         _update_overlay()
@@ -929,8 +969,10 @@ def build(jobs=None, *, use_calibration=None) -> None:
             _show_fit(None if fit_data is None else pf.RingFit.from_dict(fit_data))
             rings_table.rows = _ring_rows()
             _refresh_view()
+            request = state["request_id"]
             await _update_reduction()
-        ui.notify("Session loaded.")
+            if request == state["request_id"]:
+                ui.notify("Session loaded.")
 
     def _rebuild_file():
         if not state["rings"]:

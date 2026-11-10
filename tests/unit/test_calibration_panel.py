@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -136,6 +137,90 @@ class PanelBuildTests(unittest.TestCase):
 
 
 class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_latest_remap_and_processing_request_wins(self):
+        from nicegui import Client, app, ui
+
+        with TemporaryDirectory() as tmp:
+            paths = [Path(tmp) / f"raw-{i}.npy" for i in range(3)]
+            for index, (path, size) in enumerate(zip(paths, (21, 31, 31)), start=1):
+                image = np.zeros((size, size))
+                image[size // 2, size // 2] = index
+                np.save(path, image)
+            store = {"calibration.image": str(paths[0]), "calibration.abel": False,
+                     "calibration.placement": "off", "calibration.n_theta": 24}
+            callbacks, buttons = {}, {}
+
+            def capture(button, callback):
+                callbacks[button.text] = callback
+                buttons[button.text] = button
+
+            client = Client(ui.page("/_test_calibration_requests"))
+            try:
+                with client, patch.object(app.storage, "_general", store), patch.object(ui, "notify") as notify:
+                    with patch.object(ui.button, "on_click", capture):
+                        calibration.build()
+                    image_input = next(el for el in client.elements.values()
+                                       if isinstance(el, ui.input) and el._props.get("label") == "VMI image (.npy)")
+                    mode_input = next(el for el in client.elements.values()
+                                      if isinstance(el, ui.select) and el.label == "Enhancement")
+                    fit = buttons["Fit selection"]
+                    apply = buttons["Apply processing"]
+
+                    async def run_overlapping(button, change, *, stale_failure=False):
+                        started, release = asyncio.Event(), asyncio.Event()
+                        requests = []
+
+                        async def dispatch(function, *args, **kwargs):
+                            if function is pf.process_polar:
+                                requests.append(kwargs["enhancement"]["mode"])
+                                if len(requests) == 1:
+                                    started.set()
+                                    await release.wait()
+                                    if stale_failure:
+                                        raise ValueError("stale processing failure")
+                            return function(*args, **kwargs)
+
+                        with patch.object(asyncio, "to_thread", side_effect=dispatch), \
+                                patch.object(calibration, "_render_polar_image", wraps=calibration._render_polar_image) as render:
+                            first = asyncio.create_task(callbacks[button]())
+                            try:
+                                await asyncio.wait_for(started.wait(), timeout=5)
+                                self.assertFalse(fit.enabled)
+                                self.assertEqual(apply.enabled, button == "Apply processing")
+                                change()
+                                await callbacks[button]()
+                                self.assertTrue(fit.enabled and apply.enabled)
+                                self.assertEqual(render.call_count, 2)
+                                latest = render.call_args.args[0].copy()
+                            finally:
+                                release.set()
+                                await first
+                            self.assertEqual(render.call_count, 2)
+                        return latest, requests
+
+                    for first, second in ((paths[0], paths[1]), (paths[1], paths[2])):
+                        image_input.value = str(first)
+                        latest, _ = await run_overlapping(
+                            "Load image & remap", lambda: setattr(image_input, "value", str(second)))
+                        self.assertEqual(latest.shape, (24, 16))
+                        self.assertEqual(latest[0, 0], 2 if second == paths[1] else 3)
+
+                    placement = next(el for el in client.elements.values()
+                                     if isinstance(el, ui.select) and el.label == "Filter placement")
+                    placement.value = "raw"
+                    raw, *_ = pf.remap_polar(np.load(paths[2]), (15, 15), n_theta=24, radial_bin_size=1)
+                    expected = pf.enhance_polar(raw, "bandpass")
+                    for stale_failure in (False, True):
+                        mode_input.value = "ridge"
+                        latest, requests = await run_overlapping(
+                            "Apply processing", lambda: setattr(mode_input, "value", "bandpass"),
+                            stale_failure=stale_failure)
+                        self.assertEqual(requests, ["ridge", "bandpass"])
+                        np.testing.assert_array_equal(latest, expected)
+                    notify.assert_not_called()
+            finally:
+                client.delete()
+
     async def test_load_uses_brightest_pixel_and_logs_circularize_coordinates(self):
         from nicegui import Client, app, ui
 
