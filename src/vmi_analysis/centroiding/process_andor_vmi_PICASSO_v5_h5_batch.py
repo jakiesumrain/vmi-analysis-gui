@@ -34,10 +34,12 @@ from vmi_analysis.paths import CENTROID_DIR
 
 if __package__:
     from .spectrum_calibration import CalibrationSettings, fit_xe_4d, scale_spectrum
-    from .plot_data import save_plot_data, TUNING_DATA, SUMMARY_DATA
+    from .plot_data import (ABEL_IMAGE, RAW_IMAGE, SPECTRUM_CSV, SUMMARY_DATA,
+                            SUMMARY_PNG, TUNING_DATA, TUNING_PNG, save_plot_data)
 else:
     from spectrum_calibration import CalibrationSettings, fit_xe_4d, scale_spectrum
-    from plot_data import save_plot_data, TUNING_DATA, SUMMARY_DATA
+    from plot_data import (ABEL_IMAGE, RAW_IMAGE, SPECTRUM_CSV, SUMMARY_DATA,
+                           SUMMARY_PNG, TUNING_DATA, TUNING_PNG, save_plot_data)
 
 # Set Picasso CPU utilization BEFORE importing Picasso to suppress warning
 os.environ['PICASSO_CPU_UTILIZATION'] = '0.8'
@@ -881,7 +883,7 @@ def perform_abel_transform(vmi_2d):
             print(f"[Spectrum] E = alpha*r^2; input alpha = "
                   f"{ENERGY_CALIBRATION.alpha:.8g} eV/pixel^2; x in eV, original intensity retained")
 
-        spectrum_path = os.path.join(OUTPUT_DIR, "energy_spectrum.csv")
+        spectrum_path = os.path.join(OUTPUT_DIR, SPECTRUM_CSV)
         np.savetxt(spectrum_path,
                    np.column_stack([r_t, r_t**2, energy, speed_dr, pes]),
                    delimiter=",",
@@ -905,12 +907,12 @@ def save_results(vmi_2d, vmi_3d):
     print("SAVING RESULTS")
     print("=" * 80)
 
-    vmi_2d_path = os.path.join(OUTPUT_DIR, "vmi_2d_raw.npy")
+    vmi_2d_path = os.path.join(OUTPUT_DIR, RAW_IMAGE)
     np.save(vmi_2d_path, vmi_2d)
     print(f"[Save] 2D histogram: {vmi_2d_path}")
 
     if vmi_3d is not None:
-        vmi_3d_path = os.path.join(OUTPUT_DIR, "vmi_3d_abel.npy")
+        vmi_3d_path = os.path.join(OUTPUT_DIR, ABEL_IMAGE)
         np.save(vmi_3d_path, vmi_3d)
         print(f"[Save] Abel inverted: {vmi_3d_path}")
 
@@ -1025,7 +1027,7 @@ Output:
             fontsize=10, verticalalignment='top', fontfamily='monospace')
 
     plt.tight_layout()
-    output_path = os.path.join(OUTPUT_DIR, "04_final_summary.png")
+    output_path = os.path.join(OUTPUT_DIR, SUMMARY_PNG)
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     print(f"[Plot] Saved: {output_path}")
     plt.show()
@@ -1150,7 +1152,7 @@ def run_tuning_check(frame_info, dark_frame, flat_field_normalized):
     ax4.set_ylabel("Count")
 
     plt.tight_layout()
-    output_path = os.path.join(OUTPUT_DIR, "01_tuning_check_picasso.png")
+    output_path = os.path.join(OUTPUT_DIR, TUNING_PNG)
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     print(f"[Tuning] Saved: {output_path}")
     plt.show()
