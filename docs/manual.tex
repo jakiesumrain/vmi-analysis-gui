@@ -318,6 +318,8 @@ another job's input or output waits, and shows a reason such as
 slot}. Unrelated jobs can start in the free slots. Only one job per panel
 may be active at a time. Jobs launched by the Pipeline panel reserve the
 inputs and outputs of all four stages for the whole run.
+GMD Map can write a file inside a standalone Centroiding output directory
+when the map path is separate from the run's inputs and outputs.
 
 The MATLAB/CPBASEX backend takes an exclusive lock because the MATLAB script
 uses a shared working file, so MATLAB jobs never overlap each other or a job

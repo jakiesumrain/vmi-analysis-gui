@@ -16,6 +16,40 @@ def access(module, args=(), cwd=None):
 
 
 class JobResourcesTests(unittest.TestCase):
+    def test_only_unrelated_map_files_can_share_the_centroid_output_directory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            centroid_module = 'centroiding.process_andor_vmi_PICASSO_v5_h5_batch'
+            args = ['--output-dir', 'experiment/analysis']
+            centroid = access(centroid_module, args, folder)
+
+            def map_access(path):
+                return access('gmd.build_gmd_map', ['--output-path', path], folder)
+
+            def conflicts(first, second):
+                return first.conflict(second, allow_map_beside_centroid=True)
+
+            map_path = 'experiment/analysis/gmd_map_all.txt'
+            mapping = map_access(map_path)
+            self.assertIsNone(conflicts(centroid, mapping))
+            self.assertIsNone(conflicts(mapping, centroid))
+            self.assertIsNotNone(centroid.conflict(mapping))
+            for path in ('experiment', 'experiment/analysis', 'experiment/analysis/energy_spectrum.csv',
+                         'experiment/analysis/vmi_2d_raw.npy', 'experiment/analysis/04_final_summary.png',
+                         'experiment/analysis/vmi_results_raw.h5'):
+                with self.subTest(path=path):
+                    self.assertIsNotNone(conflicts(centroid, map_access(path)))
+                    self.assertIsNotNone(conflicts(map_access(path), centroid))
+            weighted = access(centroid_module, [*args, '--gmd-weighting', '--gmd-map-path', map_path], folder)
+            self.assertIsNotNone(conflicts(mapping, weighted))
+            accumulate = access('imaging.h5_accumulate_fast_gmd', ['--output-path', map_path], folder)
+            self.assertIsNotNone(conflicts(accumulate, centroid))
+
+            spectrum = Path(folder) / 'experiment/analysis/energy_spectrum.csv'
+            spectrum.parent.mkdir(parents=True)
+            spectrum.touch()
+            (Path(folder) / map_path).hardlink_to(spectrum)
+            self.assertIsNotNone(conflicts(mapping, centroid))
+
     def test_gmd_map_producer_conflicts_with_accumulate_reader_only_when_enabled(self):
         with tempfile.TemporaryDirectory() as folder:
             producer = access('gmd.build_gmd_map', ['--h5-dir', 'raw', '--gmd-path', 'timestamps.txt',

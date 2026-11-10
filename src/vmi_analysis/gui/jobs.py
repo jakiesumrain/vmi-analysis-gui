@@ -261,7 +261,8 @@ class JobManager:
             job = self._jobs[job_id]
             blockers = [self._jobs[key] for key in self._workers] + waiting
             blocker = next(((other, reason) for other in blockers
-                            if (reason := job._access.conflict(other._access))), None)
+                            if (reason := job._access.conflict(
+                                other._access, allow_map_beside_centroid=True))), None)
             if blocker:
                 other, reason = blocker
                 job.wait_reason = f"Waiting for {other.name}: {reason}"

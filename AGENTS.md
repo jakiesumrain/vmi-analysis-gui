@@ -177,7 +177,10 @@ Rules for GUI-related changes:
   progress, logs and reconnect state. Lowering the limit does not kill jobs.
 - `gui/resources.py` declares file reads/writes from submitted module commands.
   Keep these declarations in sync with CLI interfaces. Block overlapping writes
-  and producer/reader conflicts; shared reads are allowed. Pipeline reservations
+  and producer/reader conflicts; shared reads are allowed. A standalone GMD Map
+  may write inside a standalone Centroiding output directory only when its file
+  is independent of Centroiding's inputs and explicitly reserved outputs.
+  Pipeline reservations
   cover all stages for the whole run. MATLAB/CPBASEX stays mutually exclusive.
 - Clear-output handlers must use `delete_outputs`, which checks reservations
   atomically. Shutdown must cancel and join every running job's process tree.

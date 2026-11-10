@@ -88,6 +88,8 @@ panels still apply, so choose a limit appropriate for your RAM and disk speed.
 Read-only inputs can be shared. Jobs wait when another job writes an overlapping
 file or directory, or reads something they need to overwrite. Waiting jobs show
 the reason; unrelated jobs can use free slots. One job per panel runs at once.
+GMD Map can write beside a Centroiding run in the same output directory when
+the map path is separate from the run's inputs and outputs.
 Pipeline stages stay sequential and reserve their inputs/outputs for the whole
 pipeline run. MATLAB/CPBASEX jobs also share an exclusive lock because their
 temporary files are shared. Clear-output actions respect these reservations.
