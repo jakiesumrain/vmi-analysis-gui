@@ -359,7 +359,9 @@ def build(jobs=None, *, use_calibration=None) -> None:
             widgets["abel"].on_value_change(lambda _: _update_filter_placement(widgets["placement"].value))
             _update_filter_placement(widgets["placement"].value)
             apply_button = ui.button("Apply processing", icon="tune")
-        with ui.expansion("Filter parameters", icon="tune").classes("w-full"):
+        with ui.expansion("Filter parameters", icon="tune").classes("w-full").props(
+            'header-class="vmi-section-toggle text-primary" expand-icon-class="text-primary"'
+        ):
             with ui.row().classes("gap-3 flex-wrap"):
                 for key, label, value, step in FILTER_FIELDS:
                     widgets[f"param.{key}"] = persist(

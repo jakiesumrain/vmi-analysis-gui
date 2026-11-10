@@ -89,6 +89,16 @@ body {
   font-weight: 500;
   letter-spacing: 0;
 }
+.vmi-section-toggle {
+  width: fit-content;
+  min-height: 36px;
+  border-radius: 8px;
+  font-weight: 500;
+}
+.vmi-section-toggle .q-item__section--avatar {
+  min-width: 0;
+  padding-right: 12px;
+}
 .q-card {
   border-radius: 12px;
 }
