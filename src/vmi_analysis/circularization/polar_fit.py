@@ -9,8 +9,8 @@ Gascooke software's "Theta vs r" image):
       -> per-ring Gaussian ridge fit
       -> canonical extracted trig-fit block (one block per accepted ring)
 
-Enhancement changes only the display. The fit uses point-sampled detector
-intensities with no polar-bin area correction.
+The polar remap preserves detector intensity units. Grid resampling uses the
+mean intensity of the detector subpixels that land in each polar bin.
 
 No Gascooke executable is involved; the model is the published one:
 
@@ -39,6 +39,8 @@ from vmi_analysis.paths import validate_distinct_output
 from .circularization import DETECTOR_GEOMETRY_PREFIX, parse_extracted_text
 
 TWO_PI = 2.0 * np.pi
+DEFAULT_SUBPIXELS = 5
+MAX_SUBPIXELS = 16
 EXTRACTED_HEADER = '"Parameter" "Value" "+-" "Uncertainty (1 std dev)"'
 
 DEFAULT_ENHANCE_PARAMS = {
@@ -111,13 +113,49 @@ def polar_grid(image_shape, center, n_r=512, n_theta=720, r_max=None, *, radial_
     return theta, r, dr
 
 
-def remap_polar(image, center, n_r=512, n_theta=720, r_max=None, order=1, *, radial_bin_size=None):
+def _resample_polar_grid(image, center, shape, dr, subpixels, values, valid):
+    """Forward-bin a uniform grid of samples from each detector pixel."""
+    n_theta, n_r = shape
+    ny, nx = image.shape
+    cx, cy = center
+    cols = np.arange(nx * subpixels)
+    x = (cols + 0.5) / subpixels - 0.5 - cx
+    rows_per_chunk = max(1, 262_144 // cols.size)
+    sums = np.zeros(n_theta * n_r)
+    counts = np.zeros_like(sums)
+    for start in range(0, ny * subpixels, rows_per_chunk):
+        rows = np.arange(start, min(start + rows_per_chunk, ny * subpixels))
+        y = (rows[:, None] + 0.5) / subpixels - 0.5 - cy
+        radial = np.floor(np.hypot(x, y) / dr + 0.5)
+        intensities = image[rows[:, None] // subpixels, cols // subpixels]
+        include = (radial < n_r) & np.isfinite(intensities)
+        angular = np.floor(np.arctan2(y, x) * (n_theta / TWO_PI) + 0.5).astype(int) % n_theta
+        bins = angular[include] * n_r + radial[include].astype(int)
+        sums += np.bincount(bins, weights=intensities[include], minlength=sums.size)
+        counts += np.bincount(bins, minlength=counts.size)
+
+    sums, counts = sums.reshape(shape), counts.reshape(shape)
+    # The innermost half-bin is a disc shared by every angle.
+    sums[:, 0] = sums[:, 0].sum()
+    counts[:, 0] = counts[:, 0].sum()
+    # Sparse bins, common near the origin, retain their interpolated value.
+    np.divide(sums, counts, out=values, where=valid & (counts > 0))
+
+
+def remap_polar(image, center, n_r=512, n_theta=720, r_max=None, order=1, *,
+                radial_bin_size=None, subpixels=None):
     """Remap a cartesian image to polar coordinates.
 
     Returns ``(polar, theta, r, dr, valid)`` where ``polar`` has shape
     ``(n_theta, n_r)``, row index = angle, column index = radius. Samples
-    outside the image are NaN and flagged in ``valid``.
+    outside the image are NaN and flagged in ``valid``. When ``subpixels`` is
+    supplied, forward-bin an n × n grid per detector pixel and use interpolation
+    for bins with no finite subpixel samples.
     """
+    if subpixels is not None:
+        if subpixels not in range(1, MAX_SUBPIXELS + 1):
+            raise ValueError(f"Enter a whole subpixel grid size from 1 to {MAX_SUBPIXELS}.")
+        subpixels = int(subpixels)
     image = np.asarray(image, dtype=float)
     theta, r, dr = polar_grid(image.shape, center, n_r=n_r, n_theta=n_theta, r_max=r_max,
                               radial_bin_size=radial_bin_size)
@@ -133,6 +171,8 @@ def remap_polar(image, center, n_r=512, n_theta=720, r_max=None, order=1, *, rad
     values = map_coordinates(image, coords, order=order, mode="constant",
                              cval=np.nan).reshape(x.shape)
     values[~valid] = np.nan
+    if subpixels is not None:
+        _resample_polar_grid(image, (cx, cy), values.shape, dr, subpixels, values, valid)
     return values, theta, r, dr, valid
 
 
@@ -294,11 +334,13 @@ def process_options(abel=True, abel_method="hansenlaw", enhancement=None, fit_fi
 
 def describe_processing(options):
     """One-line human-readable description used in provenance comments."""
+    subpixels = options.get("subpixels")
     options = process_options(**{k: options[k] for k in ("abel", "abel_method", "enhancement")},
                               fit_filtered=options.get("fit_filtered", False),
                               hold_order=options.get("hold_order", 0))
     enh = options["enhancement"]
-    parts = ["fit=point-sampled",
+    sampling = "point-sampled" if subpixels is None else f"grid-resampled({subpixels}x{subpixels})"
+    parts = [f"fit={sampling}",
              f"abel={'none' if not options['abel'] else options['abel_method']}"]
     if "hold_order" in options:
         parts.append(f"hold_order={options['hold_order']}")
