@@ -50,6 +50,8 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(values["pipeline.skip_existing"])
                     self.assertEqual(values["calibration.session"], "previous-fit.session.json")
                     self.assertEqual(values["calibration.hold_order"], 1)
+                    self.assertEqual(values["circularize.raw_color_min_pct"], 1)
+                    self.assertEqual(values["circularize.circularized_color_max_pct"], 99.5)
                     self.assertEqual(values["centroid.raw_colormap"], "Magma")
                     self.assertEqual(values["centroid.tuning_colormap"], "Gray")
                     self.assertNotIn(gui.KEEP_ALIVE_KEY, values)

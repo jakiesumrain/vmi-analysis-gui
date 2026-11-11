@@ -3,6 +3,7 @@
 import sys
 from pathlib import Path
 
+import numpy as np
 from nicegui import ui
 from vmi_analysis.paths import validate_distinct_output
 
@@ -11,7 +12,9 @@ from .. import theme
 from ..settings import centroid_settings, output_dir
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
                      open_folder_button, path_input, persist,
-                     render_txt_image, serve_dir, zoomable_image)
+                     render_txt_image, zoomable_image)
+from .polar_preview import (bind_percentiles, polar_controls, polar_preview,
+                            set_polar_source, set_polar_view)
 
 CIRC_DIR = REPO_ROOT / "circularization"
 
@@ -22,7 +25,12 @@ def build(jobs: JobManager):
         "Correct radial distortion of one VMI image using the Gascooke "
         "trig-fit calibration (circularization.py).")
 
-    view = JobView(jobs, job_name='Circularize', results_builder=_results)
+    def results(job):
+        _results(job)
+        if job.status == "done" and job.extra.get("polar_preview"):
+            show_polar(job.extra["polar_preview"])
+
+    view = JobView(jobs, job_name='Circularize', results_builder=results)
 
     with theme.panel_card():
         inp = persist(path_input("Input image (.npy or .txt)",
@@ -133,15 +141,56 @@ def build(jobs: JobManager):
                 cmd.append("--no-plots")
             if summary_only.value:
                 cmd.append("--summary-only")
-            job = jobs.submit(Job(name="Circularize", cmd=cmd,
-                                  cwd=str(CIRC_DIR),
-                                  extra={"output": out.value,
-                                         "plot_dir": plot_dir.value}))
-            view.attach(job)
+            job = Job(name="Circularize", cmd=cmd, cwd=str(CIRC_DIR),
+                      extra={"output": out.value, "plot_dir": plot_dir.value,
+                             "summary_only": summary_only.value})
+            if not summary_only.value:
+                preview_path = GENERATED / f"circ_{job.id}_polar.npz"
+                cmd += ["--polar-preview", str(preview_path)]
+                job.extra["polar_preview"] = str(preview_path)
+            polar_data.clear()
+            polar_card.set_visibility(False)
+            view.attach(jobs.submit(job))
 
         view.run_button(on_click=run)
 
+    polar_data, polar_widgets = {}, {}
+    with theme.panel_card() as polar_card:
+        polar_card.set_visibility(False)
+        with ui.column().classes("w-full gap-2 polar-guide-group") as guide_group:
+            scale, colormap, guides = polar_controls("circularize")
+            for key, label in (("raw", "Raw polar"), ("circularized", "Circularized polar")):
+                polar_widgets[key] = polar_preview(
+                    "circularize", key, label, guides, lambda: ui.interactive_image(""))
+
+    def refresh_polar(key):
+        if key in polar_data:
+            image, limits, status = polar_widgets[key]
+            warning = set_polar_source(image, polar_data[key], colormap, scale, limits)
+            status.text = f"Showing automatic linear colors. {warning}" if warning else ""
+            status.set_visibility(bool(warning))
+
+    def refresh_polar_pair():
+        for key in polar_widgets:
+            refresh_polar(key)
+
+    def show_polar(path):
+        if not Path(path).is_file():
+            return  # The job console reports preview generation errors.
+        with np.load(path, allow_pickle=False) as data:
+            polar_data.update({key: data[key] for key in polar_widgets})
+            dr = float(data["dr"])
+        n_theta, n_r = polar_data["raw"].shape
+        set_polar_view(guide_group, (0, n_r - 1), (0, n_theta - 1), dr, 360 / n_theta)
+        refresh_polar_pair()
+        polar_card.set_visibility(True)
+
+    for key, (_, limits, _) in polar_widgets.items():
+        bind_percentiles(limits, lambda key=key: refresh_polar(key))
+    for control in (scale, colormap):
+        control.on_value_change(lambda _: refresh_polar_pair())
     view.place_console()
+    polar_card.move()
 
     def use_calibration(extracted_path, image_path=None, manual_center=None, *,
                         radial_model_value=None, poly_order_value=None):
@@ -161,9 +210,10 @@ def build(jobs: JobManager):
 
 
 def _results(job: Job):
-    if job.status != "done":
+    if job.status != "done" or job.extra.get("summary_only"):
         return
-    out = Path(job.extra["output"])
+    cwd = Path(job.cwd or CIRC_DIR)
+    out = cwd / job.extra["output"]
     open_folder_button(out)
     if out.exists():
         png = GENERATED / f"circ_{job.id}.png"
@@ -174,7 +224,7 @@ def _results(job: Job):
                 .classes("w-full max-w-2xl")
         except Exception as e:
             ui.label(f"Could not render {out}: {e}").classes("vmi-subtitle")
-    plots = sorted(Path(job.extra["plot_dir"]).glob("*.png"))
+    plots = sorted((cwd / job.extra["plot_dir"]).glob("*.png"))
     if plots:
         ui.label("Diagnostic plots:").classes("vmi-caption")
         with ui.row().classes("gap-4 flex-wrap"):

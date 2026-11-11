@@ -608,6 +608,7 @@ class EndToEndTests(unittest.TestCase):
             source = root / "vmi_2d_raw.npy"
             calibration = root / "extracted.txt"
             output = root / "corrected.txt"
+            preview = root / "preview.npz"
             np.save(source, image)
             calibration.write_text(
                 '# detector geometry: {"center": [10, 4], "shape": [12, 16]}\n'
@@ -619,7 +620,8 @@ class EndToEndTests(unittest.TestCase):
                 f'{pf.EXTRACTED_HEADER}\n"Gaussian Centre" 5 +- 0.1\n'
                 f'{pf.EXTRACTED_HEADER}\n"Gaussian Centre" 6 +- 0.1\n', encoding="utf-8")
             args = ["circularization", "--input", str(source), "--output", str(output),
-                    "--extracted", str(calibration), "--no-plots", "--interp-order", "1"]
+                    "--extracted", str(calibration), "--no-plots", "--interp-order", "1",
+                    "--polar-preview", str(preview)]
             log = io.StringIO()
             with patch.object(sys, "argv", args), redirect_stdout(log):
                 circularization.main()
@@ -631,6 +633,11 @@ class EndToEndTests(unittest.TestCase):
                           log.getvalue())
             self.assertIn("Detector geometry is unverified for 1 calibration ring(s)", log.getvalue())
             np.testing.assert_allclose(np.loadtxt(output), image)
+            with np.load(preview, allow_pickle=False) as comparison:
+                expected, *_ = pf.remap_polar(image, (10, 4), radial_bin_size=4 / 7)
+                np.testing.assert_allclose(comparison["raw"], expected)
+                np.testing.assert_allclose(comparison["circularized"], expected)
+                self.assertAlmostEqual(float(comparison["dr"]), 4 / 7)
             np.testing.assert_array_equal(np.load(source), image)
             with self.assertRaisesRegex(ValueError, "cannot be reshaped"):
                 circularization.load_image_and_center(source, shape=(16, 12))

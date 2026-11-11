@@ -12,19 +12,13 @@ library module with unit tests); this module only renders and handles input.
 from __future__ import annotations
 
 import asyncio
-from base64 import b64encode
 from collections import Counter
 from hashlib import sha256
-from io import BytesIO
-from importlib.resources import files
 from pathlib import Path
 import time
 
 import numpy as np
-from matplotlib import colormaps
-from matplotlib.colors import LogNorm, Normalize
-from nicegui import app, ui
-from PIL import Image
+from nicegui import ui
 import plotly.graph_objects as go
 from plotly.colors import qualitative
 from plotly.subplots import make_subplots
@@ -33,15 +27,15 @@ from vmi_analysis.circularization import polar_fit as pf
 from vmi_analysis.imaging.centering import brightest_pixel
 
 from .. import theme
-from ..centroid_plots import COLORMAPS, _style, plot_options
+from ..centroid_plots import _style, plot_options
 from ..jobs import MANAGER
 from ..settings import centroid_settings, output_dir
 from .common import REPO_ROOT, delete_outputs, num_input, path_input, persist
 
+from .polar_preview import (POLAR_HEIGHT, bind_percentiles, polar_controls, polar_preview,
+                            render_polar_image as _render_polar_image, set_polar_source, set_polar_view)
+
 CIRC_DIR = REPO_ROOT / "circularization"
-POLAR_HEIGHT = "calc(clamp(220px, 38vh, 360px) * 2 / 3)"
-_GUIDE_SCRIPT = (files("vmi_analysis.gui.assets") / "polar_guides.js").read_text(encoding="utf-8")
-_guides_installed = False
 
 FILTER_FIELDS = [
     ("smooth_theta", "Smooth θ", 1.0, 0.1),
@@ -57,30 +51,6 @@ FILTER_FIELDS = [
     ("kernel_theta", "CLAHE kernel θ", 24, 4),
     ("kernel_r", "CLAHE kernel r", 96, 8),
 ]
-
-
-def _render_polar_image(polar, cmap="viridis", *, log_scale=False,
-                        vmin_pct=None, vmax_pct=None):
-    """Render the polar image at exactly one pixel per bin (x=r, y=theta)."""
-    polar = np.asarray(polar, dtype=float)
-    lower = 1.0 if vmin_pct is None else float(vmin_pct)
-    upper = 99.5 if vmax_pct is None else float(vmax_pct)
-    if not 0 <= lower < upper <= 100:
-        raise ValueError("Enter percentiles from 0 to 100 with vmin below vmax.")
-    valid = np.isfinite(polar)
-    if log_scale:
-        valid &= polar > 0
-        if not valid.any():
-            raise ValueError("Log scale needs positive intensities.")
-    values = polar[valid]
-    scaled = np.zeros(polar.shape)
-    if values.size:
-        low, high = np.percentile(values, [lower, upper])
-        if high > low:
-            norm = LogNorm if log_scale else Normalize
-            scaled[valid] = norm(vmin=low, vmax=high, clip=True)(values)
-    rgb = (colormaps[cmap.lower()](scaled)[..., :3] * 255).astype(np.uint8)
-    return Image.fromarray(rgb)
 
 
 def _px_to_data(state, x, y):
@@ -349,7 +319,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         image = ui.interactive_image(
             "", on_mouse=lambda event: _on_mouse(event, key),
             events=["mousedown", "mousemove", "mouseup", "mouseleave"], sanitize=False,
-        ).classes("w-full").style(f"height: {POLAR_HEIGHT}; border: 1px solid #e0ddd6")
+        )
         image.on("pointerdown", js_handler="""(event) => {
             if (event.button === 0 && event.target instanceof HTMLImageElement) {
                 event.target.setPointerCapture(event.pointerId);
@@ -465,63 +435,16 @@ def build(jobs=None, *, use_calibration=None) -> None:
                         f"calibration.param.{key}")
 
     # --------------------------------------------------------- image + fit
-    global _guides_installed
-    if not _guides_installed:
-        ui.add_body_html(f"<script>{_GUIDE_SCRIPT}</script>", shared=True)
-        _guides_installed = True
     with theme.panel_card():
         with ui.column().classes("w-full gap-4"):
             with ui.column().classes("w-full gap-2 polar-guide-group") as guide_group:
-                with ui.row().classes("gap-3 items-center flex-wrap"):
-                    color_scale = persist(
-                        ui.select(["Linear", "Log"], value="Linear", label="Color scale")
-                        .props("outlined dense").classes("w-32"), "calibration.color_scale")
-                    colormap = persist(
-                        ui.select(list(COLORMAPS), value="Viridis", label="Colormap")
-                        .props("outlined dense").classes("w-36"), "calibration.colormap")
-                    guides = persist(ui.checkbox("Crosshair guides"), "calibration.crosshair_guides")
-                    guides.tooltip("Drag either line or the center handle in either polar preview.")
-                    ui.element("span").props("data-polar-guide-readout") \
-                        .classes("font-mono text-xs").bind_visibility_from(guides, "value")
-                ui.label("Log scale uses positive pixels.").classes("vmi-subtitle")
+                color_scale, colormap, guides = polar_controls("calibration")
                 polar_images, color_limits, color_status = {}, {}, {}
                 pointer_readouts = {}
                 for key, label in (("raw", "Raw polar"), ("processed", "Processed polar")):
-                    ui.label(label).classes("vmi-subtitle")
-                    with ui.row().classes("w-full gap-4 flex-wrap"):
-                        sliders = []
-                        for bound, caption, minimum, maximum, default in (
-                            ("min", "Lower percentile (vmin)", 0, 99.9, 1),
-                            ("max", "Upper percentile (vmax)", 0.1, 100, 99.5),
-                        ):
-                            legacy = app.storage.general.get(f"calibration.color_{bound}_pct")
-                            with ui.column().classes("w-64 max-w-full gap-0"):
-                                value_label = ui.label().classes("vmi-subtitle")
-                                slider = persist(
-                                    ui.slider(min=minimum, max=maximum, step=0.1,
-                                              value=default if legacy is None else legacy)
-                                    .props(f'aria-label="{label} {caption.lower()}"').classes("w-full"),
-                                    f"calibration.{key}_color_{bound}_pct")
-                                value_label.bind_text_from(
-                                    slider, "value",
-                                    lambda value, caption=caption: f"{caption} {value:g}%")
-                                sliders.append(slider)
-                    color_min, color_max = sliders
-                    lower = 1 if color_min.value is None else round(color_min.value, 1)
-                    upper = 99.5 if color_max.value is None else round(color_max.value, 1)
-                    if not 0 <= lower < upper <= 100:
-                        lower, upper = 1, 99.5
-                    color_min.value, color_max.value = lower, upper
-                    color_limits[key] = (color_min, color_max)
-                    color_status[key] = ui.label("").classes("vmi-subtitle")
-                    color_status[key].visible = False
-                    with ui.element("div").classes("relative w-full"):
-                        polar_images[key] = _polar_image(key)
-                        with ui.element("div").classes("polar-guide-layer").bind_visibility_from(guides, "value"):
-                            for axis, name in (("x", "Vertical guide"), ("y", "Horizontal guide"),
-                                               ("xy", "Crosshair handle")):
-                                ui.element("button").props(
-                                    f'type="button" data-polar-guide="{axis}" aria-label="{label} {name.lower()}"')
+                    polar_images[key], color_limits[key], color_status[key] = polar_preview(
+                        "calibration", key, label, guides, lambda: _polar_image(key),
+                        legacy_shared_limits=True)
                     pointer_readouts[key] = ui.label().classes(
                         "polar-pointer-readout w-full text-right font-mono text-xs min-h-4")
                 widgets["tool"] = ui.toggle(
@@ -554,7 +477,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
                                                 on_click=lambda: _undo_selection()).disable()
                 ui.label("Drag to mask. Adjust horizontal zoom to narrow the band.").classes("vmi-subtitle")
                 with ui.element("div").classes("w-full overflow-x-auto"):
-                    inspection_image = _polar_image("inspection")
+                    inspection_image = _polar_image("inspection").classes("w-full").style(
+                        f"height: {POLAR_HEIGHT}; border: 1px solid #e0ddd6")
                 inspection_status = ui.label().classes("vmi-subtitle")
                 pointer_readouts["inspection"] = ui.label().classes(
                     "w-full text-right font-mono text-xs min-h-4")
@@ -715,9 +639,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
             return
         state["view_indices"] = (ti, ri)
         state["img_size"] = (int(ri.size), int(ti.size))
-        angular_step = 360 / state["theta"].size
-        guide_group.props(f'data-polar-view="{ri[0]} {ri[-1] + 1} {ti[0]} {ti[-1] + 1} '
-                          f'{state["dr"]} {angular_step}"')
+        set_polar_view(guide_group, ri, ti, state["dr"], 360 / state["theta"].size)
         for key in polar_images:
             _refresh_contrast(key)
             pointer_readouts[key].text = ""
@@ -739,20 +661,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
         inspection_status.text = f"Showing automatic linear colors. {warning}" if warning else ""
 
     def _set_polar_source(element, data, key):
-        color_min, color_max = color_limits[key]
-        warning = ""
-        try:
-            image = _render_polar_image(data, cmap=colormap.value, log_scale=color_scale.value == "Log",
-                                        vmin_pct=color_min.value, vmax_pct=color_max.value)
-        except ValueError as exc:
-            warning = str(exc)
-            image = _render_polar_image(data, cmap=colormap.value)
-        # Give each update its own bytes so in-flight requests cannot read a changing file.
-        with BytesIO() as buffer:
-            image.save(buffer, format="PNG")
-            encoded = b64encode(buffer.getbuffer()).decode("ascii")
-        element.set_source(f"data:image/png;base64,{encoded}")
-        return warning
+        return set_polar_source(element, data, colormap, color_scale, color_limits[key],
+                                renderer=_render_polar_image)
 
     def _inspect_band():
         band = state["band"]
@@ -783,16 +693,6 @@ def build(jobs=None, *, use_calibration=None) -> None:
         state["view"].update(r0=max(band.r0 - pad, 0.0),
                              r1=min(band.r1 + pad, float(state["r"][-1])))
         _refresh_view()
-
-    def _change_color_limit(key, slider):
-        color_min, color_max = color_limits[key]
-        if color_min.value >= color_max.value:
-            if slider is color_min:
-                color_min.value = round(color_max.value - 0.1, 1)
-            else:
-                color_max.value = round(color_min.value + 0.1, 1)
-            return
-        _refresh_contrast(key)
 
     def _set_selection(band, masks):
         state["selection_history"].append((state["band"], state["masks"]))
@@ -1350,8 +1250,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
     for control in (color_scale, colormap):
         control.on_value_change(lambda _: _refresh_view())
     for key, sliders in color_limits.items():
-        for slider in sliders:
-            slider.on_value_change(lambda _, key=key, slider=slider: _change_color_limit(key, slider))
+        bind_percentiles(sliders, lambda key=key: _refresh_contrast(key))
     send_button.on_click(_export_to_circularize)
     send_model_button.on_click(_export_to_circularize)
     refresh_rings_button.on_click(_refresh_rings_from_file)

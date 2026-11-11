@@ -176,6 +176,27 @@ def remap_polar(image, center, n_r=512, n_theta=720, r_max=None, order=1, *,
     return values, theta, r, dr, valid
 
 
+def save_polar_comparison(path, raw, corrected, center):
+    """Save both detector images on the same display grid about the correction center."""
+    ny, nx = raw.shape
+    cx, cy = center
+    radius = min(cx, nx - 1 - cx, cy, ny - 1 - cy)
+    if radius <= 0:
+        radius = np.hypot(max(cx, nx - 1 - cx), max(cy, ny - 1 - cy))
+    grid = {"r_max": radius, "radial_bin_size": min(1.0, radius / 7)}
+    raw_polar, _, _, dr, _ = remap_polar(raw, center, **grid)
+    corrected_polar, *_ = remap_polar(corrected, center, **grid)
+    path = Path(path)
+    temporary = NamedTemporaryFile(mode="wb", dir=path.parent,
+                                   prefix=f".{path.name}.", suffix=".tmp", delete=False)
+    try:
+        with temporary:
+            np.savez(temporary, raw=raw_polar, circularized=corrected_polar, dr=dr)
+        Path(temporary.name).replace(path)
+    finally:
+        Path(temporary.name).unlink(missing_ok=True)
+
+
 def inverse_abel(polar, dr=1.0, method="hansenlaw", *, hold_order=0):
     """Inverse Abel transform of every constant-angle row along the radius."""
     polar = np.asarray(polar, dtype=float)
