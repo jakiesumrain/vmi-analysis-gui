@@ -31,7 +31,7 @@
 \graphicspath{{docs/}{./}}
 \usepackage{caption}
 \usepackage{amsmath}
-\usetikzlibrary{arrows.meta,positioning}
+\usetikzlibrary{arrows.meta,positioning,calc}
 
 \definecolor{vmcoral}{HTML}{CC785C}
 \definecolor{vmdark}{HTML}{181715}
@@ -71,27 +71,31 @@
 \sloppy
 
 \begin{titlepage}
-  \centering
-  \vspace*{2.0cm}
-  {\Huge\bfseries VMI Analysis GUI\par}
-  \vspace{0.6cm}
-  {\Large User Manual\par}
-  \vspace{0.8cm}
-  {\large Velocity-map imaging photoelectron analysis\\
-   and the NiceGUI web interface\par}
-  \vfill
-  \includegraphics[width=12cm]{logo.png}
-  \vfill
-  \begin{tabular}{ll}
-    Application version & 0.1.0 \\
-    Document revision & 1.0 \\
-    Date & \today \\
-    License & Apache License, Version 2.0 \\
-  \end{tabular}
-  \vfill
-  {\small This manual describes the panels, input fields, processing
-   stages, output files, and operating constraints of the application.
-   Bundled CPBASEX uses the MIT License.}
+\thispagestyle{empty}
+\begin{tikzpicture}[remember picture, overlay]
+  \node[inner sep=0] at (current page.center)
+    {\includegraphics[width=\paperwidth,height=\paperheight]{cover-bg.jpg}};
+  \node[anchor=north, text=white, align=center, font=\Huge\bfseries]
+    at ([yshift=-2.0cm]current page.north) {VMI Analysis GUI};
+  \node[anchor=north, text=white!85, font=\Large]
+    at ([yshift=-3.3cm]current page.north) {User Manual};
+  \node[anchor=north, text=white!70, font=\large, align=center]
+    at ([yshift=-4.6cm]current page.north)
+    {Velocity-map imaging photoelectron analysis\\ and the NiceGUI web interface};
+  \node[anchor=south, text=white!80, font=\small]
+    at ([yshift=2.2cm]current page.south) {%
+      \begin{tabular}{@{}ll@{}}
+        Application version & 0.1.0 \\
+        Document revision & 1.0 \\
+        Date & \today \\
+        License & Apache License, Version 2.0 \\
+      \end{tabular}};
+  \node[anchor=south] at ([yshift=0.7cm]current page.south) {%
+    \parbox{0.82\paperwidth}{\centering\color{white!55}\footnotesize
+      This manual describes the panels, input fields, processing stages,
+      output files, and operating constraints of the application.
+      Bundled CPBASEX uses the MIT License.}};
+\end{tikzpicture}
 \end{titlepage}
 
 \markboth{Contents}{Contents}
