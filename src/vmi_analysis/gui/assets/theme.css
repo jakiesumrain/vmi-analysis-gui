@@ -136,3 +136,48 @@ body {
 /* thin scrollbars for consoles */
 .vmi-log::-webkit-scrollbar { width: 8px; }
 .vmi-log::-webkit-scrollbar-thumb { background: #3a3835; border-radius: 4px; }
+
+.polar-guide-layer {
+  position: absolute;
+  inset: 1px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.polar-guide-group:not([data-polar-view]) .polar-guide-layer { display: none; }
+.polar-guide-layer button {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.polar-guide-layer button::before {
+  content: "";
+  position: absolute;
+  background: white;
+  box-shadow: 0 0 0 1px #161514;
+}
+.polar-guide-layer [data-polar-guide="x"] {
+  inset: 0 auto 0 var(--polar-guide-x, 50%);
+  width: 12px;
+  transform: translateX(-50%);
+  cursor: ew-resize;
+}
+.polar-guide-layer [data-polar-guide="x"]::before { inset: 0 auto 0 50%; width: 1px; }
+.polar-guide-layer [data-polar-guide="y"] {
+  inset: var(--polar-guide-y, 50%) 0 auto;
+  height: 12px;
+  transform: translateY(-50%);
+  cursor: ns-resize;
+}
+.polar-guide-layer [data-polar-guide="y"]::before { inset: 50% 0 auto; height: 1px; }
+.polar-guide-layer [data-polar-guide="xy"] {
+  top: var(--polar-guide-y, 50%);
+  left: var(--polar-guide-x, 50%);
+  width: 18px;
+  height: 18px;
+  transform: translate(-50%, -50%);
+  cursor: move;
+}
+.polar-guide-layer [data-polar-guide="xy"]::before { inset: 6px; border-radius: 50%; }
