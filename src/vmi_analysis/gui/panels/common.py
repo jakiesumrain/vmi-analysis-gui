@@ -168,10 +168,6 @@ def render_npy(npy_path, out_path: Path, **kw) -> Path:
     return render_image(np.load(npy_path), out_path, **kw)
 
 
-def render_txt_image(txt_path, out_path: Path, **kw) -> Path:
-    return render_image(np.loadtxt(txt_path), out_path, **kw)
-
-
 # --------------------------------------------------------------------------
 # Form helpers
 # --------------------------------------------------------------------------
