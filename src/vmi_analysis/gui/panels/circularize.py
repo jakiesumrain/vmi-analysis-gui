@@ -154,10 +154,9 @@ def build(jobs: JobManager):
 
         view.run_button(on_click=run)
 
-    polar_data, polar_widgets = {}, {}
-    with theme.panel_card() as polar_card:
-        polar_card.set_visibility(False)
-        with ui.column().classes("w-full gap-2 polar-guide-group") as guide_group:
+        polar_data, polar_widgets = {}, {}
+        with ui.column().classes("w-full gap-2 border-t border-stone-200 pt-4 polar-guide-group") as polar_card:
+            polar_card.set_visibility(False)
             scale, colormap, guides = polar_controls("circularize")
             for key, label in (("raw", "Raw polar"), ("circularized", "Circularized polar")):
                 polar_widgets[key] = polar_preview(
@@ -181,7 +180,7 @@ def build(jobs: JobManager):
             polar_data.update({key: data[key] for key in polar_widgets})
             dr = float(data["dr"])
         n_theta, n_r = polar_data["raw"].shape
-        set_polar_view(guide_group, (0, n_r - 1), (0, n_theta - 1), dr, 360 / n_theta)
+        set_polar_view(polar_card, (0, n_r - 1), (0, n_theta - 1), dr, 360 / n_theta)
         refresh_polar_pair()
         polar_card.set_visibility(True)
 
@@ -190,7 +189,6 @@ def build(jobs: JobManager):
     for control in (scale, colormap):
         control.on_value_change(lambda _: refresh_polar_pair())
     view.place_console()
-    polar_card.move()
 
     def use_calibration(extracted_path, image_path=None, manual_center=None, *,
                         radial_model_value=None, poly_order_value=None):
