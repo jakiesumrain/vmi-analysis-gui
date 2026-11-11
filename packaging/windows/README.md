@@ -1,7 +1,7 @@
 # Windows x64 installer
 
-The installer contains a private Python runtime, the locked Python packages,
-the Visual C++ runtime DLLs, FFmpeg, and the user manual. Run Setup on
+The installer contains a private Python runtime, the Python packages used by
+VMI Analysis, the Visual C++ runtime DLLs, and the user manual. Run Setup on
 64-bit Windows 10 or later. Start **VMI Analysis** from the Start menu.
 The app opens in the default web browser and listens on localhost.
 
@@ -9,6 +9,8 @@ The default experiment workspace is `%USERPROFILE%\VMI Analysis`.
 Set `VMI_WORKSPACE_DIR` before starting the app to use another workspace.
 Supply the experiment data and calibration files separately. The optional
 MATLAB backend requires a MATLAB installation and CPBASEX basis data.
+MP4 export uses FFmpeg from the system PATH or the executable specified by
+`VMI_FFMPEG_EXE`. When FFmpeg is unavailable, the Movie panel saves an animated GIF.
 
 To uninstall, close VMI Analysis. In **Control Panel**, open **Programs and
 Features**. Select **VMI Analysis** and click **Uninstall**. The uninstaller
@@ -24,16 +26,12 @@ Run `uv sync --locked` from the checkout. Obtain these build inputs.
   The build checks its SHA-256 digest.
 - The x64 `VC\Redist\MSVC\<version>\x64` directory from a Visual Studio
   installation that includes the VC143 redistributable files.
-- The [GPLv3 text from FFmpeg 9.0.2](https://github.com/FFmpeg/FFmpeg/blob/n9.0.2/COPYING.GPLv3).
-  Save the raw file. See [third-party notices](third-party.md) for the
-  bundled FFmpeg build and source details.
 
 ```powershell
 .\packaging\windows\build.ps1 `
     -PythonEmbedZip 'C:\path\python-3.13.14-embed-amd64.zip' `
     -VCRedistX64 'C:\path\VC\Redist\MSVC\14.44.35112\x64' `
-    -InnoCompiler 'C:\path\Inno Setup 6\ISCC.exe' `
-    -FfmpegLicense 'C:\path\COPYING.GPLv3'
+    -InnoCompiler 'C:\path\Inno Setup 6\ISCC.exe'
 ```
 
 The build can download wheels. Set `UV_OFFLINE=1` when the lockfile inputs
@@ -43,5 +41,6 @@ from its embedded files. The executable and SHA-256 checksum appear in
 `-PrepareOnly` to stage and check the payload before compiling Setup.
 
 Before a public release, test installation and uninstallation on a clean,
-disconnected Windows x64 machine. Run a multi-worker job, export an MP4,
-and check that uninstall preserves the experiment workspace.
+disconnected Windows x64 machine. Run a multi-worker job and export a GIF.
+With system FFmpeg available, also check MP4 export. Check that uninstall
+preserves the experiment workspace.

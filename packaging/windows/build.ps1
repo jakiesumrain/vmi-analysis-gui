@@ -3,7 +3,6 @@ param(
     [Parameter(Mandatory)][string]$PythonEmbedZip,
     [Parameter(Mandatory)][string]$VCRedistX64,
     [string]$InnoCompiler,
-    [Parameter(Mandatory)][string]$FfmpegLicense,
     [switch]$PrepareOnly
 )
 
@@ -23,7 +22,6 @@ if (!$PrepareOnly) {
     if (!$InnoCompiler) { throw 'Specify the path to Inno Setup ISCC.exe.' }
     $InnoCompiler = (Resolve-Path -LiteralPath $InnoCompiler).Path
 }
-$FfmpegLicense = (Resolve-Path -LiteralPath $FfmpegLicense).Path
 $pythonHash = '90b4e5b9898b72d744650524bff92377c367f44bd5fbd09e3148656c080ad907'
 if ((Get-FileHash -LiteralPath $PythonEmbedZip -Algorithm SHA256).Hash -ne $pythonHash) {
     throw 'Use the official Python 3.13.14 Windows x64 embeddable ZIP.'
@@ -63,7 +61,14 @@ try {
     $python = Join-Path $runtime 'python.exe'
     $requirements = Join-Path $build 'requirements.txt'
     $wheelDir = Join-Path $build 'wheel'
-    Invoke-Checked uv @('export', '--locked', '--no-dev', '--no-emit-project', '--output-file', $requirements) | Out-Null
+    # Picasso declares these for its own GUI, web interface, and video tooling.
+    # VMI uses Picasso's fitting routines and finds FFmpeg at runtime.
+    $excluded = @('pyqt6', 'pyqt6-qt6', 'pyqt6-sip', 'streamlit', 'pyarrow', 'imageio-ffmpeg')
+    $exportArgs = @('export', '--locked', '--no-dev', '--no-emit-project', '--output-file', $requirements)
+    foreach ($package in $excluded) {
+        $exportArgs += @('--no-emit-package', $package)
+    }
+    Invoke-Checked uv $exportArgs | Out-Null
     Invoke-Checked uv @('build', '--wheel', '--out-dir', $wheelDir)
     Invoke-Checked uv @('pip', 'install', '--python', $python, '--target', $site,
         '--link-mode', 'copy', '--only-binary', ':all:', '--no-deps', '--require-hashes', '-r', $requirements)
@@ -76,16 +81,10 @@ try {
         (Join-Path $runtime 'sitecustomize.pyc'))
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'launch.py') -Destination $stage
     Copy-Item -LiteralPath 'LICENSE', 'NOTICE', 'docs/manual.pdf' -Destination $stage
-    Copy-Item -LiteralPath $FfmpegLicense -Destination (Join-Path $stage 'FFmpeg-GPLv3.txt')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'third-party.md') -Destination $stage
 
-    $check = 'import struct, sys; assert struct.calcsize("P") == 8 and sys.dont_write_bytecode; import cv2, h5py, imageio_ffmpeg, nicegui, numba, scipy, win32api; print(imageio_ffmpeg.get_ffmpeg_exe())'
-    $ffmpeg = Invoke-Checked $python @('-c', $check)
-    if (!(Test-Path -LiteralPath $ffmpeg -PathType Leaf) -or
-            !$ffmpeg.StartsWith("$runtime\", [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'The private Python runtime did not find its bundled FFmpeg executable.'
-    }
-    Invoke-Checked $ffmpeg @('-version') | Set-Content -LiteralPath (Join-Path $stage 'FFmpeg-build.txt') -Encoding utf8
+    $check = 'import struct, sys; assert struct.calcsize("P") == 8 and sys.dont_write_bytecode; import cv2, h5py, nicegui, numba, scipy, win32api; from picasso import localize, gaussmle, gausslq, io'
+    Invoke-Checked $python @('-c', $check)
     if ($PrepareOnly) {
         Write-Host "Prepared payload: $stage"
         return
