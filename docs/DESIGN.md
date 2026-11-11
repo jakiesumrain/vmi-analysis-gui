@@ -298,7 +298,20 @@ components:
     padding: 64px
 ---
 
-## Overview
+## Current application
+
+`src/vmi_analysis/gui/theme.py` and `src/vmi_analysis/gui/assets/theme.css`
+define the theme that the application uses. The interface uses a cream
+background, coral actions, and dark log consoles. Panel headings use
+Cormorant Garamond. Controls use Inter. Logs use JetBrains Mono.
+
+Each panel begins with a heading and a short task summary. The Binning,
+PES, and Pipeline summaries identify their current development status.
+
+The tokens and examples below record the design reference. See the
+[architecture](architecture.md) for the implemented panels and previews.
+
+## Reference overview
 
 Claude.com is the warmest, most editorial interface in the AI-product category. The base atmosphere is a **tinted cream canvas** (`{colors.canvas}` — #faf9f5) — distinctly warm, deliberately not the cool gray-white that every other AI brand uses. Headlines run a **slab-serif display** ("Copernicus" / Tiempos Headline) at weight 400 with negative letter-spacing, paired with **StyreneB / Inter** body sans. The combination feels like a literary publication, not a SaaS marketing page.
 

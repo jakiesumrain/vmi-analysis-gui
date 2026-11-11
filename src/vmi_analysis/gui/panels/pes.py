@@ -38,9 +38,8 @@ def _default_bin_dir() -> str:
 def build(jobs: JobManager) -> None:
     theme.section_title(
         "PES / Abel Inversion",
-        "Hole patch → rotate → center → circularize → apodize → Abel "
-        "inversion for each GMD bin (process_gmd_bins.py). "
-        "Bins run sequentially — the MATLAB backend shares global state.")
+        "Apply Abel inversion to GMD-binned images to extract energy spectra and anisotropy parameters. "
+        "This panel is immature and needs restructuring.")
 
     missing = [f for f in CALIBRATION_FILES if not (CIRC_DIR / f).exists()]
     if missing:

@@ -292,12 +292,10 @@ def _rebuild_changes(saved_rings, blocks):
 def build(jobs=None, *, use_calibration=None) -> None:
     theme.section_title(
         "Trig Calibration",
-        "Extract circularisation trig terms from a polar remap with optional "
-        "inverse Abel. Select a ring, mask interference and fit its ridge. Accepted "
-        "rings are appended as Gascooke-compatible blocks.")
+        "Fit ring shapes in a polar VMI image and export a calibration for Circularize.")
     ui.label(
-        "Use the mouse: drag a rectangle to select a ring band (blue) or to "
-        "mask a region (red). Masked pixels are excluded from the fit."
+        "Drag a rectangle to select a ring band (blue) or mask interference (red). "
+        "The fit excludes masked pixels."
     ).classes("vmi-caption")
 
     state = {

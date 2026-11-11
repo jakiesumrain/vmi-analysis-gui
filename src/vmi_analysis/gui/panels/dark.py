@@ -17,10 +17,7 @@ from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
 def build(jobs: JobManager) -> None:
     theme.section_title(
         "Dark Frame",
-        "Compute a mean or median dark frame from dark HDF5 files "
-        "(centroiding/compute_dark.py). Point the Centroiding panel's "
-        "'Pre-computed dark .npy' at the result to skip recomputing it "
-        "on every run.")
+        "Build a mean or median dark frame for background subtraction.")
 
     view = JobView(jobs, job_name='Dark frame', results_builder=_results)
 

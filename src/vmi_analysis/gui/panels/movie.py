@@ -55,9 +55,7 @@ function vmiMovieStep() {
 def build(jobs: JobManager) -> None:
     theme.section_title(
         "Frame Movie",
-        "Render the first N frames as a movie and scrub them frame by frame "
-        "(h5_play_frames_movie.py). Uncheck 'Save movie file' to watch the "
-        "movie play live in this page instead of writing a file.")
+        "Preview camera frames in order or save them as a movie.")
 
     view = JobView(jobs, job_name='Frame movie', results_builder=_results)
     ui.add_body_html(_PLAYER_JS, shared=True)

@@ -20,10 +20,8 @@ CIRC_DIR = REPO_ROOT / "circularization"
 def build(jobs: JobManager) -> None:
     theme.section_title(
         "Pipeline",
-        "Run the full chain as one sequential job: GMD map → Picasso "
-        "centroiding → GMD binning → PES/Abel inversion. Configure the "
-        "centroiding parameters on its own tab first — its saved settings "
-        "are used with this pipeline's dataset and GMD map.")
+        "Run GMD mapping, Centroiding, Binning, and PES in sequence. "
+        "This panel is immature and needs restructuring.")
 
     view = JobView(jobs, job_name='Pipeline')
 

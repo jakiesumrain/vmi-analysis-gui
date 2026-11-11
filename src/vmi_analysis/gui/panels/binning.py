@@ -17,8 +17,8 @@ CENTROID_DIR = REPO_ROOT / "centroiding"
 def build(jobs: JobManager) -> None:
     theme.section_title(
         "GMD Binning",
-        "Partition checkpoint events into GMD bins, one 2D histogram per bin "
-        "(vmi_histogram_gmd_bins.py). Run after centroiding.")
+        "Group centroided events by GMD pulse energy and build one image per bin. "
+        "This panel is immature and needs restructuring.")
 
     view = JobView(jobs, job_name='GMD binning', results_builder=_results)
     settings = binning_inputs()

@@ -24,8 +24,7 @@ CIRC_DIR = REPO_ROOT / "circularization"
 def build(jobs: JobManager):
     theme.section_title(
         "Circularize",
-        "Correct radial distortion of one VMI image using the Gascooke "
-        "trig-fit calibration (circularization.py).")
+        "Correct radial distortion in one VMI image and compare the raw and corrected polar views.")
 
     def results(job):
         _results(job)

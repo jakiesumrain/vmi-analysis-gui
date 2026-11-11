@@ -78,9 +78,7 @@ ADVANCED_KEYS = {
 def build(jobs: JobManager) -> None:
     theme.section_title(
         "Picasso Centroiding",
-        "Settings are saved automatically. Run the Picasso localization "
-        "(process_andor_vmi_PICASSO_v5_h5_batch.py). "
-        "Set 'Tuning mode only' to optimize detection on a single frame first.")
+        "Locate electron spots and build a VMI image. Use a single frame to tune detection.")
 
     view = JobView(jobs, job_name='Centroiding', results_builder=_results)
 
