@@ -20,8 +20,11 @@
     // Sample centers are half a bin from the image edge.
     const radius = (position.x - 0.5) * radialStep;
     const angle = (position.y - 0.5) * angularStep;
-    group.querySelector('[data-polar-guide-readout]').textContent =
-      `r ${radius.toFixed(3)} px · θ ${angle.toFixed(2)}°`;
+    const readout = group.querySelector('[data-polar-guide-readout]');
+    readout.textContent = `r ${radius.toFixed(3)} px`;
+    if (readout.dataset.polarGuideReadout === 'xy') {
+      readout.textContent += ` · θ ${angle.toFixed(2)}°`;
+    }
   }
 
   document.addEventListener('pointerdown', event => {

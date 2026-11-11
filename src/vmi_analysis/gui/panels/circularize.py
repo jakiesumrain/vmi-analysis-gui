@@ -157,10 +157,11 @@ def build(jobs: JobManager):
         polar_data, polar_widgets = {}, {}
         with ui.column().classes("w-full gap-2 border-t border-stone-200 pt-4 polar-guide-group") as polar_card:
             polar_card.set_visibility(False)
-            scale, colormap, guides = polar_controls("circularize")
+            scale, colormap, guides = polar_controls("circularize", radius_only=True)
             for key, label in (("raw", "Raw polar"), ("circularized", "Circularized polar")):
                 polar_widgets[key] = polar_preview(
-                    "circularize", key, label, guides, lambda: ui.interactive_image(""))
+                    "circularize", key, label, guides, lambda: ui.interactive_image(""),
+                    radius_only=True)
 
     def refresh_polar(key):
         if key in polar_data:

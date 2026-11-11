@@ -18,7 +18,7 @@ _GUIDE_SCRIPT = (files("vmi_analysis.gui.assets") / "polar_guides.js").read_text
 _guides_installed = False
 
 
-def polar_controls(prefix):
+def polar_controls(prefix, *, radius_only=False):
     global _guides_installed
     if not _guides_installed:
         ui.add_body_html(f"<script>{_GUIDE_SCRIPT}</script>", shared=True)
@@ -29,15 +29,19 @@ def polar_controls(prefix):
                         .props("outlined dense").classes("w-32"), f"{prefix}.color_scale")
         cmap = persist(ui.select(list(COLORMAPS), value="Viridis", label="Colormap")
                        .props("outlined dense").classes("w-36"), f"{prefix}.colormap")
-        guides = persist(ui.checkbox("Crosshair guides"), f"{prefix}.crosshair_guides")
-        guides.tooltip("Drag either line or the center handle in either polar preview.")
-        ui.element("span").props("data-polar-guide-readout") \
+        label = "Radius guide" if radius_only else "Crosshair guides"
+        guides = persist(ui.checkbox(label), f"{prefix}.crosshair_guides")
+        guides.tooltip("Drag the vertical line in either polar preview." if radius_only else
+                       "Drag either line or the center handle in either polar preview.")
+        axes = "x" if radius_only else "xy"
+        ui.element("span").props(f'data-polar-guide-readout="{axes}"') \
             .classes("font-mono text-xs").bind_visibility_from(guides, "value")
     ui.label("Log scale uses positive pixels.").classes("vmi-subtitle")
     return scale, cmap, guides
 
 
-def polar_preview(prefix, key, label, guides, make_image, *, legacy_shared_limits=False):
+def polar_preview(prefix, key, label, guides, make_image, *, legacy_shared_limits=False,
+                  radius_only=False):
     ui.label(label).classes("vmi-subtitle")
     sliders = []
     with ui.row().classes("w-full gap-4 flex-wrap"):
@@ -64,7 +68,10 @@ def polar_preview(prefix, key, label, guides, make_image, *, legacy_shared_limit
     with ui.element("div").classes("relative w-full"):
         image = make_image().classes("w-full").style(f"height: {POLAR_HEIGHT}; border: 1px solid #e0ddd6")
         with ui.element("div").classes("polar-guide-layer").bind_visibility_from(guides, "value"):
-            for axis, name in (("x", "vertical guide"), ("y", "horizontal guide"), ("xy", "crosshair handle")):
+            handles = [("x", "vertical guide")]
+            if not radius_only:
+                handles.extend((("y", "horizontal guide"), ("xy", "crosshair handle")))
+            for axis, name in handles:
                 ui.element("button").props(
                     f'type="button" data-polar-guide="{axis}" aria-label="{label} {name}"')
     return image, (color_min, color_max), status
