@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 
@@ -9,6 +10,20 @@ def main():
     launcher = Path(__file__).resolve()
     install_root = launcher.parents[1]
     cache = install_root / "vmi-analysis-cache"
+    if Path(sys.executable).name.lower() == "pythonw.exe":
+        cache.mkdir(parents=True, exist_ok=True)
+        python = Path(sys.executable).with_name("python.exe")
+        with (cache / "server.log").open("ab") as log:
+            subprocess.Popen(
+                [str(python), "-u", str(launcher)],
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                env=dict(os.environ, PYTHONIOENCODING="utf-8"),
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        return
+
     os.environ.setdefault("VMI_WORKSPACE_DIR", str(Path.home() / "VMI Analysis"))
     os.environ.setdefault("NICEGUI_STORAGE_PATH", str(install_root / "vmi-analysis-settings"))
     os.environ.setdefault("VMI_CACHE_DIR", str(cache / "previews"))

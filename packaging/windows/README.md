@@ -3,7 +3,9 @@
 The installer contains a private Python runtime, the Python packages used by
 VMI Analysis, the Visual C++ runtime DLLs, and the user manual. Run Setup on
 64-bit Windows 10 or later. Start **VMI Analysis** from the Start menu.
-The app opens in the default web browser and listens on localhost.
+The app opens in the default web browser at `http://localhost:13517`.
+The Start menu launcher runs in the background and writes server diagnostics
+to `vmi-analysis-cache\server.log` in the installation directory.
 
 The default experiment workspace is `%USERPROFILE%\VMI Analysis`.
 Set `VMI_WORKSPACE_DIR` before starting the app to use another workspace.

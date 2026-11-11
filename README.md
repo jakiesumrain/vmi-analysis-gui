@@ -16,7 +16,7 @@ uv sync
 uv run vmi-analysis
 ```
 
-The app opens at [localhost:3157](http://localhost:3157). Set `VMI_GUI_PORT`
+The app opens at [localhost:13517](http://localhost:13517). Set `VMI_GUI_PORT`
 to use a different port. Supply your own camera files. For GMD matching,
 also supply the GMD timestamp file.
 

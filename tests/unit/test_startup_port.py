@@ -31,8 +31,8 @@ class StartupPortTests(unittest.TestCase):
     def test_default_and_explicit_available_ports(self):
         with patch.dict(os.environ), patch.object(startup, '_bind_error', return_value=None) as probe:
             os.environ.pop('VMI_GUI_PORT', None)
-            self.assertEqual(startup.startup_port(), 3157)
-            probe.assert_called_with(3157, '0.0.0.0')
+            self.assertEqual(startup.startup_port(), 13517)
+            probe.assert_called_with(13517, '0.0.0.0')
             os.environ['VMI_GUI_PORT'] = '3158'
             self.assertEqual(startup.startup_port(), 3158)
 

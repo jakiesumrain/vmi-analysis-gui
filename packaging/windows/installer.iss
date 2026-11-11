@@ -27,7 +27,7 @@ UninstallDisplayIcon={app}\app-{#ReleaseVersion}\vmi-analysis.ico
 Source: "{#Stage}\*"; DestDir: "{app}\app-{#ReleaseVersion}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{userprograms}\VMI Analysis"; Filename: "{app}\app-{#ReleaseVersion}\runtime\python.exe"; Parameters: """{app}\app-{#ReleaseVersion}\launch.py"""; WorkingDir: "{app}"; IconFilename: "{app}\app-{#ReleaseVersion}\vmi-analysis.ico"
+Name: "{userprograms}\VMI Analysis"; Filename: "{app}\app-{#ReleaseVersion}\runtime\pythonw.exe"; Parameters: """{app}\app-{#ReleaseVersion}\launch.py"""; WorkingDir: "{app}"; IconFilename: "{app}\app-{#ReleaseVersion}\vmi-analysis.ico"
 Name: "{userprograms}\VMI Analysis User Manual"; Filename: "{app}\app-{#ReleaseVersion}\manual.pdf"
 
 [UninstallDelete]
