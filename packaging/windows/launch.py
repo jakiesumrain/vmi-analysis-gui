@@ -16,9 +16,6 @@ def main():
     os.environ.setdefault("NUMBA_CACHE_DIR", str(cache / "numba"))
     os.environ["VMI_GUI_OFFLINE"] = "1"
 
-    import imageio_ffmpeg
-
-    os.environ.setdefault("VMI_FFMPEG_EXE", imageio_ffmpeg.get_ffmpeg_exe())
     from vmi_analysis.gui.app import main as run_gui
 
     executable = sys.executable.replace("'", "''")

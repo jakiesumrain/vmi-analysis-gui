@@ -126,12 +126,9 @@ def build(jobs: JobManager) -> None:
             if not save_movie.value:
                 # embedded live playback: frames stream in at playback pace
                 cmd.append("--stream-pace")
-            name = os.path.basename(os.path.normpath(h5_dir.value))
             job = jobs.submit(Job(
                 name="Frame movie", cmd=cmd, cwd=str(REPO_ROOT),
-                extra={"frames_dir": str(frames_dir),
-                       "movie_path": str(Path(movie_dir.value) / (name + movie_ext.value)),
-                       "movie_path_gif": str(Path(movie_dir.value) / (name + ".gif"))}))
+                extra={"frames_dir": str(frames_dir)}))
             live_state["job"] = None if save_movie.value else job
             if save_movie.value:
                 ui.run_javascript(
@@ -247,17 +244,17 @@ def _clear_outputs(movie_dir, h5_dir) -> None:
 def _results(job: Job):
     if job.status != "done":
         return
-    movie = job.extra["movie_path"]
-    if not Path(movie).exists() and Path(job.extra["movie_path_gif"]).exists():
-        movie = job.extra["movie_path_gif"]  # ffmpeg fallback
-    if Path(movie).exists():
+    frames_dir = Path(job.extra["frames_dir"])
+    result_path = frames_dir / "movie-path.txt"
+    movie = result_path.read_text(encoding="utf-8") if result_path.is_file() else ""
+    if movie and Path(movie).is_file():
         ui.label(f"Movie: {movie}").classes("vmi-subtitle")
         open_folder_button(movie)
         if movie.lower().endswith(".mp4"):
             ui.video(file_url(movie)).classes("w-full max-w-2xl")
         else:
             zoomable_image(file_url(movie)).classes("w-full max-w-2xl")
-    frames = sorted(Path(job.extra["frames_dir"]).glob("frame_*.png"))
+    frames = sorted(frames_dir.glob("frame_*.png"))
     if frames:
         ui.label(f"Scrub frames ({len(frames)}):").classes("vmi-caption")
         img = zoomable_image(file_url(frames[0])).classes("w-full max-w-2xl")

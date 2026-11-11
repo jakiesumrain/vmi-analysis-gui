@@ -24,6 +24,7 @@ import numpy as np
 import inspect
 import os
 import time
+from pathlib import Path
 
 import matplotlib
 if "--headless" in sys.argv or os.environ.get("MPLBACKEND"):
@@ -172,6 +173,7 @@ def save_animation(anim, out_path, n_frames):
         save_kwargs['progress_callback'] = progress   # matplotlib >= 3.4
     anim.save(out_path, **save_kwargs)
     print(f"Movie written: {out_path}")
+    return out_path
 
 
 def main():
@@ -261,7 +263,10 @@ def main():
     if save_movie:
         state['saving'] = True
         ax_btn.set_visible(False)          # keep the button out of the video
-        save_animation(anim, out_path, n_total)
+        saved_path = save_animation(anim, out_path, n_total)
+        if dump_frames:
+            (Path(dump_frames) / "movie-path.txt").write_text(
+                str(Path(saved_path).resolve()), encoding="utf-8")
         ax_btn.set_visible(True)
         state['saving'] = False
     else:
