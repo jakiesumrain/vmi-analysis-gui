@@ -27,6 +27,8 @@
 \usepackage{url}
 \urlstyle{tt}
 \usepackage{tikz}
+\usepackage{graphicx}
+\graphicspath{{docs/}{./}}
 \usepackage{caption}
 \usepackage{amsmath}
 \usetikzlibrary{arrows.meta,positioning}
@@ -70,13 +72,15 @@
 
 \begin{titlepage}
   \centering
-  \vspace*{2.5cm}
+  \vspace*{2.0cm}
   {\Huge\bfseries VMI Analysis GUI\par}
   \vspace{0.6cm}
   {\Large User Manual\par}
-  \vspace{1.2cm}
+  \vspace{0.8cm}
   {\large Velocity-map imaging photoelectron analysis\\
    and the NiceGUI web interface\par}
+  \vfill
+  \includegraphics[width=12cm]{logo.png}
   \vfill
   \begin{tabular}{ll}
     Application version & 0.1.0 \\
@@ -2261,3 +2265,4 @@ $t_{b-1} \le \mathrm{GMD} < t_b$, with the first and last bins open-ended.
 \end{document}
 
 \end{document}
+
