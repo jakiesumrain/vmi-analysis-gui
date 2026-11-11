@@ -5,14 +5,16 @@ from pathlib import Path
 
 import numpy as np
 from nicegui import ui
+from plotly.subplots import make_subplots
 from vmi_analysis.paths import validate_distinct_output
 
+from ..centroid_plots import _heatmap, _image_axes, _style, plot_options
 from ..jobs import Job, JobManager
 from .. import theme
 from ..settings import centroid_settings, output_dir
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
                      open_folder_button, path_input, persist,
-                     render_txt_image, zoomable_image)
+                     zoomable_image)
 from .polar_preview import (bind_percentiles, polar_controls, polar_preview,
                             set_polar_source, set_polar_view)
 
@@ -143,6 +145,7 @@ def build(jobs: JobManager):
                 cmd.append("--summary-only")
             job = Job(name="Circularize", cmd=cmd, cwd=str(CIRC_DIR),
                       extra={"output": out.value, "plot_dir": plot_dir.value,
+                             "reassignment": bool(reassign.value),
                              "summary_only": summary_only.value})
             if not summary_only.value:
                 preview_path = GENERATED / f"circ_{job.id}_polar.npz"
@@ -215,17 +218,32 @@ def _results(job: Job):
     out = cwd / job.extra["output"]
     open_folder_button(out)
     if out.exists():
-        png = GENERATED / f"circ_{job.id}.png"
         try:
-            render_txt_image(out, png)
-            ui.label("Circularized image:").classes("vmi-caption")
-            zoomable_image(file_url(png)) \
-                .classes("w-full max-w-2xl")
-        except Exception as e:
+            figure = _corrected_figure(np.loadtxt(out, ndmin=2))
+            ui.plotly(plot_options(figure)).classes("w-full max-w-4xl")
+        except (OSError, ValueError) as e:
             ui.label(f"Could not render {out}: {e}").classes("vmi-subtitle")
-    plots = sorted((cwd / job.extra["plot_dir"]).glob("*.png"))
-    if plots:
-        ui.label("Diagnostic plots:").classes("vmi-caption")
-        with ui.row().classes("gap-4 flex-wrap"):
-            for p in plots:
-                zoomable_image(file_url(p)).classes("w-80")
+    if job.extra.get("reassignment") and job.started is not None:
+        reassignment_plot = cwd / job.extra["plot_dir"] / "reassignment_map.png"
+        if reassignment_plot.is_file() and reassignment_plot.stat().st_mtime >= job.started:
+            ui.label("Radial reassignment map").classes("vmi-caption")
+            zoomable_image(file_url(reassignment_plot)).classes("w-full max-w-2xl")
+
+
+def _corrected_figure(image):
+    trace = _heatmap(image, logarithmic=True, colorbar={"title": {"text": "Intensity"}})
+    positive = image[np.isfinite(image) & (image > 0)]
+    if positive.size:
+        high = np.log10(np.percentile(positive, 99.999))
+        low = high - 4
+        ticks = list(range(int(np.ceil(low)), int(np.floor(high)) + 1))
+        trace.update(zmin=low, zmax=high, colorbar={
+            "tickvals": ticks, "ticktext": [f"10<sup>{tick}</sup>" for tick in ticks]})
+    trace.update(colorscale="Viridis",
+                 hovertemplate="X: %{x:.0f} px<br>Y: %{y:.0f} px<br>Intensity: %{customdata:.6g}<extra></extra>")
+    figure = make_subplots(rows=1, cols=1)
+    figure.add_trace(trace, row=1, col=1)
+    _image_axes(figure, image, 1, 1, "x")
+    _style(figure, "Circularized image · log scale")
+    figure.update_layout(height=740)
+    return figure
