@@ -1638,10 +1638,10 @@ selected region of the processed image, including any applied filter.
 \emph{Inspect band} opens the clipped processed band at the same display
 height. Use horizontal zoom from 0.05 to 1 to narrow the band and draw masks
 that appear on both previews.
-\emph{Color scale}, \emph{Colormap}, and the percentile sliders update both
-previews as you adjust them. The sliders span 0 to 100 in steps of 0.1 and
-default to the 1st and 99.5th percentiles. Each preview computes its limits
-from the visible pixels. Log scaling uses only positive pixels.
+\emph{Color scale} and \emph{Colormap} update both previews. Each preview has
+its own percentile sliders, which default to the 1st and 99.5th percentiles
+and use the visible pixels. The band inspection uses the processed preview's
+percentiles on the band pixels. Log scaling uses only positive pixels.
 (4) Switch
 to \emph{Mask} and drag rectangles over overlapping rings, hot spots or bad
 sectors. \emph{Undo selection} reverses the last band or mask edit on both

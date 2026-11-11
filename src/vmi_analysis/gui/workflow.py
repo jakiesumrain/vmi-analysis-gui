@@ -91,7 +91,13 @@ def save_workflow(path, fields):
 
 
 def load_workflow(path, fields):
-    settings = {key: value for key, value in _read(Path(path)).items() if key in fields}
+    saved = _read(Path(path))
+    for bound in ("min", "max"):
+        legacy_key = f"calibration.color_{bound}_pct"
+        if legacy_key in saved:
+            for image in ("raw", "processed"):
+                saved.setdefault(f"calibration.{image}_color_{bound}_pct", saved[legacy_key])
+    settings = {key: value for key, value in saved.items() if key in fields}
     if not settings:
         raise ValueError("This workflow has no recognized panel settings.")
     for key, value in settings.items():

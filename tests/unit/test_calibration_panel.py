@@ -184,6 +184,46 @@ class PanelBuildTests(unittest.TestCase):
 
 
 class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_percentile_sliders_render_only_their_image(self):
+        from nicegui import Client, app, ui
+
+        with TemporaryDirectory() as tmp:
+            image_path = Path(tmp) / "raw.npy"
+            pixels = np.arange(31 * 31, dtype=float).reshape(31, 31)
+            pixels[15, 15] = pixels.max() + 1
+            np.save(image_path, pixels)
+            store = {"calibration.image": str(image_path), "calibration.abel": False,
+                     "calibration.n_theta": 24, "calibration.color_min_pct": 5,
+                     "calibration.color_max_pct": 95}
+            callbacks = {}
+            client = Client(ui.page("/_test_independent_polar_contrast"))
+            try:
+                with client, patch.object(app.storage, "_general", store), \
+                        patch.object(ui.button, "on_click",
+                                     lambda button, callback: callbacks.update({button.text: callback})):
+                    calibration.build()
+                    sliders = {el._props["aria-label"]: el for el in client.elements.values()
+                               if isinstance(el, ui.slider) and "aria-label" in el._props}
+                    raw_min = sliders["Raw polar lower percentile (vmin)"]
+                    processed_max = sliders["Processed polar upper percentile (vmax)"]
+                    self.assertEqual(raw_min.value, 5)
+                    self.assertEqual(processed_max.value, 95)
+                    await callbacks["Load image & remap"]()
+                    with patch.object(calibration, "_render_polar_image",
+                                      wraps=calibration._render_polar_image) as render:
+                        raw_min.value = 15
+                        render.assert_called_once()
+                        self.assertEqual(render.call_args.kwargs["vmin_pct"], 15)
+                        render.reset_mock()
+                        processed_max.value = 4
+                        render.assert_called_once()
+                        self.assertEqual(render.call_args.kwargs["vmin_pct"], 5)
+                        self.assertEqual(render.call_args.kwargs["vmax_pct"], 5.1)
+                    self.assertEqual(store["calibration.raw_color_min_pct"], 15)
+                    self.assertEqual(store["calibration.processed_color_max_pct"], 5.1)
+            finally:
+                client.delete()
+
     async def test_session_restores_pending_fit_only_for_matching_image(self):
         from nicegui import Client, app, ui
 

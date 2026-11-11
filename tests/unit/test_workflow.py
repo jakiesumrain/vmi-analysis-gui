@@ -65,12 +65,17 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
 
                     values["accumulate.max_workers"] = 6
                     values["calibration.hold_order"] = 0
+                    values["calibration.color_min_pct"] = 10
+                    del values["calibration.raw_color_min_pct"]
+                    values["calibration.processed_color_min_pct"] = 25
                     path.write_text(json.dumps(saved), encoding="utf-8")
                     await callbacks["Load workflow"]()
                     reload.assert_called_once_with()
                     self.assertEqual(store["pipeline.h5_dir"], "dataset-a")
                     self.assertEqual(store["calibration.placement"], "raw")
                     self.assertEqual(store["calibration.hold_order"], 0)
+                    self.assertEqual(store["calibration.raw_color_min_pct"], 10)
+                    self.assertEqual(store["calibration.processed_color_min_pct"], 25)
                     self.assertFalse(store[gui.KEEP_ALIVE_KEY])
                     self.assertEqual(manager.jobs(), [])
                 reloaded = Client(page)

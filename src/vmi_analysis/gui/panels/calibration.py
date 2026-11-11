@@ -22,7 +22,7 @@ import time
 import numpy as np
 from matplotlib import colormaps
 from matplotlib.colors import LogNorm, Normalize
-from nicegui import ui
+from nicegui import app, ui
 from PIL import Image
 import plotly.graph_objects as go
 from plotly.colors import qualitative
@@ -472,34 +472,38 @@ def build(jobs=None, *, use_calibration=None) -> None:
                     colormap = persist(
                         ui.select(list(COLORMAPS), value="Viridis", label="Colormap")
                         .props("outlined dense").classes("w-36"), "calibration.colormap")
-                with ui.row().classes("w-full gap-4 flex-wrap"):
-                    with ui.column().classes("w-64 max-w-full gap-0"):
-                        lower_label = ui.label().classes("vmi-subtitle")
-                        color_min = persist(
-                            ui.slider(min=0, max=99.9, step=0.1, value=1)
-                            .props('aria-label="Lower percentile (vmin)"').classes("w-full"),
-                            "calibration.color_min_pct")
-                    with ui.column().classes("w-64 max-w-full gap-0"):
-                        upper_label = ui.label().classes("vmi-subtitle")
-                        color_max = persist(
-                            ui.slider(min=0.1, max=100, step=0.1, value=99.5)
-                            .props('aria-label="Upper percentile (vmax)"').classes("w-full"),
-                            "calibration.color_max_pct")
-                lower = 1 if color_min.value is None else round(color_min.value, 1)
-                upper = 99.5 if color_max.value is None else round(color_max.value, 1)
-                if not 0 <= lower < upper <= 100:
-                    lower, upper = 1, 99.5
-                color_min.value, color_max.value = lower, upper
-                lower_label.bind_text_from(color_min, "value", lambda value: f"Lower percentile (vmin) {value:g}%")
-                upper_label.bind_text_from(color_max, "value", lambda value: f"Upper percentile (vmax) {value:g}%")
-                color_status = ui.label("").classes("vmi-subtitle")
-                color_status.visible = False
-                ui.label("Percentiles use each visible image separately. Log scale uses positive pixels.") \
-                    .classes("vmi-subtitle")
-                polar_images = {}
+                ui.label("Log scale uses positive pixels.").classes("vmi-subtitle")
+                polar_images, color_limits, color_status = {}, {}, {}
                 pointer_readouts = {}
                 for key, label in (("raw", "Raw polar"), ("processed", "Processed polar")):
                     ui.label(label).classes("vmi-subtitle")
+                    with ui.row().classes("w-full gap-4 flex-wrap"):
+                        sliders = []
+                        for bound, caption, minimum, maximum, default in (
+                            ("min", "Lower percentile (vmin)", 0, 99.9, 1),
+                            ("max", "Upper percentile (vmax)", 0.1, 100, 99.5),
+                        ):
+                            legacy = app.storage.general.get(f"calibration.color_{bound}_pct")
+                            with ui.column().classes("w-64 max-w-full gap-0"):
+                                value_label = ui.label().classes("vmi-subtitle")
+                                slider = persist(
+                                    ui.slider(min=minimum, max=maximum, step=0.1,
+                                              value=default if legacy is None else legacy)
+                                    .props(f'aria-label="{label} {caption.lower()}"').classes("w-full"),
+                                    f"calibration.{key}_color_{bound}_pct")
+                                value_label.bind_text_from(
+                                    slider, "value",
+                                    lambda value, caption=caption: f"{caption} {value:g}%")
+                                sliders.append(slider)
+                    color_min, color_max = sliders
+                    lower = 1 if color_min.value is None else round(color_min.value, 1)
+                    upper = 99.5 if color_max.value is None else round(color_max.value, 1)
+                    if not 0 <= lower < upper <= 100:
+                        lower, upper = 1, 99.5
+                    color_min.value, color_max.value = lower, upper
+                    color_limits[key] = (color_min, color_max)
+                    color_status[key] = ui.label("").classes("vmi-subtitle")
+                    color_status[key].visible = False
                     polar_images[key] = _polar_image(key)
                     pointer_readouts[key] = ui.label().classes(
                         "polar-pointer-readout w-full text-right font-mono text-xs min-h-4")
@@ -692,20 +696,30 @@ def build(jobs=None, *, use_calibration=None) -> None:
         ti, ri = _polar_view_indices(state["theta"], state["r"], state["view"])
         if ti.size < 2 or ri.size < 2:
             return
-        indices = np.ix_(ti, ri)
-        warnings = []
-        for key, label in (("raw", "Raw polar"), ("processed", "Processed polar")):
-            warning = _set_polar_source(polar_images[key], state[key][indices])
-            if warning:
-                warnings.append(f"{label} uses automatic linear colors. {warning}")
-            pointer_readouts[key].text = ""
         state["view_indices"] = (ti, ri)
-        color_status.text = " ".join(warnings)
-        color_status.visible = bool(warnings)
         state["img_size"] = (int(ri.size), int(ti.size))
+        for key in polar_images:
+            _refresh_contrast(key)
+            pointer_readouts[key].text = ""
         _update_overlay()
 
-    def _set_polar_source(element, data):
+    def _refresh_contrast(key):
+        if not state["ready"] or state["view_indices"] is None:
+            return
+        ti, ri = state["view_indices"]
+        warning = _set_polar_source(polar_images[key], state[key][np.ix_(ti, ri)], key)
+        color_status[key].text = f"Showing automatic linear colors. {warning}" if warning else ""
+        color_status[key].visible = bool(warning)
+        if key == "processed" and state["inspection"] is not None:
+            _refresh_inspection_contrast()
+
+    def _refresh_inspection_contrast():
+        ti, ri = state["inspection"]["view_indices"]
+        warning = _set_polar_source(inspection_image, state["processed"][np.ix_(ti, ri)], "processed")
+        inspection_status.text = f"Showing automatic linear colors. {warning}" if warning else ""
+
+    def _set_polar_source(element, data, key):
+        color_min, color_max = color_limits[key]
         warning = ""
         try:
             image = _render_polar_image(data, cmap=colormap.value, log_scale=color_scale.value == "Log",
@@ -730,8 +744,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
             ui.notify("The selected band contains no polar samples.", type="warning")
             return
         state["inspection"] = {"view": view, "view_indices": (ti, ri), "img_size": (ri.size, ti.size)}
-        warning = _set_polar_source(inspection_image, state["processed"][np.ix_(ti, ri)])
-        inspection_status.text = f"Showing automatic linear colors. {warning}" if warning else ""
+        _refresh_inspection_contrast()
         horizontal_zoom.value = 1
         _update_overlay()
         inspection_dialog.open()
@@ -751,14 +764,15 @@ def build(jobs=None, *, use_calibration=None) -> None:
                              r1=min(band.r1 + pad, float(state["r"][-1])))
         _refresh_view()
 
-    def _change_color_limit(slider):
+    def _change_color_limit(key, slider):
+        color_min, color_max = color_limits[key]
         if color_min.value >= color_max.value:
             if slider is color_min:
                 color_min.value = round(color_max.value - 0.1, 1)
             else:
                 color_max.value = round(color_min.value + 0.1, 1)
             return
-        _refresh_view()
+        _refresh_contrast(key)
 
     def _set_selection(band, masks):
         state["selection_history"].append((state["band"], state["masks"]))
@@ -938,6 +952,9 @@ def build(jobs=None, *, use_calibration=None) -> None:
         if subpixels is not None:
             subpixels = int(subpixels)
             console.push(f"[Trig Calibration] Grid resampling with {subpixels} × {subpixels} subpixels per detector pixel.")
+        if state["inspection"] is not None:
+            inspection_dialog.close()
+            _close_inspection()
         state.update(raw=polar, theta=theta, r=r, dr=dr, ready=True,
                      image={"path": str(path), "center": list(center),
                             "shape": list(image.shape),
@@ -1312,8 +1329,9 @@ def build(jobs=None, *, use_calibration=None) -> None:
         lambda e: state.__setitem__("tool", e.value or "band"))
     for control in (color_scale, colormap):
         control.on_value_change(lambda _: _refresh_view())
-    color_min.on_value_change(lambda _: _change_color_limit(color_min))
-    color_max.on_value_change(lambda _: _change_color_limit(color_max))
+    for key, sliders in color_limits.items():
+        for slider in sliders:
+            slider.on_value_change(lambda _, key=key, slider=slider: _change_color_limit(key, slider))
     send_button.on_click(_export_to_circularize)
     send_model_button.on_click(_export_to_circularize)
     refresh_rings_button.on_click(_refresh_rings_from_file)
