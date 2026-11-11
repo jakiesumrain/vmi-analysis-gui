@@ -76,14 +76,15 @@
   \node[inner sep=0] at (current page.center)
     {\includegraphics[width=\paperwidth,height=\paperheight]{cover-bg.jpg}};
   \node[anchor=north, text=white, align=center,
-        font=\fontsize{32}{38}\selectfont\bfseries]
-    at ([yshift=-1.7cm]current page.north) {VMI Analysis GUI};
-  \node[anchor=north, text=white!85, font=\Large]
-    at ([yshift=-3.3cm]current page.north) {User Manual};
-  \node[anchor=north, text=white!70, font=\large, align=center]
-    at ([yshift=-4.6cm]current page.north)
+        font=\fontsize{36}{42}\selectfont\bfseries]
+    at ([yshift=-1.6cm]current page.north) {VMI Analysis GUI};
+  \node[anchor=north, text=white!85, font=\fontsize{20}{24}\selectfont]
+    at ([yshift=-3.6cm]current page.north) {User Manual};
+  \node[anchor=north, text=white!70, font=\fontsize{15}{19}\selectfont,
+        align=center]
+    at ([yshift=-5.0cm]current page.north)
     {Velocity-map imaging photoelectron analysis\\ and the NiceGUI web interface};
-  \node[anchor=south, text=white!80, font=\small]
+  \node[anchor=south, text=white!80, font=\large]
     at ([yshift=2.2cm]current page.south) {%
       \begin{tabular}{@{}ll@{}}
         Application version & 0.1.0 \\
@@ -92,7 +93,7 @@
         License & Apache License, Version 2.0 \\
       \end{tabular}};
   \node[anchor=south] at ([yshift=0.7cm]current page.south) {%
-    \parbox{0.82\paperwidth}{\centering\color{white!55}\footnotesize
+    \parbox{0.86\paperwidth}{\centering\color{white!55}\small
       This manual describes the panels, input fields, processing stages,
       output files, and operating constraints of the application.
       Bundled CPBASEX uses the MIT License.}};
