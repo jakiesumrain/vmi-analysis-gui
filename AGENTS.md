@@ -31,6 +31,9 @@ and [GUI design](docs/DESIGN.md) for implementation context.
 - Launch analysis scripts as subprocesses. Use one `JobView.run_button` per
   job panel and match its `job_name` to the submitted job name for reconnect.
   Preserve job snapshots and stop all process trees during server shutdown.
+- Trig Calibration runs interactive fitting in the web process. Use the
+  same detector origin in Trig Calibration and Circularize. Circularize
+  preserves the input matrix shape and the selected origin.
 - Keep `gui/resources.py` reservations in sync with CLI reads and writes.
   Reserve every Pipeline stage for the full run. Only an independent
   standalone GMD Map may write beside standalone Centroiding. Use
@@ -38,6 +41,8 @@ and [GUI design](docs/DESIGN.md) for implementation context.
 - Use the shared `image_zoom.js` overlay. Pan, zoom, and cropping affect the
   preview only. Reset restores the original image. Browser regression checks
   are in `tests/browser/`.
+- Keep panel summaries short. Describe the task without naming the Python
+  module. Binning, PES, and Pipeline are immature and need restructuring.
 
 ## Git workflow
 

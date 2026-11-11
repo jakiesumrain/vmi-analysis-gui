@@ -1,127 +1,91 @@
-# Design notes: NiceGUI web interface for the VMI analysis scripts
+# Architecture
 
-## Goal
+VMI Analysis GUI is a local NiceGUI application for velocity-map imaging data.
+The [user manual](manual.pdf) describes panel controls, input formats, and outputs.
 
-A minimal, comfortable NiceGUI web app (uv-managed) with one tab panel per
-script plus a pipeline panel, themed by the validated `docs/DESIGN.md` (warm cream
-canvas, coral CTAs, dark log consoles). Scripts stay standalone-runnable; the
-GUI drives them as subprocesses with live log streaming, progress,
-cancellation, and image/video result display.
+## Source and workspace
 
-## Architecture decisions
+The source package is `src/vmi_analysis/`. Run `uv sync` from the checkout
+to install it in editable mode. Start the app with `uv run vmi-analysis`.
 
-- **NiceGUI** was chosen because the analysis scripts need live-updating
-  plots (progressive accumulation, logs, progress bars) without writing any
-  JavaScript; it serves a real browser UI from the same Python process.
-- **Scripts run as subprocesses, never imports.** Isolation (a crashing job
-  cannot take down the UI), clean cancellation (terminate the process
-  group), and zero coupling between the web process and heavy numerical
-  state. All job subprocesses use `sys.executable` — no `uv run` at
-  runtime.
-- **Configurable concurrent jobs.** `JobManager` admits jobs up to a saved
-  positive-integer limit (default 2). Submitted command snapshots declare file
-  reads/writes and exclusive resources in `gui/resources.py`. Shared readers
-  can run together; overlapping writes and producer/reader conflicts wait.
-  MATLAB CPBASEX uses an exclusive lock for its shared `examples/image.txt`.
-  One active job per panel preserves its Run/Stop and reconnect controls.
-  Pipeline stages remain ordered and reserve the union of their resources.
-- **CLI refactors preserve standalone behavior.** Each script's former
-  hardcoded config block became argparse arguments whose defaults match the
-  old values (or, for data paths, are empty + validated as required — no
-  machine-specific paths live in the repository). Running a script bare
-  behaves as before once paths are supplied.
-- **GUI fields are the source of job inputs.** All panels persist changes
-  in NiceGUI general storage. Centroiding uses the shared defaults/CLI schema
-  in `src/vmi_analysis/centroiding/options.py`; commands contain explicit argument snapshots.
-  `src/vmi_analysis/gui/settings.py` migrates legacy TOML values once, read-only. Scripts accept
-  optional explicit `--config` defaults for compatibility, with CLI overrides.
-  Binning has explicit paths; Pipeline combines saved settings with its own
-  dataset/GMD map. Result paths come from the submitted job, not live settings.
-- **Theme = DESIGN.md → static CSS + `ui.colors`.** No node/build step at
-  runtime: the design tokens are mapped by hand into `src/vmi_analysis/gui/theme.css`, with
-  Google Fonts links and local fallback stacks if fonts are unreachable.
-- **Server-side file picker.** The app and the data live on the same
-  machine, so `src/vmi_analysis/gui/panels/picker.py` browses the server's filesystem
-  directly (drive dropdown on Windows, dir/file/save modes, extension
-  filters) instead of upload widgets.
+`vmi_analysis.paths` resolves the workspace independently of the installed
+package. A checkout uses the repository root. An installed copy uses the startup
+directory. Set `VMI_WORKSPACE_DIR` to choose another workspace.
 
-## Layout
+The workspace contains `centroiding/` and `circularization/` for working data.
+The GUI stores preview artifacts in `.cache/vmi-analysis/`. NiceGUI stores form
+values in `.nicegui/` unless `NICEGUI_STORAGE_PATH` specifies another path.
+Keep experiment files and generated outputs outside version control.
 
+## Panels and previews
+
+`gui/app.py` defines tab order, startup, and global settings.
+`gui/panels/` contains the forms and result views. Each panel starts with
+a title and a short summary. Binning, PES, and Pipeline are immature and
+need restructuring.
+
+- Trig Calibration remaps a NumPy detector image and fits selected rings in
+  the web process. It can export a Gascooke-compatible calibration.
+- Circularize applies a calibration in a subprocess. The corrected image
+  retains the input grid and the selected correction center.
+- `gui/panels/polar_preview.py` shares display controls between the two panels.
+  Each polar preview has separate percentile limits. Trig Calibration has
+  crosshair guides. Circularize has a vertical radius guide.
+- Circularize displays the polar comparison below **Run**. Its results below
+  the console display the corrected Cartesian image in Plotly and the current
+  reassignment map when applicable.
+- Centroiding and Accumulate also use Plotly. Static image inspection uses
+  `gui/assets/image_zoom.js`.
+
+The [design reference](DESIGN.md) describes the visual tokens.
+`gui/theme.py` loads the palette and `gui/assets/theme.css`.
+The browser loads the packaged assets directly.
+
+## Jobs and resources
+
+Job panels start analysis programs with `sys.executable -m`. A job stores
+its command arguments, working directory, and result paths when submitted.
+Relative paths resolve from the subprocess working directory.
+
+- `gui/jobs.py` schedules jobs and captures their logs. It starts up to two
+  jobs by default. The user can change that limit in **Settings**.
+- `gui/resources.py` declares the paths each job reads or writes. Jobs can
+  share read access. A write waits if it conflicts with a read or another
+  write. Unrelated jobs can use an available slot.
+- Pipeline reserves the resources of all four stages for the entire job.
+  Its stages run in order. The optional skip check tests whether the declared
+  output files exist.
+- The MATLAB CPBASEX backend uses an exclusive reservation for its shared
+  working data. The backend uses `CPBASEX_DIR` when set. Otherwise it uses
+  an existing legacy checkout or the bundled code. Supply the basis data separately.
+- `JobView` displays job status and logs. One button starts, stops, or cancels
+  the panel job. A browser reload can reattach to an active job by name.
+- Cancel and shutdown stop subprocess trees. On Windows the manager uses
+  `taskkill /T /F`. On POSIX it signals the process group.
+
+**Keep running on disconnect** defaults to on. If the last browser disconnects,
+the server keeps queued and active jobs alive. After the queue is idle, the
+server waits for the shutdown grace period and checks for a reconnect.
+The default grace period is two seconds.
+
+## Settings
+
+`centroiding/options.py` defines Centroiding defaults and CLI serialization.
+`gui/settings.py` imports supported legacy TOML values once. It reads the
+legacy file without changing it. GUI jobs pass explicit CLI arguments.
+
+`gui/workflow.py` exports and restores panel settings in one JSON file.
+A workflow stores paths and settings. Save a Trig Calibration session
+separately to preserve the applied processing, selected band, masks, and fits.
+
+## Verification
+
+Run the Python suite from the checkout.
+
+```sh
+uv run python -m unittest discover -s tests -v
 ```
-src/vmi_analysis/gui/
-├── app.py            # entry: theme + tabs + ui.run()
-├── theme.py          # DESIGN.md tokens -> ui.colors + component helpers
-├── theme.css         # static CSS mapped from the tokens
-├── jobs.py           # concurrent scheduler, log capture, progress, cancel
-├── resources.py      # command file-access declarations and conflict checks
-├── settings.py       # saved centroid values, one-time legacy migration, stage inputs
-└── panels/
-    ├── common.py       # form helpers + JobView (badge/progress/log/results)
-    ├── picker.py       # LocalFilePicker dialog
-    ├── gmd_map.py      # build_gmd_map.py form
-    ├── movie.py        # h5_play_frames_movie.py + video/frame-slider display
-    ├── accumulate.py   # h5_accumulate_fast_gmd.py + live partial image
-    ├── centroid.py     # automatically saved fields + explicit Picasso CLI arguments
-    ├── binning.py      # vmi_histogram_gmd_bins.py form + bins PNG
-    ├── circularize.py  # circularization.py CLI form
-    ├── pes.py          # process_gmd_bins.py form + result PNG gallery
-    └── pipeline.py     # ordered stage runner with per-stage status/resume
-```
 
-Common pattern per panel: section title → status badge/progress →
-parameter form and Run/Stop control (folder buttons open `LocalFilePicker`) →
-dark log console at the bottom → results area.
-
-The form's single Run button becomes Stop for its active job, Cancel queued
-while waiting, and disabled Stopping during cleanup. `JobView` restores its
-panel's active job after reload by job name. A separate cancel button is not
-used. When a job ends, the same control returns to its original Run label.
-
-## Job plumbing (`src/vmi_analysis/gui/jobs.py`)
-
-- Queue with per-job: id, name, cmd, cwd, env, status, resource reservations
-  (queued/running/done/failed/cancelled), timestamps, return code.
-- stdout+stderr merged, read on a background thread into a ring buffer;
-  tqdm `\r` lines parsed into a progress fraction (last `NN%` match).
-- `cancel()` terminates the process tree (`taskkill /T /F` on Windows;
-  a separate process group with SIGTERM/SIGKILL on POSIX).
-- Scheduling can bypass a blocked job for unrelated work. Earlier waiting
-  resource claims prevent later readers from starving a writer. Paths are
-  resolved, case-normalized, and compared by ancestor/descendant overlap.
-- Shutdown prevents queue advancement, cancels queued work, handles a
-  cancellation during subprocess startup, and waits for all worker cleanup.
-- GUI output deletion checks queued/running reservations under the scheduler
-  lock. Movie frame dumps use unique per-run directories.
-- The last socket disconnect schedules shutdown after a one-second grace
-  period; reconnecting cancels that check. The app shutdown hook also
-  cleans up jobs on terminal/server shutdown.
-- Panels poll with `ui.timer` (~0.7 s) to refresh logs, progress, badges,
-  and live images (cache-busted reload).
-- Pipeline jobs are one job with ordered stages, per-stage output
-  fingerprints for "skip existing", stop on first failure.
-
-## Out of scope (deliberately)
-
-- No authentication/multi-user; local tool UI.
-- No live histogram for the Picasso run (log + progress only; the histogram
-  is built once at the end from the checkpoint).
-- No changes to the numerical behavior of any script.
-
-## Source layout and working data
-
-The project is an editable-installed `src/vmi_analysis` package. `uv sync`
-installs it; `uv run vmi-analysis` starts the GUI. Panels launch analysis tools
-as `[sys.executable, "-m", "vmi_analysis.<module>", ...]`, preserving explicit
-CLI snapshots and the former working directories. Analysis tools run through
-their package modules; old script paths and `python -m gui.app` were removed.
-
-`vmi_analysis.paths` distinguishes the workspace from package source. A checkout
-retains its original centroiding/circularization data roots; installed copies
-use the launch directory unless `VMI_WORKSPACE_DIR` is set. GUI CSS/JavaScript
-are package resources, previews use `.cache/vmi-analysis/`, and existing
-`.nicegui` state and user data stay in place. `CPBASEX_DIR` overrides the MATLAB
-checkout; otherwise an existing legacy checkout is preferred, then
-`vendor/pbasex-matlab`. The MATLAB basis remains an external experiment input.
-
-Tests are grouped under `tests/unit`, `tests/integration`, and `tests/browser`.
-`python -m unittest discover -s tests -v` discovers the Python suite recursively.
+The suite covers unit and integration tests. Browser checks and fixtures
+are in `tests/browser/`. See the comments at the top of each check for
+the fixture and execution instructions.

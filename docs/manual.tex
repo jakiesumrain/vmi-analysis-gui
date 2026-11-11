@@ -97,21 +97,20 @@
 \section{Introduction}
 \label{sec:intro}
 
-This application turns raw camera frames from a velocity-map imaging (VMI)
-photoelectron experiment into calibrated photoelectron energy spectra and
-angular-anisotropy ($\beta$) parameters. The repository contains two halves
-that are shipped together:
+The application analyzes camera frames from velocity-map imaging (VMI)
+experiments. It can produce detector images, calibrated energy spectra, and
+angular anisotropy parameters ($\beta$). The repository provides:
 
 \begin{itemize}
   \item a set of standalone Python command-line programs that perform the
         numerical analysis, and
-  \item a NiceGUI web interface with one panel per program plus a pipeline
-        panel that runs the whole chain in order.
+  \item a NiceGUI web interface with panels for individual tools and an
+        ordered Pipeline job.
 \end{itemize}
 
-No experiment data is bundled with the repository. Every path used by the
-application is supplied by the user through the interface or on the command
-line.
+Supply your experiment data through the interface or on the command line.
+The Binning, PES, and Pipeline panels are immature and need restructuring.
+Their sections document the current behavior.
 
 \subsection{The analysis chain}
 \label{sec:chain}
@@ -144,11 +143,9 @@ individual panels and as a single Pipeline run.}
 \label{fig:chain}
 \end{figure}
 
-Every stage is also a standalone command-line program, so the interface is
-optional: a user can run the same steps from a terminal. The panels launch
-those programs as subprocesses; they never import analysis code into the web
-process. This keeps a crashed or cancelled job from taking down the interface
-and makes long runs cancellable.
+Run each stage from a terminal or from the web interface. The job panels
+launch the command-line programs as subprocesses. Trig Calibration runs
+interactive remapping and fitting in the web process.
 
 \subsection{How this manual is organised}
 
@@ -214,6 +211,12 @@ every program (Section~\ref{sec:cli}).
 
 \subsection{A first end-to-end run}
 
+For a single-image distortion check, run Centroiding first.
+Open its raw VMI image in Trig Calibration. Fit and accept rings.
+Send the calibration to Circularize. Compare the two polar views after the run.
+
+The following sequence uses the current Binning and PES panels.
+
 \begin{enumerate}
   \item \textbf{GMD Map.} Choose the folder of \code{RAW-\allowbreak{}*.\allowbreak{}h5} files and the
         GMD timestamp file, choose an output map path, and Run. The result is
@@ -233,10 +236,10 @@ every program (Section~\ref{sec:cli}).
         all arrays.
 \end{enumerate}
 
-Alternatively, after preparing the GMD timestamp file, open the Pipeline tab,
-fill in the dataset, the GMD file and the map output, and press
-\code{Run pipeline}. It runs stages 1--4 in order and skips stages whose
-outputs already exist.
+To run the same stages in one job, open \emph{Pipeline}. Set the dataset,
+GMD timestamp file, and map output. Click \emph{Run pipeline}. The job
+runs stages 1--4 in order. With \emph{Skip stages whose outputs exist}
+selected, the job checks for the declared output files before each stage.
 
 \subsection{What to check after the first run}
 
@@ -250,9 +253,9 @@ outputs already exist.
   \item Binning produced the expected number of \code{.\allowbreak{}npy} files
         (thresholds plus one) with the expected suffix for the chosen weight
         mode.
-  \item PES produced the three overview figures and the \code{.\allowbreak{}npz}; the
-        energy axis is in pixel$^2$ until an alpha is supplied
-        (Section~\ref{sec:calibration}).
+  \item PES produced three overview figures and a \code{.\allowbreak{}npz} archive.
+        PES plots use energy channels with the current fixed alpha of 1.
+        Centroiding has its own alpha field (Section~\ref{sec:calibration}).
 \end{itemize}
 
 \section{The shared interface}
@@ -267,11 +270,9 @@ panel-specific fields are in Section~\ref{sec:panels}.
 \subsection{Window layout and tabs}
 \label{sec:tabs}
 
-The header shows the title \emph{VMI Analysis}, the subtitle
-\code{photoelectron imaging toolbox}, and a \emph{Settings} button. The button
-opens a settings panel with two global controls: \emph{Maximum concurrent
-jobs} and \emph{Keep running on disconnect}. Both apply to every panel. Below
-the header is one row of tabs, in this order:
+Open \emph{Settings} to set the job limit or control shutdown after a
+disconnect. Use the same menu to save and load workflow files.
+The tabs appear in this order:
 \code{GMD Map}, \emph{Movie}, \emph{Dark Frame}, \emph{Accumulate},
 \code{Centroiding}, \emph{Binning}, \emph{Trig Calibration}, \emph{Circularize}, \emph{PES},
 \code{Pipeline}.
@@ -282,8 +283,9 @@ progress, log, and results. Switching tabs does not stop or restart work.
 \subsection{The Run/Stop control}
 \label{sec:runstop}
 
-Each panel has exactly one action button. It reads \emph{Run} when the panel
-is idle and changes to:
+Each job panel uses one button to start or stop its job. Trig Calibration
+uses separate controls for remapping, processing, and fitting. The job
+button reads \emph{Run} when idle (\emph{Run pipeline} in Pipeline). It changes to
 
 \begin{itemize}
   \item \emph{Stop} while the panel's job is running,
@@ -306,11 +308,10 @@ A job that had already finished before the reload is not restored.
 \subsection{Job queue, concurrency and file reservations}
 \label{sec:queue}
 
-Jobs from all panels share one FIFO queue. The \emph{Settings} panel, opened
-from the button in the header, contains \code{Maximum concurrent jobs}; it
-sets how many may run at once, with default 2 and choices 1--10. Lowering the limit never kills running jobs:
-they finish, and new jobs start more slowly. The value is saved and survives
-a restart.
+All job panels share one queue. Open \emph{Settings} to set
+\emph{Maximum concurrent jobs}. Choose a value from 1 to 10. The default is 2.
+Running jobs continue when you lower the limit. The server saves the value
+for the next start.
 
 The queue also enforces file safety. Each submitted command declares the
 files and directories it reads and writes. A job whose output overlaps
@@ -342,10 +343,10 @@ so their bar stays empty while the spinner indicates activity.
 \subsection{The results area}
 \label{sec:results}
 
-Below the console, a results area is built once when the job reaches a
-terminal state (\emph{done}, \emph{failed}, or \emph{cancelled}). Most panels
-show results only for a successful job; a failed job leaves the area empty
-and the console contains the traceback. Results include:
+Most job panels show results below the console after a successful run.
+Circularize shows its polar comparison below \emph{Run}, inside the settings
+card. It shows the corrected Cartesian image below the console.
+When a job fails, read the console for error details. Results can include
 
 \begin{itemize}
   \item interactive Plotly figures (hover for values, drag to zoom, choose
@@ -412,12 +413,12 @@ Centroiding output directory). Legacy \code{centroiding/\allowbreak{}config.\all
 values are migrated once, read-only, for Centroiding and Binning; no GUI job
 passes a configuration file to a script.
 
-Use \emph{Settings} and choose \emph{Save workflow} to capture the panel
-inputs and parameters in one JSON file, including untouched defaults.
-\emph{Load workflow} restores the forms for review before you run an
-analysis. The workflow stores paths to datasets, calibration files, and
-outputs. For Trig Calibration, load its separate session file to recover
-the selected band, masks, and fitted rings.
+Choose \emph{Save workflow} in \emph{Settings}. The JSON file includes
+saved panel fields and their defaults. It stores file paths and display
+settings, including the polar percentile limits.
+Choose \emph{Load workflow} to restore those values.
+Save a separate Trig Calibration session for applied processing, the
+selected band, masks, and fitted rings.
 
 \subsection{Server lifecycle, ports and reconnecting}
 \label{sec:lifecycle}
@@ -497,11 +498,11 @@ values into its map.
 \subsection{Dark frames}
 \label{sec:darkdata}
 
-A dark frame is a \code{.\allowbreak{}npy} array (usually \code{float64}) of the same
-shape as one camera frame. The Dark Frame panel computes one from a folder
-of dark acquisitions; the Centroiding, Movie, and Accumulate panels accept a
-dark file and subtract it before processing. If no dark file is given, the
-raw pixel values are used.
+A dark frame is a \code{.\allowbreak{}npy} array with the same shape as one
+camera frame. Dark Frame computes the array from dark acquisitions.
+Movie and Accumulate subtract the array when you supply it.
+In Centroiding, enable dark subtraction to use a precomputed array or to
+compute one from the dark HDF5 directory.
 
 \subsection{Circularization calibration files}
 \label{sec:calibfiles}
@@ -520,9 +521,11 @@ The PES stage requires two per-experiment text files in
     radial nonlinearity propagates into the energy axis.
 \end{description}
 
-These files are experiment inputs, not generated by this repository. The
-Circularize panel takes their paths as fields (and pre-fills the known
-names); PES looks for exactly these names and warns when either is missing.
+Trig Calibration can create the extracted fit file. Supply the radial
+reassignment map separately if your experiment requires one.
+Circularize accepts the two paths as fields and uses an identity map when
+the reassignment field is blank. PES and the PES stage in Pipeline require
+both files under the exact names shown above.
 
 \subsection{Workspace and output folders}
 \label{sec:workspace}
@@ -546,9 +549,8 @@ Path & Created by & Purpose \\
 \end{tabular}
 \end{center}
 
-Analysis outputs go to the directories the user selects; the defaults shown
-in the panels already point at the conventional folders. Nothing outside the
-selected output directories is modified by the analysis scripts.
+Check each panel for its output paths. Some tools use workspace defaults.
+The MATLAB backend also writes shared files in the CPBASEX checkout.
 
 \section{Panel reference}
 \label{sec:panels}
@@ -849,9 +851,9 @@ none (GUI preview) & Upper bound in pixel counts. Blank uses the data range. \\
 \emph{Bin width (counts)} & number, blank & \code{accumulate.\allowbreak{}histogram\_\allowbreak{}bin\_\allowbreak{}width} &
 none (GUI preview) & Width of each bin in pixel counts. Blank uses 160 bins. \\
 \addlinespace
-\emph{Frame index (0-\allowbreak{}based)} & number, blank & -- &
-none (GUI preview) & Global 0-based index for a single frame. Blank chooses
-a random frame. The field resets on page reload. \\
+\emph{Frame index (0-\allowbreak{}based)} & number, blank & \code{accumulate.\allowbreak{}frame\_\allowbreak{}index} &
+none (GUI preview) & Global zero-based index for one frame. A blank field
+selects a random frame. The panel saves the field on edit. \\
 \addlinespace
 \emph{Files to average} & whole number, 1 & \code{accumulate.\allowbreak{}histogram\_\allowbreak{}file\_\allowbreak{}count} &
 none (GUI preview) & Number of distinct HDF5 files to sample for the average. \\
@@ -888,9 +890,9 @@ at the current output path without rerunning. \emph{Clear output} deletes the
 \code{open containing folder} and a \emph{Saved PNG} expansion appear with
 results.
 
-\textbf{Results and log.} While running, a live log-scale image is updated
-from a partial \code{.\allowbreak{}npy} written every 25 finished files (small datasets
-may show none). On success the results show the interactive accumulated
+\textbf{Results and log.} During a run, the panel shows the live image below
+the console. The program writes a partial \code{.\allowbreak{}npy} after every
+25 completed files. Small datasets may finish before a preview appears. On success the results show the interactive accumulated
 image with the \emph{Colormap} selector and hover counts. Outputs are the
 chosen \code{.\allowbreak{}txt}, its sibling \code{.\allowbreak{}png}, and the disposable partial
 file \code{.\allowbreak{}cache/\allowbreak{}vmi-\allowbreak{}analysis/\allowbreak{}accum\_\allowbreak{}live\_\allowbreak{}*.\allowbreak{}npy}. The console reports the
@@ -1315,6 +1317,8 @@ the script but are never written; do not expect them.
 \subsection{Binning}
 \label{sec:binning}
 
+\textbf{Status.} This panel is immature and needs restructuring.
+
 \textbf{Purpose.} Partition the localised events into bins of GMD pulse
 energy and build one 2D histogram per bin. The panel launches
 \code{vmi\_\allowbreak{}analysis.centroiding.vmi\_\allowbreak{}histogram\_\allowbreak{}gmd\_\allowbreak{}bins} with working
@@ -1408,101 +1412,6 @@ minimum and maximum in this panel are a separate copy from the Centroiding
 tab's values; the Pipeline uses the Centroiding values instead. Binning
 writes its whole output directory, so it is queued against a concurrent
 Centroiding or Pipeline job writing the same directory.
-
-\subsection{Pipeline}
-\label{sec:pipeline}
-
-\textbf{Purpose.} Run the whole chain as one ordered job: GMD map,
-Centroiding, Binning, and PES/Abel inversion. All stages run sequentially in
-one job; a failure stops the chain. Configure the Centroiding parameters on
-their own tab first, because the pipeline borrows those saved settings and
-combines them with its own dataset and GMD map.
-
-\begin{center}
-\footnotesize
-\begin{longtable}{@{}L{3.4cm}L{2.3cm}L{2.5cm}L{2.8cm}L{4.9cm}@{}}
-\toprule
-Field & Type and default & Saved key & CLI flag & Meaning \\
-\midrule
-\endhead
-\bottomrule
-\endfoot
-\emph{HDF5 directory (dataset)} & folder, empty & \code{pipeline.\allowbreak{}h5\_\allowbreak{}dir} &
-stage 1 \code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir} & Dataset for the whole pipeline; also forced into
-the Centroiding snapshot as an absolute path. Required. \\
-\addlinespace
-\emph{GMD timestamp file} & file, empty & \code{pipeline.\allowbreak{}gmd\_\allowbreak{}path} &
-stage 1 \code{-\allowbreak{}-\allowbreak{}gmd-\allowbreak{}path} & GMD table for stage 1. Required. \\
-\addlinespace
-\emph{GMD map output} & save, workspace \code{gmd\_\allowbreak{}map\_\allowbreak{}all.\allowbreak{}txt} &
-\code{pipeline.map\_\allowbreak{}out} & stage 1 \code{-\allowbreak{}-\allowbreak{}output-\allowbreak{}path} & Where the map is
-written; also passed to Centroiding and Binning. \\
-\addlinespace
-\emph{Weight mode} & select, \code{gmd\_\allowbreak{}norm} & \code{pipeline.\allowbreak{}weight\_\allowbreak{}mode} &
-Binning \code{-\allowbreak{}-\allowbreak{}weight-\allowbreak{}mode} & Weighting for the Binning stage and the
-suffix used by later stages. \\
-\addlinespace
-\emph{Weight power} & number, 1.0 & \code{pipeline.\allowbreak{}weight\_\allowbreak{}power} &
-Binning \code{-\allowbreak{}-\allowbreak{}weight-\allowbreak{}power} & Exponent for \code{gmd\_\allowbreak{}norm}. \\
-\addlinespace
-\emph{Skip stages whose outputs exist} & checkbox, on &
-\code{pipeline.skip\_\allowbreak{}existing} & job-level & A stage is skipped when all of
-its declared output files already exist. \\
-\end{longtable}
-\end{center}
-
-\textbf{Stages.} The panel shows four status badges, \emph{GMD map},
-\code{Centroiding}, \emph{Binning} and \emph{PES}, updated while the job
-runs. Each stage has a fixed working directory and output fingerprint:
-
-\begin{center}
-\footnotesize
-\begin{longtable}{@{}L{2.2cm}L{6.0cm}L{3.0cm}L{4.4cm}@{}}
-\toprule
-Stage & Command & Working directory & Output fingerprint \\
-\midrule
-\endhead
-\bottomrule
-\endfoot
-GMD map & \code{build\_\allowbreak{}gmd\_\allowbreak{}map} with the three path fields & repository
-root & the map file \\
-\addlinespace
-Centroiding & \code{process\_\allowbreak{}andor\_\allowbreak{}vmi\_\allowbreak{}PICASSO\_\allowbreak{}v5\_\allowbreak{}h5\_\allowbreak{}batch} with the
-full Centroiding snapshot & \code{centroiding/\allowbreak{}} & the checkpoint file \\
-\addlinespace
-Binning & \code{vmi\_\allowbreak{}histogram\_\allowbreak{}gmd\_\allowbreak{}bins} with the checkpoint, output
-directory, map and thresholds & \code{centroiding/\allowbreak{}} &
-\code{vmi\_\allowbreak{}2d\_\allowbreak{}gmd\_\allowbreak{}all<suffix>.npy} \\
-\addlinespace
-PES & \code{process\_\allowbreak{}gmd\_\allowbreak{}bins} with the weight suffix, bin directory and
-PyAbel backend & \code{circularization/\allowbreak{}} &
-\code{gmd\_\allowbreak{}bins\_\allowbreak{}results.npz} in the automatic output directory \\
-\end{longtable}
-\end{center}
-
-\textbf{Borrowed and forced settings.} The pipeline takes every Centroiding
-setting from the saved form, but overrides exactly three values in its own
-snapshot: the HDF5 directory, the GMD map path, and \emph{Tuning mode only}
-(forced off, so a pipeline run is always a full batch and never produces a
-tuning check). Thresholds, GMD column and GMD floor are taken from the
-Binning tab's saved settings; the Pipeline fields supply the weight mode and
-power. The pipeline has no output-directory field: the Centroiding output
-directory is used. The PES stage always uses the PyAbel backend with the
-\code{daun} method; MATLAB is never selected from the pipeline.
-
-\textbf{Status, resume and cancellation.} With \emph{Skip stages whose
-outputs exist} checked, a stage whose outputs are all present is marked
-\code{skipped} and the log records it; this is the only resume mechanism.
-The first failing stage stops the pipeline, marks the remaining stages
-\code{cancelled}, and fails the job. Stopping cancels queued work
-immediately and terminates the running process tree. The pipeline reserves
-the inputs and outputs of all four stages for the whole run, so overlapping
-jobs wait.
-
-\textbf{Pitfalls.} There is no results view: results are the stage logs and
-the files each stage wrote. The stage badges are not restored after a page
-reload (the job badge and console are). Deleting a stage's output is the way
-to force that stage to run again.
 
 \subsection{Trig Calibration}
 \label{sec:trigcal}
@@ -1625,50 +1534,57 @@ accepted ring fits. Saves require a separate \code{.json} file. \\
 \end{longtable}
 \end{center}
 
-\textbf{Workflow.} (1) Choose the image and click \emph{Load image \& remap}.
-For Centroiding data, use its raw output \code{vmi\_2d\_raw.npy}. The console
-reports the origin and radial spacing. The polar remap uses this origin on
-the original detector grid.
-(2) Set inverse Abel and the display filter on their separate rows, then
-press \emph{Apply processing}. The processed preview appears directly below
-the raw polar remap. Both show the same band and masks. The fit uses the
-selected region of the processed image, including any applied filter.
-(3) With \emph{Select band} active, drag a rectangle around one ring.
-\emph{Zoom to band} zooms along the radius while keeping the angular view fixed.
-\emph{Inspect band} opens the clipped processed band at the same display
-height. Use horizontal zoom from 0.05 to 1 to narrow the band and draw masks
-that appear on both previews.
-\emph{Color scale} and \emph{Colormap} update both previews. Each preview has
-its own percentile sliders, which default to the 1st and 99.5th percentiles
-and use the visible pixels. The band inspection uses the processed preview's
-percentiles on the band pixels. Log scaling uses only positive pixels.
+\textbf{Workflow.}
+
+\begin{enumerate}
+  \item Choose the detector image. For Centroiding data, use
+        \code{vmi\_2d\_raw.npy}. Click \emph{Load image \& remap}.
+        The console reports the origin and radial spacing.
+  \item Select the Abel method and filter settings as needed. Click
+        \emph{Apply processing}. The processed preview appears below the
+        raw preview. The fit uses the processed preview.
+  \item Select \emph{Select band}. Drag a rectangle around one ring.
+        Click \emph{Zoom to band} to limit the radius range.
+        Click \emph{Inspect band} to open a clipped view. Set the
+        horizontal zoom between 0.05 and 1 to adjust its width.
+  \item Select \emph{Mask}. Drag rectangles over interference.
+        Masks appear in both previews. Use \emph{Undo selection} to undo
+        the last edit. Use \emph{Clear band} or \emph{Clear masks} to remove
+        the corresponding selection.
+  \item Click \emph{Fit selection}. The comparison shows the processed
+        band and the fitted model. Gray marks excluded pixels.
+        The yellow line marks the fitted ridge. Review both images.
+  \item Click \emph{Accept ring} to append the fit to the extracted file.
+        Repeat from step 3 for each ring.
+  \item Choose a radial model. Click \emph{Update radial model plots}
+        to compare the model and accepted measurements.
+        Click \emph{Send to Circularize} to transfer the input and settings.
+\end{enumerate}
+
+\textbf{Display controls.} The previews share \emph{Color scale} and
+\emph{Colormap}. Each preview calculates its percentile limits from its
+visible pixels. The default limits are the 1st and 99.5th percentiles.
+The inspection view applies the processed preview's percentiles to the band.
+Log scaling uses positive pixels.
+
 Enable \emph{Crosshair guides} to mark the same radius and angle on both
-previews. Drag a line to move it or drag the center handle to move both lines.
-(4) Switch
-to \emph{Mask} and drag rectangles over overlapping rings, hot spots or bad
-sectors. \emph{Undo selection} reverses the last band or mask edit on both
-previews. Use \emph{Clear band} to remove the blue band or \emph{Clear masks}
-to remove all red masks. Undo also reverses either clear action.
-(5) Press \emph{Fit selection}.
-The comparison shows the processed band used for the fit and the model with shared axes and intensity
-scale. Grey regions mark excluded pixels, and the yellow line shows
-$r_g(\theta)$. Review the images before accepting the ring.
-(6) Press \emph{Accept ring} to append one block to the
-output file, then repeat from step 3 for the next ring. (7) Choose a radial
-model and use \emph{Update radial model plots} to compare its curves with the
-accepted ring measurements. Each harmonic uses the rings that measured it.
-In Poly mode, each term needs at least as many distinct measured radii as the
-polynomial degree. The panel reports terms fitted without weights when some
-uncertainties are missing or invalid. Click either \emph{Send to Circularize} button to pass the
-NumPy image, center, calibration file, and radial model to Circularize. The
-export includes the polynomial degree when Poly is selected.
-Sending the calibration warns if the saved rings differ from the preview or
-if Circularize's \emph{Max trig n} excludes a saved term.
-When Circularize runs, its console warns if any saved ring used a different
-center or detector shape, and reports rings whose geometry could not be verified.
-Use \emph{Refresh rings from file} to replace the accepted-ring list and plots
-with the contents of the selected calibration file. Use \emph{Clear calibration
-file} to delete that file and reset the ring list and plots after confirmation.
+previews. Drag a line to move it. Drag the center handle to move both lines.
+The readout shows the radius in pixels and the angle in degrees.
+
+\textbf{Radial model.} Each harmonic uses the rings that include that
+harmonic. In Poly mode, each term needs at least as many distinct radii
+as the polynomial degree. The panel reports when missing or invalid
+uncertainties require an unweighted fit.
+
+\emph{Send to Circularize} transfers the image, center, extracted file,
+and radial model. For Poly, it also transfers the degree.
+The panel warns if the saved rings differ from the preview.
+It also warns if \emph{Max trig n} in Circularize excludes a saved term.
+Circularize reports mismatched or unavailable detector geometry in its console.
+
+Use \emph{Refresh rings from file} to load the saved rings into the table
+and plots. Use \emph{Clear calibration file} to delete the file.
+Confirm the deletion to clear the table and plots.
 
 \textbf{Results.} The panel shows both polar previews with band, masks and fitted
 ridge overlays, a fit comparison, the parameter table, the accepted-ring
@@ -1691,32 +1607,35 @@ before restoring a pending fit. If the image changed or the fingerprint is
 missing, the session still restores the band, masks, and accepted rings, and
 asks you to refit the band.
 
-\textbf{Pitfalls.} Enhancement can move the fitted ridge. Use consistent
-processing settings for the rings in a calibration.
-Refit rings saved by the earlier fitting pipeline and export them to a new
-calibration file. Calibrate in the same orientation and centre frame as the
-images you will correct: PES rotates and centres each bin before it applies the
-calibration. Hansen--Law assumes the first radial column is $r=0$; keep the
-default radial grid. Masks, processing settings and provenance live in the
-session file; the extracted \code{.\allowbreak{}txt} contains only the ring blocks.
-A ring whose radius is already present within 0.5\,px is refused to avoid
-duplicates. The file is append-only; use \emph{Rebuild} to rewrite it.
-Circularize sorts ring blocks by radius before building the interpolant and
-computes its radial model from the saved blocks.
+\textbf{Pitfalls.} Enhancement can move the fitted ridge. The panel accepts
+rings from different images or processing settings. Check that the rings
+describe the same detector geometry before using them together.
+PES rotates and centers each bin before applying its calibration.
+Both polar remap methods start at $r=0$, as Hansen--Law requires.
+
+The session file stores the processing settings and masks. The extracted
+file stores the ring blocks and available detector geometry. Enable
+\emph{Provenance comments} to include a summary of each ring's processing.
+The panel refuses an append if a saved radius differs by less than 0.5\,px.
+Use \emph{Rebuild file from rings} to rewrite the file.
+Circularize sorts the saved rings by radius before it builds the radial model.
 
 \subsection{Circularize}
 \label{sec:circularize}
 
-\textbf{Purpose.} Correct the radial and azimuthal distortion of one VMI
-image using a Gascooke trig-fit calibration. The panel launches
+\textbf{Purpose.} Correct radial distortion in one VMI image as a function
+of angle. Use a Gascooke trig-fit calibration. The panel launches
 \code{vmi\_\allowbreak{}analysis.circularization.circularization} with working
 directory \code{circularization/\allowbreak{}}. It is a standalone tool for inspecting
 the calibration. The PES panel applies its correction to each GMD bin.
 
 For a raw detector-grid calibration, open the same \code{vmi\_2d\_raw.npy}
 in Trig Calibration and Circularize. Use the same origin in both panels.
-The default is the brightest pixel. The NumPy input keeps its native shape and orientation. Circularize
-applies the radial correction directly and writes the corrected image.
+For NumPy input, the default origin is the brightest pixel. Clear
+\emph{Use brightest pixel as center} to enter an origin.
+Circularize applies the radial correction about that origin on the input
+grid. The output keeps the matrix shape and orientation. The text file
+stores pixel values, so record the center coordinates for later analysis.
 
 \begin{center}
 \footnotesize
@@ -1804,9 +1723,10 @@ the available trigonometric series, the maximum radial contribution of each
 term, and the applied reassignment.
 \emph{Raw polar} and \emph{Circularized polar} show the detector images
 before and after correction on a shared grid about the correction center.
+The two previews appear below \emph{Run} in the settings card.
 Each preview has its own percentile limits. \emph{Radius guide} marks
-the same radius on both previews. The polar previews are available
-with \emph{No diagnostic plots} enabled.
+the same radius on both previews and displays the radius in pixels.
+The polar previews also appear with \emph{No diagnostic plots} selected.
 Outputs are the corrected text image and
 the diagnostic PNGs; \emph{reassignment\_map.png} is written whenever a
 reassignment file is supplied.
@@ -1825,6 +1745,8 @@ stays empty because the script does not print percentages.
 
 \subsection{PES / Abel inversion}
 \label{sec:pes}
+
+\textbf{Status.} This panel is immature and needs restructuring.
 
 \textbf{Purpose.} Process every GMD-binned image through hole patching,
 rotation, centring, circularisation, apodisation and Abel inversion, and
@@ -1912,11 +1834,106 @@ processing continues; if no bin succeeds the job fails. Weighted and
 unweighted runs write to different automatic output directories so their
 caches cannot collide.
 
+\subsection{Pipeline}
+\label{sec:pipeline}
+
+\textbf{Status.} This panel is immature and needs restructuring.
+
+\textbf{Purpose.} Run GMD Map, Centroiding, Binning, and PES in sequence.
+The first failed stage stops the job. Set the Centroiding parameters in
+the Centroiding panel before you start the pipeline.
+
+\begin{center}
+\footnotesize
+\begin{longtable}{@{}L{3.4cm}L{2.3cm}L{2.5cm}L{2.8cm}L{4.9cm}@{}}
+\toprule
+Field & Type and default & Saved key & CLI flag & Meaning \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\emph{HDF5 directory (dataset)} & folder, empty & \code{pipeline.\allowbreak{}h5\_\allowbreak{}dir} &
+stage 1 \code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir} & Dataset for the whole pipeline; also forced into
+the Centroiding snapshot as an absolute path. Required. \\
+\addlinespace
+\emph{GMD timestamp file} & file, empty & \code{pipeline.\allowbreak{}gmd\_\allowbreak{}path} &
+stage 1 \code{-\allowbreak{}-\allowbreak{}gmd-\allowbreak{}path} & GMD table for stage 1. Required. \\
+\addlinespace
+\emph{GMD map output} & save, workspace \code{gmd\_\allowbreak{}map\_\allowbreak{}all.\allowbreak{}txt} &
+\code{pipeline.map\_\allowbreak{}out} & stage 1 \code{-\allowbreak{}-\allowbreak{}output-\allowbreak{}path} & Where the map is
+written; also passed to Centroiding and Binning. \\
+\addlinespace
+\emph{Weight mode} & select, \code{gmd\_\allowbreak{}norm} & \code{pipeline.\allowbreak{}weight\_\allowbreak{}mode} &
+Binning \code{-\allowbreak{}-\allowbreak{}weight-\allowbreak{}mode} & Weighting for the Binning stage and the
+suffix used by later stages. \\
+\addlinespace
+\emph{Weight power} & number, 1.0 & \code{pipeline.\allowbreak{}weight\_\allowbreak{}power} &
+Binning \code{-\allowbreak{}-\allowbreak{}weight-\allowbreak{}power} & Exponent for \code{gmd\_\allowbreak{}norm}. \\
+\addlinespace
+\emph{Skip stages whose outputs exist} & checkbox, on &
+\code{pipeline.skip\_\allowbreak{}existing} & job-level & A stage is skipped when all of
+its declared output files already exist. \\
+\end{longtable}
+\end{center}
+
+\textbf{Stages.} The panel shows four status badges, \emph{GMD map},
+\code{Centroiding}, \emph{Binning} and \emph{PES}, updated while the job
+runs. Each stage has a fixed working directory and output fingerprint:
+
+\begin{center}
+\footnotesize
+\begin{longtable}{@{}L{2.2cm}L{6.0cm}L{3.0cm}L{4.4cm}@{}}
+\toprule
+Stage & Command & Working directory & Output fingerprint \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+GMD map & \code{build\_\allowbreak{}gmd\_\allowbreak{}map} with the three path fields & repository
+root & the map file \\
+\addlinespace
+Centroiding & \code{process\_\allowbreak{}andor\_\allowbreak{}vmi\_\allowbreak{}PICASSO\_\allowbreak{}v5\_\allowbreak{}h5\_\allowbreak{}batch} with the
+full Centroiding snapshot & \code{centroiding/\allowbreak{}} & the checkpoint file \\
+\addlinespace
+Binning & \code{vmi\_\allowbreak{}histogram\_\allowbreak{}gmd\_\allowbreak{}bins} with the checkpoint, output
+directory, map and thresholds & \code{centroiding/\allowbreak{}} &
+\code{vmi\_\allowbreak{}2d\_\allowbreak{}gmd\_\allowbreak{}all<suffix>.npy} \\
+\addlinespace
+PES & \code{process\_\allowbreak{}gmd\_\allowbreak{}bins} with the weight suffix, bin directory and
+PyAbel backend & \code{circularization/\allowbreak{}} &
+\code{gmd\_\allowbreak{}bins\_\allowbreak{}results.npz} in the automatic output directory \\
+\end{longtable}
+\end{center}
+
+\textbf{Borrowed and forced settings.} The pipeline takes every Centroiding
+setting from the saved form, but overrides exactly three values in its own
+snapshot: the HDF5 directory, the GMD map path, and \emph{Tuning mode only}
+(forced off, so a pipeline run is always a full batch and never produces a
+tuning check). Thresholds, GMD column and GMD floor are taken from the
+Binning tab's saved settings; the Pipeline fields supply the weight mode and
+power. The pipeline has no output-directory field: the Centroiding output
+directory is used. The PES stage always uses the PyAbel backend with the
+\code{daun} method; MATLAB is never selected from the pipeline.
+
+\textbf{Status, resume and cancellation.} With \emph{Skip stages whose
+outputs exist} checked, a stage whose outputs are all present is marked
+\code{skipped} and the log records it; this is the only resume mechanism.
+The first failing stage stops the pipeline, marks the remaining stages
+\code{cancelled}, and fails the job. Stopping cancels queued work
+immediately and terminates the running process tree. The pipeline reserves
+the inputs and outputs of all four stages for the whole run, so overlapping
+jobs wait.
+
+\textbf{Pitfalls.} Read the stage logs and open the files that the stages
+write. After a page reload, the active job badge and console reconnect.
+To run all stages again, clear \emph{Skip stages whose outputs exist}.
+Individual programs can still reuse their own checkpoints or caches.
+
 \section{Output files}
 \label{sec:outputs}
 
-Every analysis stage writes into the output directory you select. The table
-summarises the files by stage; the panel sections give the details.
+The table lists the main output files. See each panel section for its
+output paths and defaults.
 
 \begin{center}
 \footnotesize
@@ -1964,12 +1981,11 @@ and live under \code{.\allowbreak{}cache/\allowbreak{}vmi-\allowbreak{}analysis/
 \end{longtable}
 \end{center}
 
-Files under \code{.\allowbreak{}cache/\allowbreak{}vmi-\allowbreak{}analysis/\allowbreak{}} are disposable GUI artifacts
-(previews, frame dumps, thumbnails) and can be deleted at any time. The
-checkpoint, the bin histograms and the PES outputs are the durable results;
-back them up rather than the cache. The repository ignores
-\code{.nicegui/\allowbreak{}}, \code{.\allowbreak{}cache/\allowbreak{}} and analysis outputs, so they never
-appear in version control.
+The GUI stores previews, frame dumps, and thumbnails under
+\code{.\allowbreak{}cache/\allowbreak{}vmi-\allowbreak{}analysis/\allowbreak{}}.
+Stop the server before clearing this cache. Back up analysis outputs and
+calibration files separately. Keep analysis outputs, \code{.nicegui/\allowbreak{}},
+and \code{.\allowbreak{}cache/\allowbreak{}} outside version control.
 
 \section{Energy calibration}
 \label{sec:calibration}
@@ -2008,7 +2024,7 @@ ionisation energy leaves more kinetic energy and therefore a larger radius.
 \subsection{Procedure}
 
 \begin{enumerate}
-  \item Run Centroiding with \emph{Abel inversion} checked.
+  \item Select \emph{Abel inversion} in Centroiding.
   \item Tick \emph{Fit Xe 4d doublet}. Optionally set \emph{Xe fit min} and
         \emph{Xe fit max} in pixel$^2$ to isolate the doublet from other
         lines; without limits the fit uses the two most prominent peaks.
@@ -2152,8 +2168,9 @@ backend, for example \code{Agg}. \\
     \code{save\_\allowbreak{}gData.\allowbreak{}m}; expect tens of minutes. Use the PyAbel backend to
     avoid MATLAB entirely. MATLAB bins are processed sequentially by design.
   \item[PES reports missing calibration.] Both files in
-    \code{circularization/\allowbreak{}} are required and are not generated by this
-    repository. Supply them before running.
+    \code{circularization/\allowbreak{}} are required. Create the extracted
+    fit file in Trig Calibration or supply a compatible export. Supply the
+    radial reassignment file before starting PES.
   \item[The frame histogram or movie disagrees with another tool.] Frame
     enumeration differs between tools: GMD Map and Dark Frame use
     \code{RAW-\allowbreak{}*.\allowbreak{}h5}, while Movie, Accumulate and the frame histogram use all
@@ -2167,10 +2184,9 @@ backend, for example \code{Agg}. \\
   \item[Outputs overwrite silently.] The file picker does not prompt on save,
     and analysis outputs are overwritten. Choose a new output directory or
     file name when preserving an earlier result.
-  \item[I cannot reopen old results.] Only some panels offer \emph{View saved
-    result(s)}: GMD Map, Movie, Dark Frame, Accumulate and Centroiding.
-    Circularize, PES, Binning and Pipeline have no such button; rerun or open
-    the files with another tool.
+  \item[I cannot reopen old results.] Accumulate has \emph{View saved
+    result}. Centroiding has \emph{View saved results}. For other job panels,
+    run the analysis again or open the output files in another tool.
 \end{description}
 
 \appendix

@@ -1,13 +1,15 @@
 # VMI Analysis GUI
 
-Analyze velocity-map imaging data from raw camera HDF5 frames through
-centroiding, GMD binning, circularization, and Abel inversion. The web
-interface runs individual analysis tools or the full pipeline.
+Analyze velocity-map imaging data from HDF5 camera frames. Use the panels
+to locate electron spots, fit ring distortions, correct images, and calculate
+energy spectra.
+
+**Panel status.** Binning, PES, and Pipeline are immature and need restructuring.
 
 ## Get started
 
-Install Python 3.12 or newer and [uv](https://docs.astral.sh/uv/), then run
-these commands from the checkout.
+Install Python 3.12 or newer and [uv](https://docs.astral.sh/uv/).
+Run these commands from the checkout.
 
 ```sh
 uv sync
@@ -15,12 +17,12 @@ uv run vmi-analysis
 ```
 
 The app opens at [localhost:3157](http://localhost:3157). Set `VMI_GUI_PORT`
-to use a different port. Bring your own `RAW-*.h5` files and a GMD timestamp
-file for GMD matching. The manual describes the calibration files needed
-for PES.
+to use a different port. Supply your own camera files. For GMD matching,
+also supply the GMD timestamp file.
 
-Use **Settings → Save workflow** to save panel values to a JSON file and
-**Load workflow** to restore them before running an analysis.
+Use **Save workflow** in **Settings** to save panel values to a JSON file.
+Use **Load workflow** to restore those values. Save a Trig Calibration
+session separately to preserve its band, masks, and ring fits.
 
 ## Documentation
 

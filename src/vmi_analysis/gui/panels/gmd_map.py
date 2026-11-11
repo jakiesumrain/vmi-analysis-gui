@@ -15,8 +15,7 @@ from .common import (JobView, REPO_ROOT, num_input, open_folder_button,
 def build(jobs: JobManager) -> None:
     theme.section_title(
         "GMD Map",
-        "Match each camera frame to its GMD pulse-energy record by timestamp "
-        "(build_gmd_map.py). Required before GMD weighting or binning.")
+        "Match camera frames to GMD pulse-energy records by timestamp.")
 
     view = JobView(jobs, job_name='GMD map', results_builder=_results)
 

@@ -28,9 +28,7 @@ from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
 def build(jobs: JobManager) -> None:
     theme.section_title(
         "Fast Accumulate",
-        "Threshold + morphological denoise summed into one image, with "
-        "optional GMD weighting (h5_accumulate_fast_gmd.py). "
-        "Quick-look tool — the Picasso path is the precise one.")
+        "Sum camera frames into one image with optional thresholding, denoising, and GMD weighting.")
 
     with ui.column().classes("w-full") as live_area:
         live_img, live_colors = _interactive_plot()
