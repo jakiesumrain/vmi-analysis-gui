@@ -146,6 +146,7 @@ def command_access(cmd, cwd=None):
         read(value("--input", "image.txt")); read(value("--extracted", "extracted.txt"))
         read(value("--reassign-file"))
         write(value("--output", "image_circularized.txt"))
+        write(value("--polar-preview"))
         if "--no-plots" not in args:
             write(value("--plot-dir", "trig_fit_plots"))
     elif module == "vmi_analysis.circularization.process_gmd_bins":

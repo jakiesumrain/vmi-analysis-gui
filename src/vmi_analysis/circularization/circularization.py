@@ -866,6 +866,8 @@ def parse_args():
         default=Path("image_circularized.txt"),
         help="Output text image file.",
     )
+    parser.add_argument("--polar-preview", type=Path,
+                        help="Optional NumPy archive of raw and circularized polar previews.")
     parser.add_argument(
         "--shape",
         type=int,
@@ -953,6 +955,9 @@ def main():
     if not args.summary_only:
         try:
             output = validate_distinct_output(args.output, inputs)
+            if args.polar_preview is not None:
+                args.polar_preview = validate_distinct_output(
+                    args.polar_preview, (*inputs, ("output image", output)), output_label="polar preview")
         except (OSError, ValueError) as exc:
             raise SystemExit(f"Circularize: {exc}") from exc
 
@@ -1032,6 +1037,15 @@ def main():
     except (OSError, ValueError) as exc:
         raise SystemExit(f"Circularize: {exc}") from exc
     save_image_txt(output, corrected)
+    if args.polar_preview is not None:
+        from .polar_fit import save_polar_comparison
+
+        try:
+            preview = validate_distinct_output(args.polar_preview, (*inputs, ("output image", output)),
+                                               output_label="polar preview")
+            save_polar_comparison(preview, raw_image, corrected, center)
+        except (OSError, ValueError) as exc:
+            print(f"Warning: could not save polar previews: {exc}")
 
 
 if __name__ == "__main__":
