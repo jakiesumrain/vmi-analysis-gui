@@ -30,6 +30,8 @@ session separately to preserve its band, masks, and ring fits.
   settings, the full pipeline, CLI commands, and troubleshooting.
 - [Architecture](docs/architecture.md) and [contributing guide](CONTRIBUTING.md)
   for development.
+- [Windows installer](packaging/windows/README.md) for offline installation
+  and release builds.
 
 ## License
 

@@ -248,8 +248,8 @@ def index() -> None:
             .classes("vmi-subtitle").style("color: #cc785c")
 
 
-def main() -> None:
-    port = startup_port()
+def main(*, host: str = "0.0.0.0", launch_command: str = "uv run vmi-analysis") -> None:
+    port = startup_port(host=host, launch_command=launch_command)
     from vmi_analysis.paths import prepare_workspace
     prepare_workspace()
     try:
@@ -258,6 +258,7 @@ def main() -> None:
         MANAGER.set_max_concurrent(2)
     init_zoom_overlay()
     ui.run(title="VMI Analysis",
+           host=host,
            port=port,
            reconnect_timeout=_env_float("VMI_GUI_RECONNECT_TIMEOUT",
                                         DEFAULT_RECONNECT_TIMEOUT, minimum=4.0),

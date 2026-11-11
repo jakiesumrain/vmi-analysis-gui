@@ -32,14 +32,15 @@ class StartupPortTests(unittest.TestCase):
         with patch.dict(os.environ), patch.object(startup, '_bind_error', return_value=None) as probe:
             os.environ.pop('VMI_GUI_PORT', None)
             self.assertEqual(startup.startup_port(), 3157)
-            probe.assert_called_with(3157)
+            probe.assert_called_with(3157, '0.0.0.0')
             os.environ['VMI_GUI_PORT'] = '3158'
             self.assertEqual(startup.startup_port(), 3158)
 
     def test_skips_unavailable_alternatives(self):
         output = io.StringIO()
         with patch.dict(os.environ, VMI_GUI_PORT='3157'), redirect_stderr(output), \
-                patch.object(startup, '_bind_error', side_effect=lambda port: None if port == 3159 else OSError('busy')):
+                patch.object(startup, '_bind_error',
+                             side_effect=lambda port, host: None if port == 3159 else OSError('busy')):
             with self.assertRaises(SystemExit):
                 startup.startup_port()
         self.assertIn('$env:VMI_GUI_PORT = "3159"', output.getvalue())
