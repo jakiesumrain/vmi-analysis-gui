@@ -34,6 +34,36 @@ def make_polar_ridge(n_theta=180, n_r=101, r0=50.0, sigma=2.0, intensity=100.0,
 
 
 class PolarRemapTests(unittest.TestCase):
+    def test_grid_resampling_averages_detector_pixels_at_positive_angle(self):
+        image = np.full((21, 21), 2.0)
+        image[14, 10] = 10.0  # Positive detector row is +90 degrees.
+        args = dict(center=(10, 10), n_theta=8, radial_bin_size=1, r_max=14)
+        sampled, theta, r, dr, valid = pf.remap_polar(image, **args)
+        averaged, grid_theta, grid_r, grid_dr, grid_valid = pf.remap_polar(
+            image, **args, subpixels=5)
+
+        np.testing.assert_array_equal(grid_theta, theta)
+        np.testing.assert_array_equal(grid_r, r)
+        np.testing.assert_array_equal(grid_valid, valid)
+        self.assertEqual(grid_dr, dr)
+        self.assertEqual(sampled[2, 4], 10.0)
+        self.assertGreater(averaged[2, 4], 2.0)
+        self.assertLess(averaged[2, 4], 10.0)
+        mask = valid.copy()
+        mask[2, 4] = False
+        np.testing.assert_allclose(averaged[mask], 2.0)
+        self.assertTrue(np.isnan(averaged[~valid]).all())
+
+    def test_sparse_grid_uses_interpolation_for_unpopulated_bins(self):
+        image = np.tile(np.arange(21, dtype=float), (21, 1))
+        args = dict(center=(10, 10), n_theta=720, radial_bin_size=0.25)
+        sampled, *_ = pf.remap_polar(image, **args)
+        averaged, *_ = pf.remap_polar(image, **args, subpixels=1)
+        self.assertTrue(np.isfinite(averaged).all())
+        self.assertEqual(averaged[0, 1], sampled[0, 1])
+        with self.assertRaisesRegex(ValueError, "whole subpixel grid size"):
+            pf.remap_polar(image, **args, subpixels=2.5)
+
     def test_radial_bin_size_sets_sample_spacing_and_interpolates(self):
         image = np.tile(np.arange(20, dtype=float), (20, 1))
         polar, _, radii, dr, _ = pf.remap_polar(

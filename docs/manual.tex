@@ -1511,8 +1511,8 @@ to force that stage to run again.
 without the Gascooke executable. The panel remaps the image to polar
 coordinates ($x$ = radius, $y$ = angle, the orientation of the Gascooke
 \emph{Theta vs r} image) and optionally applies inverse Abel to each
-constant-angle line. The remap samples detector intensity at each polar
-coordinate and preserves that intensity without a $1/r$ correction.
+constant-angle line. The remap preserves detector intensity units without a
+$1/r$ correction.
 The fitter uses the processed polar data to estimate a Gaussian ridge whose centre varies as
 $r_g(\theta)=r_0+\sum_n[A_n\sin(n\theta)+B_n\cos(n\theta)]$. Accepted rings are
 appended to a trig-fit file in the format consumed by the Circularize and PES
@@ -1545,13 +1545,23 @@ origin in the detector image. \\
 \code{calibration.\allowbreak{}radial\_\allowbreak{}bin\_\allowbreak{}size} &
 Spacing between radial samples in detector pixels. Sampling starts at $r=0$
 and stops at the last grid point at or below the maximum radius. A spacing of
-0.5 samples the image by interpolation every half pixel in radius. \\
+0.5 gives a radial grid point every half pixel. \\
 \addlinespace
 \emph{Angular bins} & number, 720 & \code{calibration.\allowbreak{}n\_\allowbreak{}theta} &
 Number of angular samples over one full turn. \\
 \addlinespace
 \emph{Max radius (0 = auto)} & number, 0.0 & \code{calibration.\allowbreak{}r\_\allowbreak{}max} &
 Largest radius to sample; 0 uses the largest circle inside the image. \\
+\addlinespace
+\emph{Polar remap} & select, Interpolation &
+\code{calibration.\allowbreak{}remap\_\allowbreak{}method} &
+Choose \emph{Grid resampling} to average detector subpixels in each polar
+bin. Bins with no finite subpixels use interpolation. \\
+\addlinespace
+\emph{Subpixels per side ($n$)} & integer, 5 &
+\code{calibration.\allowbreak{}subpixels} &
+Split each detector pixel into an $n\times n$ grid for resampling.
+Choose 1 to 16. Larger grids take longer. \\
 \addlinespace
 \emph{Inverse Abel per $\theta$} & checkbox, on & \code{calibration.\allowbreak{}abel} &
 Invert each constant-angle radial line to locate ridges. For anisotropic

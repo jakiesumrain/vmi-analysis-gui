@@ -375,6 +375,21 @@ def build(jobs=None, *, use_calibration=None) -> None:
                                          "calibration.n_theta")
             widgets["r_max"] = persist(num_input("Max radius (0 = auto)", 0.0,
                                                  step=1.0), "calibration.r_max")
+        with ui.row().classes("gap-4 flex-wrap items-center"):
+            widgets["remap_method"] = persist(ui.select(
+                {"interpolation": "Interpolation", "grid": "Grid resampling"},
+                value="interpolation", label="Polar remap").props("outlined dense")
+                .classes("w-48"), "calibration.remap_method")
+            widgets["subpixels"] = persist(
+                num_input("Subpixels per side (n)", pf.DEFAULT_SUBPIXELS, step=1,
+                          min=1, max=pf.MAX_SUBPIXELS), "calibration.subpixels")
+            widgets["subpixels"].tooltip("Split each detector pixel into an n × n grid. Larger grids take longer.")
+
+            def update_subpixels(_=None):
+                widgets["subpixels"].set_visibility(widgets["remap_method"].value == "grid")
+
+            widgets["remap_method"].on_value_change(update_subpixels)
+            update_subpixels()
         with ui.row().classes("gap-2 items-center"):
             load_button = ui.button("Load image & remap", icon="refresh")
             send_button = ui.button("Send to Circularize", icon="output").props("flat")
@@ -884,6 +899,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 raise ValueError("Enter a radial bin size in pixels.")
             n_theta = int(widgets["n_theta"].value)
             r_max = float(widgets["r_max"].value or 0.0) or None
+            subpixels = None
+            if widgets["remap_method"].value == "grid":
+                subpixels = widgets["subpixels"].value
+                if subpixels is None:
+                    raise ValueError("Enter a subpixel grid size.")
             options = _options()
             image = await asyncio.to_thread(pf.load_image, path)
             fingerprint = await asyncio.to_thread(_image_fingerprint, image)
@@ -893,7 +913,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
             radial_grid = ({"radial_bin_size": bin_size} if saved_radial_count is None else
                            {"n_r": saved_radial_count})
             polar, theta, r, dr, _valid = await asyncio.to_thread(
-                pf.remap_polar, image, center, n_theta=n_theta, r_max=r_max, **radial_grid)
+                pf.remap_polar, image, center, n_theta=n_theta, r_max=r_max,
+                subpixels=subpixels, **radial_grid)
             if request != state["request_id"]:
                 return False
             processed, _, options = await asyncio.to_thread(pf.process_polar, polar, dr, **options)
@@ -914,12 +935,16 @@ def build(jobs=None, *, use_calibration=None) -> None:
                      f"Center X={center[0]:g}, Center Y={center[1]:g}.")
         console.push(f"[Trig Calibration] {r.size} radial samples from 0 to {r[-1]:g} px "
                      f"at {dr:.6g} px spacing.")
+        if subpixels is not None:
+            subpixels = int(subpixels)
+            console.push(f"[Trig Calibration] Grid resampling with {subpixels} × {subpixels} subpixels per detector pixel.")
         state.update(raw=polar, theta=theta, r=r, dr=dr, ready=True,
                      image={"path": str(path), "center": list(center),
                             "shape": list(image.shape),
                             "fingerprint": fingerprint,
                             "brightest_center": auto_center,
-                            "radial_bin_size": dr, "n_theta": n_theta, "r_max": r_max},
+                            "radial_bin_size": dr, "n_theta": n_theta, "r_max": r_max,
+                            "subpixels": subpixels},
                      band=None, masks=[], selection_history=[], last_fit=None, view_indices=None,
                      processed=processed, options=options,
                      rings=[], view={"r0": 0.0, "r1": float(r[-1]),
@@ -929,6 +954,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
         _refresh_view()
         remap_status.text = f"{processed.shape[1]} radial × {processed.shape[0]} angular bins"
         return True
+
+    def _fit_processing():
+        options = state["options"]
+        subpixels = state["image"]["subpixels"]
+        return options if subpixels is None else {**options, "subpixels": subpixels}
 
     async def _fit_selection():
         if state["request_kind"] is not None:
@@ -955,7 +985,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 n_terms=int(widgets["n_terms"].value if widgets["n_terms"].value is not None else 3),
                 use_beta=bool(widgets["beta"].value),
                 iterative=bool(widgets["iterative"].value),
-                processing=state["options"])
+                processing=_fit_processing())
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             if request == state["request_id"]:
                 fit_status.text = "fit failed"
@@ -1024,6 +1054,10 @@ def build(jobs=None, *, use_calibration=None) -> None:
             widgets["radial_bin_size"].value = image["radial_bin_size"]
         widgets["n_theta"].value = image.get("n_theta", widgets["n_theta"].value)
         widgets["r_max"].value = image.get("r_max", 0.0)
+        subpixels = image.get("subpixels")
+        widgets["remap_method"].value = "interpolation" if subpixels is None else "grid"
+        if subpixels is not None:
+            widgets["subpixels"].value = subpixels
         processing = payload.get("processing") or {}
         if processing:
             widgets["abel"].value = processing.get("abel", True)
@@ -1062,7 +1096,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                     reason = "The detector image changed since this fit was saved."
                 elif list(center) != current_image["center"]:
                     reason = "The fit center changed since this fit was saved."
-                elif fit_data.get("processing") != state["options"]:
+                elif fit_data.get("processing") != _fit_processing():
                     reason = "Processing changed since this fit was saved."
                 if reason:
                     ui.notify(f"{reason} Fit the selected band again.", type="warning")
