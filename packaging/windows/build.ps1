@@ -79,7 +79,7 @@ try {
     $compile = 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)'
     Invoke-Checked $python @('-B', '-c', $compile, (Join-Path $PSScriptRoot 'sitecustomize.py'),
         (Join-Path $runtime 'sitecustomize.pyc'))
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'launch.py') -Destination $stage
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'launch.py'), (Join-Path $PSScriptRoot 'vmi-analysis.ico') -Destination $stage
     Copy-Item -LiteralPath 'LICENSE', 'NOTICE', 'docs/manual.pdf' -Destination $stage
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'third-party.md') -Destination $stage
 

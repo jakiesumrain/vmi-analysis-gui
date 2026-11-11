@@ -20,13 +20,14 @@ MinVersion=10.0
 Compression=lzma2/fast
 SolidCompression=yes
 WizardStyle=modern
-UninstallDisplayIcon={app}\app-{#ReleaseVersion}\runtime\python.exe
+SetupIconFile={#Stage}\vmi-analysis.ico
+UninstallDisplayIcon={app}\app-{#ReleaseVersion}\vmi-analysis.ico
 
 [Files]
 Source: "{#Stage}\*"; DestDir: "{app}\app-{#ReleaseVersion}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{userprograms}\VMI Analysis"; Filename: "{app}\app-{#ReleaseVersion}\runtime\python.exe"; Parameters: """{app}\app-{#ReleaseVersion}\launch.py"""; WorkingDir: "{app}"
+Name: "{userprograms}\VMI Analysis"; Filename: "{app}\app-{#ReleaseVersion}\runtime\python.exe"; Parameters: """{app}\app-{#ReleaseVersion}\launch.py"""; WorkingDir: "{app}"; IconFilename: "{app}\app-{#ReleaseVersion}\vmi-analysis.ico"
 Name: "{userprograms}\VMI Analysis User Manual"; Filename: "{app}\app-{#ReleaseVersion}\manual.pdf"
 
 [UninstallDelete]

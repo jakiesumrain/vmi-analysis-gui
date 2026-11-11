@@ -38,7 +38,7 @@ include = ["vmi_analysis*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-"vmi_analysis.gui.assets" = ["*.css", "*.js"]
+"vmi_analysis.gui.assets" = ["*.css", "*.js", "*.svg"]
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"

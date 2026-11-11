@@ -4,6 +4,7 @@ Launch from the repository root:  uv run vmi-analysis
 """
 
 import asyncio
+from importlib.resources import files
 from math import isfinite
 import os
 
@@ -258,6 +259,7 @@ def main(*, host: str = "0.0.0.0", launch_command: str = "uv run vmi-analysis") 
         MANAGER.set_max_concurrent(2)
     init_zoom_overlay()
     ui.run(title="VMI Analysis",
+           favicon=str(files("vmi_analysis.gui.assets") / "electron-spectrum-measured.svg"),
            host=host,
            port=port,
            reconnect_timeout=_env_float("VMI_GUI_RECONNECT_TIMEOUT",

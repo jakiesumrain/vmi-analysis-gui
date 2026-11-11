@@ -3,7 +3,7 @@ include docs/manual.pdf docs/manual.tex
 recursive-include docs *.md
 recursive-include examples *.toml
 recursive-include tests *.py *.js
-recursive-include packaging/windows *.py *.ps1 *.iss *.md
+recursive-include packaging/windows *.py *.ps1 *.iss *.md *.ico
 recursive-include vendor/pbasex-matlab *.m *.md *.pdf
 include vendor/pbasex-matlab/LICENSE.txt
 exclude centroiding/config.toml
