@@ -1561,6 +1561,11 @@ images this is a ridge-finding approximation. \\
 Hansen--Law (the method used by the reference software); Dasch three-point,
 two-point and onion-peeling are available for comparison. \\
 \addlinespace
+\emph{Hold order} & select, 1 & \code{calibration.\allowbreak{}hold\_\allowbreak{}order} &
+Available for Hansen--Law inversion. Choose 0 for a constant or 1 for a
+linear approximation between radial samples. Older Hansen--Law sessions
+without this setting load with order 0. \\
+\addlinespace
 \emph{Filter placement} & select, \code{post\_\allowbreak{}abel} & \code{calibration.\allowbreak{}placement} &
 With inverse Abel enabled, choose \emph{After Abel inversion} or \emph{Off}.
 With inverse Abel disabled, choose \emph{Raw polar} or \emph{Off}.

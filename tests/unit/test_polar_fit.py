@@ -63,6 +63,17 @@ class PolarRemapTests(unittest.TestCase):
         self.assertTrue(np.isnan(polar[~valid]).all())
 
 class AbelTests(unittest.TestCase):
+    def test_processing_applies_selected_hansenlaw_hold_order(self):
+        from abel.hansenlaw import hansenlaw_transform
+
+        polar, _, _ = make_polar_ridge(n_theta=24, n_r=60)
+        fit, display, options = pf.process_polar(polar, 0.5, hold_order=1)
+        expected = hansenlaw_transform(polar, dr=0.5, direction="inverse", hold_order=1)
+        np.testing.assert_allclose(fit, expected)
+        np.testing.assert_allclose(display, expected)
+        self.assertFalse(np.allclose(fit, pf.inverse_abel(polar, dr=0.5)))
+        self.assertIn("hold_order=1", pf.describe_processing(options))
+
     def test_hansenlaw_inverts_uniform_ball_projection(self):
         radius = 96
         r = np.arange(radius, dtype=float)

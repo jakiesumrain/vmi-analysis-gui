@@ -194,7 +194,7 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
             pixels = np.zeros((31, 31))
             pixels[15, 15] = 10
             np.save(image_path, pixels)
-            options = pf.process_options(abel=False, enhancement={"placement": "off"})
+            options = pf.process_options(enhancement={"placement": "off"})
             ring = pf.RingFit(params={"r0": 10, "sigma": 1, "offset": 0, "intensity": 5},
                               sigmas={}, n_terms=0, use_beta=False, band=pf.Rect(8, 12),
                               processing=options, unconstrained=[])
@@ -223,7 +223,19 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                         patch.object(pf, "fit_ring", side_effect=fit_ring), \
                         patch.object(calibration, "_fit_comparison_figure", return_value=None):
                     calibration.build()
+                    hold_order = next(el for el in client.elements.values()
+                                      if isinstance(el, ui.select)
+                                      and el._props.get("label") == "Hold order")
+                    abel_method = next(el for el in client.elements.values()
+                                       if isinstance(el, ui.select)
+                                       and el._props.get("label") == "Abel method")
+                    self.assertEqual(hold_order.value, 1)
+                    self.assertTrue(hold_order.visible)
+                    abel_method.value = "dasch_three_point"
+                    self.assertFalse(hold_order.visible)
                     await callbacks["Load session"]()
+                    self.assertTrue(hold_order.visible)
+                    self.assertEqual(hold_order.value, 0)
                     await callbacks["Fit selection"]()
                     callbacks["Save session"]()
                     saved = pf.load_session(session_path)
@@ -231,6 +243,16 @@ class PanelLoadTests(unittest.IsolatedAsyncioTestCase):
                     accept = buttons["Accept ring (append to file)"]
 
                     await callbacks["Load session"]()
+                    self.assertTrue(accept.enabled)
+
+                    legacy_processing = dict(saved["processing"])
+                    legacy_processing.pop("hold_order")
+                    pf.save_session(session_path, dict(
+                        saved, processing=legacy_processing,
+                        fit=dict(saved["fit"], processing=legacy_processing)))
+                    hold_order.value = 1
+                    await callbacks["Load session"]()
+                    self.assertEqual(hold_order.value, 0)
                     self.assertTrue(accept.enabled)
 
                     legacy = dict(saved, image={k: v for k, v in saved["image"].items()

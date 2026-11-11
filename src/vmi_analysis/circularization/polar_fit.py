@@ -136,7 +136,7 @@ def remap_polar(image, center, n_r=512, n_theta=720, r_max=None, order=1, *, rad
     return values, theta, r, dr, valid
 
 
-def inverse_abel(polar, dr=1.0, method="hansenlaw"):
+def inverse_abel(polar, dr=1.0, method="hansenlaw", *, hold_order=0):
     """Inverse Abel transform of every constant-angle row along the radius."""
     polar = np.asarray(polar, dtype=float)
     valid = np.isfinite(polar)
@@ -146,7 +146,8 @@ def inverse_abel(polar, dr=1.0, method="hansenlaw"):
         from abel.hansenlaw import hansenlaw_transform
 
         out = np.asarray(hansenlaw_transform(data, dr=float(dr),
-                                             direction="inverse"), dtype=float)
+                                             direction="inverse",
+                                             hold_order=hold_order), dtype=float)
     elif method in ("dasch_three_point", "dasch_3", "dasch_two_point", "onion_peeling"):
         from abel.dasch import (onion_peeling_transform, three_point_transform,
                                 two_point_transform)
@@ -266,7 +267,8 @@ def enhance_polar(image, mode="bandpass", params=None):
     return out
 
 
-def process_options(abel=True, abel_method="hansenlaw", enhancement=None, fit_filtered=False):
+def process_options(abel=True, abel_method="hansenlaw", enhancement=None, fit_filtered=False,
+                    *, hold_order=0):
     """Build a normalised processing-options dictionary."""
     enhancement = dict(enhancement or {})
     placement = enhancement.get("placement", "off")
@@ -277,21 +279,29 @@ def process_options(abel=True, abel_method="hansenlaw", enhancement=None, fit_fi
         raise ValueError(f"Unknown enhancement mode: {mode!r}")
     params = dict(DEFAULT_ENHANCE_PARAMS)
     params.update(enhancement.get("params") or {})
-    return {
+    options = {
         "abel": bool(abel),
         "abel_method": str(abel_method),
         "fit_filtered": bool(fit_filtered),
         "enhancement": {"placement": placement, "mode": mode, "params": params},
     }
+    if options["abel"] and options["abel_method"].lower() == "hansenlaw":
+        if hold_order not in (0, 1):
+            raise ValueError("Hansen–Law hold order must be 0 or 1.")
+        options["hold_order"] = int(hold_order)
+    return options
 
 
 def describe_processing(options):
     """One-line human-readable description used in provenance comments."""
     options = process_options(**{k: options[k] for k in ("abel", "abel_method", "enhancement")},
-                              fit_filtered=options.get("fit_filtered", False))
+                              fit_filtered=options.get("fit_filtered", False),
+                              hold_order=options.get("hold_order", 0))
     enh = options["enhancement"]
     parts = ["fit=point-sampled",
              f"abel={'none' if not options['abel'] else options['abel_method']}"]
+    if "hold_order" in options:
+        parts.append(f"hold_order={options['hold_order']}")
     filter_name = "fit_filter" if options["fit_filtered"] else "display_filter"
     if enh["placement"] == "off" or enh["mode"] == "none":
         parts.append(f"{filter_name}=none")
@@ -310,20 +320,21 @@ def describe_processing(options):
 
 
 def process_polar(polar, dr, *, abel=True, abel_method="hansenlaw", enhancement=None,
-                  fit_filtered=False):
+                  fit_filtered=False, hold_order=0):
     """Return the fit image, display image and processing options."""
     options = process_options(abel=abel, abel_method=abel_method, enhancement=enhancement,
-                              fit_filtered=fit_filtered)
+                              fit_filtered=fit_filtered, hold_order=hold_order)
+    abel_kwargs = {"dr": dr, "method": abel_method, "hold_order": options.get("hold_order", 0)}
     enh = options["enhancement"]
     raw = np.asarray(polar, dtype=float)
-    fit = inverse_abel(raw, dr=dr, method=abel_method) if abel else raw
+    fit = inverse_abel(raw, **abel_kwargs) if abel else raw
     placement = enh["placement"]
     if placement == "off" or enh["mode"] == "none":
         return fit, fit, options
     source = fit if placement == "post_abel" else raw
     display = enhance_polar(source, enh["mode"], enh["params"])
     if placement == "pre_abel" and abel:
-        display = inverse_abel(display, dr=dr, method=abel_method)
+        display = inverse_abel(display, **abel_kwargs)
     return (display if fit_filtered else fit), display, options
 
 
