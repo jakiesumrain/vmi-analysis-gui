@@ -481,6 +481,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
                         .props("outlined dense").classes("w-36"), "calibration.colormap")
                     guides = persist(ui.checkbox("Crosshair guides"), "calibration.crosshair_guides")
                     guides.tooltip("Drag either line or the center handle in either polar preview.")
+                    ui.element("span").props("data-polar-guide-readout") \
+                        .classes("font-mono text-xs").bind_visibility_from(guides, "value")
                 ui.label("Log scale uses positive pixels.").classes("vmi-subtitle")
                 polar_images, color_limits, color_status = {}, {}, {}
                 pointer_readouts = {}
@@ -713,7 +715,9 @@ def build(jobs=None, *, use_calibration=None) -> None:
             return
         state["view_indices"] = (ti, ri)
         state["img_size"] = (int(ri.size), int(ti.size))
-        guide_group.props(f'data-polar-view="{ri[0]} {ri[-1] + 1} {ti[0]} {ti[-1] + 1}"')
+        angular_step = 360 / state["theta"].size
+        guide_group.props(f'data-polar-view="{ri[0]} {ri[-1] + 1} {ti[0]} {ti[-1] + 1} '
+                          f'{state["dr"]} {angular_step}"')
         for key in polar_images:
             _refresh_contrast(key)
             pointer_readouts[key].text = ""

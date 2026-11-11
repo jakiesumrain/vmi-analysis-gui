@@ -6,7 +6,7 @@
   let drag = null;
 
   function update(group, change) {
-    const [left, right, top, bottom] = group.dataset.polarView.split(' ').map(Number);
+    const [left, right, top, bottom, radialStep, angularStep] = group.dataset.polarView.split(' ').map(Number);
     const center = {x: (left + right) / 2, y: (top + bottom) / 2};
     const position = positions.get(group) ?? center;
     if (position.x < left || position.x > right) position.x = center.x;
@@ -17,6 +17,11 @@
     positions.set(group, position);
     group.style.setProperty('--polar-guide-x', `${100 * (position.x - left) / (right - left)}%`);
     group.style.setProperty('--polar-guide-y', `${100 * (position.y - top) / (bottom - top)}%`);
+    // Sample centers are half a bin from the image edge.
+    const radius = (position.x - 0.5) * radialStep;
+    const angle = (position.y - 0.5) * angularStep;
+    group.querySelector('[data-polar-guide-readout]').textContent =
+      `r ${radius.toFixed(3)} px · θ ${angle.toFixed(2)}°`;
   }
 
   document.addEventListener('pointerdown', event => {
