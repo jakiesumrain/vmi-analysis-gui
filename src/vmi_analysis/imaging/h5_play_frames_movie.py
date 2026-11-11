@@ -28,6 +28,8 @@ import time
 import matplotlib
 if "--headless" in sys.argv or os.environ.get("MPLBACKEND"):
     matplotlib.use(os.environ.get("MPLBACKEND", "Agg"))
+if ffmpeg_path := os.environ.get("VMI_FFMPEG_EXE"):
+    matplotlib.rcParams["animation.ffmpeg_path"] = ffmpeg_path
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from matplotlib.animation import FuncAnimation, FFMpegWriter, PillowWriter

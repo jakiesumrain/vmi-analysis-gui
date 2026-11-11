@@ -1,5 +1,6 @@
 """Theme helpers — applies the DESIGN.md token spec to the NiceGUI app."""
 
+import os
 from nicegui import ui
 
 from importlib.resources import files
@@ -29,7 +30,8 @@ def apply_theme() -> None:
         info="#5db8a6",
         warning="#d4a017",
     )
-    ui.add_head_html(_FONTS_LINK)
+    if os.environ.get("VMI_GUI_OFFLINE") != "1":
+        ui.add_head_html(_FONTS_LINK)
     ui.add_head_html(f"<style>{THEME_CSS.read_text(encoding='utf-8')}</style>")
 
 
