@@ -16,6 +16,7 @@ from base64 import b64encode
 from collections import Counter
 from hashlib import sha256
 from io import BytesIO
+from importlib.resources import files
 from pathlib import Path
 import time
 
@@ -39,6 +40,8 @@ from .common import REPO_ROOT, delete_outputs, num_input, path_input, persist
 
 CIRC_DIR = REPO_ROOT / "circularization"
 POLAR_HEIGHT = "calc(clamp(220px, 38vh, 360px) * 2 / 3)"
+_GUIDE_SCRIPT = (files("vmi_analysis.gui.assets") / "polar_guides.js").read_text(encoding="utf-8")
+_guides_installed = False
 
 FILTER_FIELDS = [
     ("smooth_theta", "Smooth θ", 1.0, 0.1),
@@ -462,9 +465,13 @@ def build(jobs=None, *, use_calibration=None) -> None:
                         f"calibration.param.{key}")
 
     # --------------------------------------------------------- image + fit
+    global _guides_installed
+    if not _guides_installed:
+        ui.add_body_html(f"<script>{_GUIDE_SCRIPT}</script>", shared=True)
+        _guides_installed = True
     with theme.panel_card():
         with ui.column().classes("w-full gap-4"):
-            with ui.column().classes("w-full gap-2"):
+            with ui.column().classes("w-full gap-2 polar-guide-group") as guide_group:
                 with ui.row().classes("gap-3 items-center flex-wrap"):
                     color_scale = persist(
                         ui.select(["Linear", "Log"], value="Linear", label="Color scale")
@@ -472,6 +479,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
                     colormap = persist(
                         ui.select(list(COLORMAPS), value="Viridis", label="Colormap")
                         .props("outlined dense").classes("w-36"), "calibration.colormap")
+                    guides = persist(ui.checkbox("Crosshair guides"), "calibration.crosshair_guides")
+                    guides.tooltip("Drag either line or the center handle in either polar preview.")
                 ui.label("Log scale uses positive pixels.").classes("vmi-subtitle")
                 polar_images, color_limits, color_status = {}, {}, {}
                 pointer_readouts = {}
@@ -504,7 +513,13 @@ def build(jobs=None, *, use_calibration=None) -> None:
                     color_limits[key] = (color_min, color_max)
                     color_status[key] = ui.label("").classes("vmi-subtitle")
                     color_status[key].visible = False
-                    polar_images[key] = _polar_image(key)
+                    with ui.element("div").classes("relative w-full"):
+                        polar_images[key] = _polar_image(key)
+                        with ui.element("div").classes("polar-guide-layer").bind_visibility_from(guides, "value"):
+                            for axis, name in (("x", "Vertical guide"), ("y", "Horizontal guide"),
+                                               ("xy", "Crosshair handle")):
+                                ui.element("button").props(
+                                    f'type="button" data-polar-guide="{axis}" aria-label="{label} {name.lower()}"')
                     pointer_readouts[key] = ui.label().classes(
                         "polar-pointer-readout w-full text-right font-mono text-xs min-h-4")
                 widgets["tool"] = ui.toggle(
@@ -698,6 +713,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
             return
         state["view_indices"] = (ti, ri)
         state["img_size"] = (int(ri.size), int(ti.size))
+        guide_group.props(f'data-polar-view="{ri[0]} {ri[-1] + 1} {ti[0]} {ti[-1] + 1}"')
         for key in polar_images:
             _refresh_contrast(key)
             pointer_readouts[key].text = ""
