@@ -401,6 +401,19 @@ def build(jobs=None, *, use_calibration=None) -> None:
                  "onion_peeling"], value="hansenlaw",
                 label="Abel method").props("outlined dense"),
                 "calibration.abel_method")
+            widgets["hold_order"] = persist(ui.select(
+                {0: "0 · Constant", 1: "1 · Linear"}, value=1,
+                label="Hold order").props("outlined dense"),
+                "calibration.hold_order")
+
+            def _update_hold_order_visibility(_=None):
+                widgets["hold_order"].set_visibility(
+                    bool(widgets["abel"].value) and widgets["abel_method"].value == "hansenlaw"
+                )
+
+            widgets["abel"].on_value_change(_update_hold_order_visibility)
+            widgets["abel_method"].on_value_change(_update_hold_order_visibility)
+            _update_hold_order_visibility()
         with ui.row().classes("gap-4 flex-wrap items-center"):
             widgets["mode"] = persist(ui.select(
                 list(pf.ENHANCE_MODES), value="bandpass",
@@ -589,6 +602,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         return pf.process_options(
             abel=bool(widgets["abel"].value),
             abel_method=widgets["abel_method"].value,
+            hold_order=widgets["hold_order"].value,
             fit_filtered=True,
             enhancement={"placement": widgets["placement"].value,
                          "mode": widgets["mode"].value,
@@ -1015,6 +1029,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
             widgets["abel"].value = processing.get("abel", True)
             widgets["abel_method"].value = processing.get("abel_method",
                                                           "hansenlaw")
+            if widgets["abel"].value and widgets["abel_method"].value == "hansenlaw":
+                widgets["hold_order"].value = processing.get("hold_order", 0)
             enh = processing.get("enhancement", {})
             _update_filter_placement(enh.get("placement", "post_abel"))
             widgets["mode"].value = enh.get("mode", "bandpass")
@@ -1033,6 +1049,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
             state["rings"] = pf.session_rings(payload)
             fit_data = payload.get("fit")
             if fit_data:
+                fit_processing = fit_data.get("processing")
+                if (fit_processing and fit_processing.get("abel")
+                        and fit_processing.get("abel_method") == "hansenlaw"):
+                    fit_processing = {"hold_order": 0, **fit_processing}
+                    fit_data = {**fit_data, "processing": fit_processing}
                 current_image = state["image"]
                 reason = None
                 if not image.get("fingerprint"):
