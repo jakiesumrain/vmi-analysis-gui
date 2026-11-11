@@ -5,7 +5,7 @@ import os
 import socket
 import sys
 
-DEFAULT_PORT = 3157
+DEFAULT_PORT = 13517
 
 
 def _bind_error(port, host="0.0.0.0"):
