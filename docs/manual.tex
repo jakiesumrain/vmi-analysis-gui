@@ -31,12 +31,15 @@
 \graphicspath{{docs/}{./}}
 \usepackage{caption}
 \usepackage{amsmath}
-\usetikzlibrary{arrows.meta,positioning,calc}
+\usetikzlibrary{arrows.meta,positioning}
 
 \definecolor{vmcoral}{HTML}{CC785C}
 \definecolor{vmdark}{HTML}{181715}
 \definecolor{vmcream}{HTML}{FAF9F5}
 \definecolor{vmhairline}{HTML}{E6DFD8}
+\definecolor{vmcoveraccent}{HTML}{F0AD8B}
+\definecolor{vmcovermuted}{HTML}{CEC5D8}
+\definecolor{vmcoverrule}{HTML}{54485F}
 
 \hypersetup{
   colorlinks=true,
@@ -74,29 +77,39 @@
 \thispagestyle{empty}
 \begin{tikzpicture}[remember picture, overlay]
   \node[inner sep=0] at (current page.center)
-    {\includegraphics[width=\paperwidth,height=\paperheight]{cover-bg.jpg}};
-  \node[anchor=north, text=white, align=center,
-        font=\fontsize{36}{42}\selectfont\bfseries]
-    at ([yshift=-1.6cm]current page.north) {VMI Analysis GUI};
-  \node[anchor=north, text=white!85, font=\fontsize{20}{24}\selectfont]
-    at ([yshift=-3.6cm]current page.north) {User Manual};
-  \node[anchor=north, text=white!70, font=\fontsize{15}{19}\selectfont,
-        align=center]
-    at ([yshift=-5.0cm]current page.north)
-    {Velocity-map imaging photoelectron analysis\\ and the NiceGUI web interface};
-  \node[anchor=south, text=white!80, font=\large]
-    at ([yshift=2.2cm]current page.south) {%
+    {\includegraphics[width=\paperwidth,height=\paperheight]{cover-art.png}};
+  \coordinate (cover-left) at ([xshift=2cm]current page.north west);
+  \node[anchor=north west, inner sep=0, text=vmcoveraccent,
+        font=\sffamily\bfseries\small]
+    at ([yshift=-1.8cm]cover-left) {\textls[120]{USER MANUAL}};
+  \node[anchor=north west, inner sep=0, text=vmcream,
+        font=\fontsize{42}{46}\selectfont\bfseries]
+    at ([yshift=-2.55cm]cover-left) {VMI Analysis GUI};
+  \node[anchor=north west, inner sep=0, text=vmcovermuted,
+        align=left, font=\sffamily\large]
+    at ([yshift=-4.65cm]cover-left)
+    {Velocity-map imaging photoelectron analysis\\and the NiceGUI web interface};
+
+  \draw[vmcoverrule, line width=0.6pt]
+    ([yshift=-24.45cm]cover-left) -- ++(17cm,0);
+  \node[anchor=north west, inner sep=0, text=vmcream, font=\sffamily\small]
+    at ([yshift=-25.05cm]cover-left) {%
       \begin{tabular}{@{}ll@{}}
-        Application version & 0.1.0 \\
-        Document revision & 1.0 \\
-        Date & \today \\
-        License & Apache License, Version 2.0 \\
+        \textcolor{vmcovermuted}{Application version} & 0.1.0 \\
+        \textcolor{vmcovermuted}{Document revision} & 1.0 \\
       \end{tabular}};
-  \node[anchor=south] at ([yshift=0.7cm]current page.south) {%
-    \parbox{0.86\paperwidth}{\centering\color{white!55}\small
-      This manual describes the panels, input fields, processing stages,
-      output files, and operating constraints of the application.
-      Bundled CPBASEX uses the MIT License.}};
+  \node[anchor=north west, inner sep=0, text=vmcream, font=\sffamily\small]
+    at ([xshift=8.7cm,yshift=-25.05cm]cover-left) {%
+      \begin{tabular}{@{}ll@{}}
+        \textcolor{vmcovermuted}{Date} & \today \\
+        \textcolor{vmcovermuted}{License} & Apache License, Version 2.0 \\
+      \end{tabular}};
+  \node[anchor=north west, inner sep=0, text=vmcovermuted,
+        align=left, text width=17cm, font=\sffamily\small]
+    at ([yshift=-26.65cm]cover-left)
+    {This manual describes the panels, input fields, processing stages,
+     output files, and operating constraints of the application.
+     Bundled CPBASEX uses the MIT License.};
 \end{tikzpicture}
 \end{titlepage}
 
