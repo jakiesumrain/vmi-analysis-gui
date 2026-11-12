@@ -40,7 +40,7 @@ def _env_float(name: str, default: float, minimum: float = 0.1) -> float:
 
 
 def _keep_alive_enabled() -> bool:
-    return bool(app.storage.general.get(KEEP_ALIVE_KEY, True))
+    return bool(app.storage.general.get(KEEP_ALIVE_KEY, False))
 
 
 def _has_connected_client() -> bool:
