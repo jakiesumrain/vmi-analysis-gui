@@ -63,10 +63,11 @@ Relative paths resolve from the subprocess working directory.
 - Cancel and shutdown stop subprocess trees. On Windows the manager uses
   `taskkill /T /F`. On POSIX it signals the process group.
 
-**Keep running on disconnect** defaults to on. If the last browser disconnects,
-the server keeps queued and active jobs alive. After the queue is idle, the
-server waits for the shutdown grace period and checks for a reconnect.
-The default grace period is two seconds.
+**Keep running on disconnect** defaults to on and leaves the server available
+when all browsers disconnect. When it is off, the server waits two seconds
+by default after the last browser disconnects and checks for a reconnect
+before shutting down. **Stop server** in Settings shuts down the server and
+cancels jobs for all browsers.
 
 ## Settings
 
