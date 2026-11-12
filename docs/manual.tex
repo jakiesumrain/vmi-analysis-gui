@@ -472,6 +472,46 @@ The browser can reconnect within that window while the server remains up.
 Silent connection loss is detected through the socket pings. Both timing
 settings use their defaults for invalid or non-finite values.
 
+\subsection{Connect from Windows to a Linux host}
+\label{sec:linux-mobaxterm}
+
+The Linux host reads the datasets and runs the analysis. The Windows
+computer connects to the web interface through MobaXterm. You need the
+Linux host's LAN address and an authorized SSH account.
+
+\begin{enumerate}
+  \item In the repository checkout on Linux, start the web server on the
+    loopback interface:
+\begin{verbatim}
+VMI_GUI_PORT=13517 VMI_GUI_NO_SHOW=1 uv run python -c \
+  "from vmi_analysis.gui.app import main; main(host=\"127.0.0.1\")"
+\end{verbatim}
+  \item In MobaXterm on Windows, choose \emph{Tunneling},
+    \emph{New SSH tunnel}, then \emph{Local port forwarding}. Set
+    \emph{Forwarded port} to \code{13517}, \emph{Remote server} to
+    \code{127.0.0.1}, and \emph{Remote port} to \code{13517}. Set
+    \emph{SSH server} to the Linux host's LAN address, \emph{SSH login}
+    to your Linux username, and \emph{SSH port} to \code{22} or the port
+    configured on the host. Save and start the tunnel.
+  \item On Windows, open \url{http://127.0.0.1:13517} in a browser.
+    Select datasets using their paths on Linux.
+\end{enumerate}
+
+Use SSH keys for approved users and restrict SSH access to your LAN or
+private VPN. Keep port \code{13517} closed to inbound network traffic.
+On Windows, check the tunnel listener in PowerShell:
+\begin{verbatim}
+Get-NetTCPConnection -LocalPort 13517 -State Listen |
+    Select-Object LocalAddress
+\end{verbatim}
+Only loopback addresses (\code{127.0.0.1} or \code{::1}) should appear.
+The web interface uses the SSH tunnel for access and has no separate login.
+
+Closing the tunnel disconnects the browser. With \emph{Keep running on
+disconnect} on, you can restart the tunnel and reopen the page. If you start
+the server from an SSH terminal, leave that terminal open or run the server
+in \code{tmux} or as a Linux service.
+
 \section{Data you must provide}
 \label{sec:data}
 
