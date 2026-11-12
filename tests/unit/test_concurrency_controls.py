@@ -64,9 +64,10 @@ class ConcurrencyControlsTests(unittest.TestCase):
                 toggle = next(element for element in client.elements.values()
                               if element.__class__.__name__ == 'Checkbox'
                               and 'vmi-setting-keep-alive' in getattr(element, '_classes', []))
-                self.assertTrue(toggle.value)
-                toggle.value = False
-                self.assertFalse(store[gui.KEEP_ALIVE_KEY])
+                self.assertFalse(toggle.value)
+                toggle.value = True
+                self.assertTrue(store[gui.KEEP_ALIVE_KEY])
+                self.assertTrue(gui._keep_alive_enabled())
             finally:
                 client.delete()
 

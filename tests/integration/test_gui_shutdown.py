@@ -28,7 +28,6 @@ settings.LEGACY_CONFIG = Path(os.environ['VMI_TEST_CONFIG_PATH'])
 from vmi_analysis.gui import app as gui
 from vmi_analysis.gui.jobs import MANAGER, Job
 app.storage.general['jobs.max_concurrent'] = 1
-app.storage.general[gui.KEEP_ALIVE_KEY] = False
 
 @app.post('/_test/keepalive')
 def set_keepalive(value: bool):
@@ -134,7 +133,7 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
             self.fail("Server did not exit: " + self.logs())
         self.assertEqual(self.proc.returncode, 0, self.logs())
 
-    async def test_last_tab_stops_server_promptly(self):
+    async def test_last_tab_stops_server_promptly_by_default(self):
         client = await self.connect()
         start = time.monotonic()
         await client.disconnect()
