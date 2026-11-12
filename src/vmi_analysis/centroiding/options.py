@@ -17,7 +17,7 @@ DEFAULT_CONFIG = {"vmi_picasso": {
     "mle_convergence": 0.1, "mle_max_iterations": 50, "mle_method": "sigma",
     "fitting_method": "mle", "tuning_frame_index": None,
     "tuning_bins_photons": 40, "tuning_bins_net_gradient": 40, "tuning_bins_precision": 40,
-    "processing": {"enable_parallel": True, "num_cores": 6,
+    "processing": {"enable_parallel": True, "num_cores": 6, "frame_limit": 0,
                    "enable_dark_subtraction": False, "dark_method": "mean",
                    "dark_frame_count": 2000, "enable_flat_field": False,
                    "flat_field_file": "", "enable_circular_mask": False,
@@ -85,6 +85,8 @@ def validate_settings(config, require_input=False):
         raise ValueError("Box size must be an odd integer of at least 3")
     if vmi["histogram"]["resolution_factor"] < 1 or vmi["processing"]["num_cores"] < 1:
         raise ValueError("Histogram resolution and CPU cores must be positive integers")
+    if vmi["processing"]["frame_limit"] < 0:
+        raise ValueError("Frame limit must be zero or a positive integer")
     if not isinstance(vmi["histogram"]["abel_rotation_deg"], (int, float)):
         raise ValueError("Abel rotation must be a number in degrees")
     # Import lazily so basic argument parsing does not import numerical libraries.
@@ -112,6 +114,8 @@ def parse_centroid_args(argv=None):
             kwargs["help"] = "Counterclockwise rotation after centering and before Abel inversion (default: 0 degrees)"
         elif key == "tuning_frame_index":
             kwargs.update(type=int, help="Global tuning frame index (default: random frame)")
+        elif key == "frame_limit":
+            kwargs["help"] = "Process the first N frames in file order (0 = all; ignored in Tuning mode)"
         parser.add_argument("--" + flag_name(group, key), **kwargs)
     args = parser.parse_args(argv)
     try:

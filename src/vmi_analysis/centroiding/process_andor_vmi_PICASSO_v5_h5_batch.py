@@ -145,6 +145,7 @@ TUNING_FRAME_INDEX = vmi_cfg["tuning_frame_index"]
 # --- PARALLEL PROCESSING ---
 ENABLE_PARALLEL = proc_cfg["enable_parallel"]
 NUM_CORES = proc_cfg["num_cores"]
+FRAME_LIMIT = proc_cfg["frame_limit"]
 
 # --- DARK FRAME SUBTRACTION ---
 DARK_FILE = vmi_cfg.get("dark_file", "")
@@ -544,26 +545,27 @@ def _batch_to_trackpy(locs, base_frame_idx):
     return df
 
 def process_h5_file_batch(args):
-    """Worker: process ALL frames from one H5 file in a single batch.
+    """Worker: process the requested prefix of one HDF5 file in a single batch.
 
     Instead of looping 126× through (identify + get_spots + gaussmle),
     we apply corrections to all frames at once then pass the full
     (N, H, W) movie through the Picasso pipeline once.
 
     Args:
-        args: (h5_path, base_frame_idx, dark_frame, flat_field_normalized,
+        args: (h5_path, base_frame_idx, stop, dark_frame, flat_field_normalized,
                box_size, min_net_gradient)
 
     Returns:
         DataFrame with all detections from this file, or None.
     """
-    h5_path, base_frame_idx, dark_frame, flat_field_normalized, box_size, min_net_gradient = args
+    h5_path, base_frame_idx, stop, dark_frame, flat_field_normalized, box_size, min_net_gradient = args
 
-    # Read all frames from this HDF5 file
     try:
         with h5py.File(h5_path, 'r') as hf:
-            data = hf[H5_DATASET][:]  # (N, H, W) uint16
+            data = hf[H5_DATASET][:stop]  # (N, H, W) uint16
     except Exception as e:
+        if FRAME_LIMIT:
+            raise
         print(f"[Warning] Failed to read {h5_path}: {e}")
         return None
 
@@ -599,8 +601,8 @@ def process_h5_file_batch(args):
 # BATCH PROCESSING (HDF5 files)
 # ==============================================================================
 
-def run_batch_processing_picasso(h5_files, frame_info, dark_frame, flat_field_normalized):
-    """Run Picasso localization on all frames, one HDF5 file per task (batch mode).
+def run_batch_processing_picasso(h5_files, total_frames, dark_frame, flat_field_normalized):
+    """Run Picasso localization, one HDF5 file per task (batch mode).
 
     Streams per-file results directly to an HDF5 checkpoint to avoid holding
     all per-file DataFrames in memory simultaneously. Peak memory is bounded
@@ -609,7 +611,7 @@ def run_batch_processing_picasso(h5_files, frame_info, dark_frame, flat_field_no
 
     Args:
         h5_files: sorted list of HDF5 file paths
-        frame_info: list of (h5_path, frame_in_file) for each global frame
+        total_frames: number of leading frames to process
         dark_frame: dark frame array or None
         flat_field_normalized: flat field array or None
 
@@ -627,14 +629,18 @@ def run_batch_processing_picasso(h5_files, frame_info, dark_frame, flat_field_no
     h5_batch_args = []
     idx = 0
     for h5_path in h5_files:
+        if idx >= total_frames:
+            break
         with h5py.File(h5_path, 'r') as hf:
             n = hf[H5_DATASET].shape[0]
-        h5_batch_args.append((h5_path, idx, dark_frame, flat_field_normalized,
-                              BOX_SIZE, MIN_NET_GRADIENT))
+        if n:
+            stop = min(n, total_frames - idx)
+            h5_batch_args.append((h5_path, idx, stop, dark_frame, flat_field_normalized,
+                                  BOX_SIZE, MIN_NET_GRADIENT))
         idx += n
 
     n_files = len(h5_batch_args)
-    print(f"[Batch] Processing {n_files} HDF5 files ({len(frame_info)} frames) "
+    print(f"[Batch] Processing {n_files} HDF5 files ({total_frames} frames) "
           f"with Picasso batch mode (MLE + Net Gradient)...")
 
     checkpoint_path = os.path.join(OUTPUT_DIR, CHECKPOINT_FILE)
@@ -647,8 +653,10 @@ def run_batch_processing_picasso(h5_files, frame_info, dark_frame, flat_field_no
     files_with_detections = 0
 
     with pd.HDFStore(checkpoint_path, mode='w', complevel=1) as store:
+        if FRAME_LIMIT:
+            store.get_node("/")._v_attrs.frame_limit = FRAME_LIMIT
         if ENABLE_PARALLEL:
-            with Pool(n_cores) as pool:
+            with Pool(min(n_cores, n_files)) as pool:
                 for result in tqdm(
                     pool.imap(process_h5_file_batch, h5_batch_args),
                     total=n_files,
@@ -665,12 +673,13 @@ def run_batch_processing_picasso(h5_files, frame_info, dark_frame, flat_field_no
                     store.append("localizations", result, index=False)
                     n_total += len(result)
                     files_with_detections += 1
+        if FRAME_LIMIT and n_total:
+            store.get_node("/")._v_attrs.limited_frames_processed = total_frames
 
     if n_total == 0:
         print("[ERROR] No events detected!")
         sys.exit(1)
 
-    total_frames = len(frame_info)
     print(f"[Batch] Total detections: {n_total} events")
     print(f"[Batch] Events/frame: {n_total / total_frames:.1f} avg")
     print(f"[Batch] Files with detections: {files_with_detections}/{n_files}")
@@ -1210,10 +1219,23 @@ def main():
     # run_batch_processing_picasso streams per-file results directly to
     # CHECKPOINT_FILE (never accumulates a list of DataFrames in RAM).
     checkpoint_path = os.path.join(OUTPUT_DIR, CHECKPOINT_FILE)
+    total_frames = min(FRAME_LIMIT, n_total_frames) if FRAME_LIMIT else n_total_frames
+    if not total_frames:
+        raise SystemExit("[Error] No camera frames found.")
+    if FRAME_LIMIT:
+        print(f"[Batch] Using the first {total_frames} of {n_total_frames} frames "
+              f"(requested {FRAME_LIMIT})")
     if os.path.exists(checkpoint_path):
+        with h5py.File(checkpoint_path, "r") as checkpoint:
+            saved_limit = checkpoint.attrs.get("frame_limit", 0)
+            saved_frames = checkpoint.attrs.get("limited_frames_processed")
+        if saved_limit != FRAME_LIMIT or (FRAME_LIMIT and saved_frames != total_frames):
+            raise SystemExit(f"[Error] {checkpoint_path} does not contain a complete checkpoint "
+                             f"for frame limit {FRAME_LIMIT}. Choose a different checkpoint "
+                             "filename or clear the existing checkpoint.")
         print(f"\n[Resume] Found checkpoint: {checkpoint_path}")
     else:
-        run_batch_processing_picasso(h5_files, frame_info, dark_frame,
+        run_batch_processing_picasso(h5_files, total_frames, dark_frame,
                                      flat_field_normalized)
     # The checkpoint exists on disk — downstream steps read it in chunks.
 
@@ -1264,7 +1286,7 @@ def main():
     save_results(vmi_2d, vmi_3d)
 
     # Visualization (scalar stats — no full DataFrame needed)
-    plot_final_summary(vmi_2d, vmi_3d, n_events, n_total_frames, energy, pes)
+    plot_final_summary(vmi_2d, vmi_3d, n_events, total_frames, energy, pes)
 
     print("\n" + "=" * 80)
     print("ANALYSIS COMPLETE")
