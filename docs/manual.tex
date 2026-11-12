@@ -455,16 +455,16 @@ suggestion for a free port; it does not switch ports on its own.
 
 What happens when the last browser client disconnects is controlled by
 \emph{Keep running on disconnect} in the header \emph{Settings} panel (on by
-default). When it is on and any job is running or queued, the server and the
-jobs survive the disconnect: a closed tab, an Edge sleeping tab, a locked
-screen or a network drop does not terminate a long job. The server exits after
-the queue becomes idle and no page reconnects (idle grace set by
-\code{VMI\_\allowbreak{}GUI\_\allowbreak{}SHUTDOWN\_\allowbreak{}GRACE}, default 2\,s). Reopening
-the page before then reattaches to the running job and its results. When the
-option is off, or when no job is active, the server waits the idle grace,
-checks once more, and shuts down: queued jobs are cancelled, running process
-trees are terminated, and cleanup is awaited. Multiple tabs keep it alive, and
-\code{Ctrl+C} in the terminal also shuts it down.
+default). When it is on, the server stays available even when no jobs are
+running. Jobs continue after all browsers disconnect, and you can reopen the
+page to reattach. When the option is off, the server shuts down after the last
+browser disconnects and the grace period expires. The default grace period is
+2\,s. Set \code{VMI\_\allowbreak{}GUI\_\allowbreak{}SHUTDOWN\_\allowbreak{}GRACE} to change it.
+
+Choose \emph{Settings} $\rightarrow$ \emph{Stop server} and confirm to shut
+down the server for all browsers. You can also press \code{Ctrl+C} if you
+started the server from a terminal. Shutdown cancels queued jobs and waits
+for running process trees to terminate.
 
 The browser reconnect window is \code{VMI\_\allowbreak{}GUI\_\allowbreak{}RECONNECT\_\allowbreak{}TIMEOUT}
 seconds (default 30). It also sets the socket ping interval and timeout.
@@ -2168,11 +2168,9 @@ backend, for example \code{Agg}. \\
   \item[The server exits immediately.] The port is in use. Read the printed
     suggestion, set \code{VMI\_\allowbreak{}GUI\_\allowbreak{}PORT} to a free port, and rerun. Ports in
     the Windows excluded ranges are reported as unavailable.
-  \item[The server stops when I close a tab.] With \emph{Keep running on
-    disconnect} off (or when no job is running), the server shuts down after
-    the last client disconnects. With it on and a job active, closing the tab
-    leaves the job running; reopen the page to reattach, or start the server
-    again after it has exited.
+  \item[The server stops when I close a tab.] Turn on \emph{Keep running on
+    disconnect} in \emph{Settings} to leave the server available when the
+    last browser disconnects. Reopen the page to reattach to jobs.
   \item[A job waits forever.] Look at the waiting reason: it names the
     conflicting job or path. Another job writes an overlapping file, or the
     panel's previous job is still active. Wait, or stop the conflicting job

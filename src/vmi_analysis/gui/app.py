@@ -20,6 +20,7 @@ from .panels import (accumulate, binning, calibration, centroid, circularize,
 from .panels.common import init_zoom_overlay
 from .panels.picker import LocalFilePicker
 
+# Keep the saved key so existing on/off preferences carry over.
 KEEP_ALIVE_KEY = "server.keep_alive_while_jobs"
 DEFAULT_RECONNECT_TIMEOUT = 30.0
 DEFAULT_SHUTDOWN_GRACE = 2.0
@@ -61,50 +62,30 @@ async def _cleanup_jobs() -> None:
     await asyncio.to_thread(MANAGER.shutdown)
 
 
-def _shutdown_now() -> None:
+def _shutdown_now(reason: str) -> None:
+    if app.is_stopping:
+        return
     MANAGER.begin_shutdown()
-    print("[gui] last client disconnected — shutting down", flush=True)
+    print(f"[gui] {reason} — shutting down", flush=True)
     app.shutdown()
+
+
+def _stop_server() -> None:
+    _shutdown_now("stop requested in Settings")
 
 
 async def _shutdown_after(delay: float) -> None:
     await asyncio.sleep(max(delay, 0.0))
-    if app.is_stopping or _has_connected_client():
-        return
-    _shutdown_now()
-
-
-async def _keep_alive_until_idle() -> None:
-    """Keep the server and its jobs alive while no page is connected."""
-    while not app.is_stopping:
-        if _has_connected_client():
-            return
-        if not MANAGER.has_active():
-            break
-        await asyncio.sleep(1.0)
-    await asyncio.sleep(_env_float("VMI_GUI_SHUTDOWN_GRACE", DEFAULT_SHUTDOWN_GRACE))
-    if app.is_stopping or _has_connected_client():
-        return
-    _shutdown_now()
+    if not _has_connected_client() and not _keep_alive_enabled():
+        _shutdown_now("last client disconnected")
 
 
 @app.on_disconnect
 def _schedule_shutdown_after_last_client(client) -> None:
-    """Stop after the last page is gone, unless jobs should survive a detach.
-
-    With the header keep-alive option on, a disconnect while jobs are running
-    leaves the server and the jobs alive so Edge sleeping tabs, locks or network
-    drops do not kill a long job. The server exits after the queue becomes idle
-    and no page reconnects. When the option is off, the old behaviour applies:
-    wait a short grace period, then stop and cancel the jobs.
-    """
+    """Schedule automatic shutdown only when the last client leaves and keep-alive is off."""
     global _shutdown_task
     _cancel_shutdown_check()
-    if app.is_stopping or _has_connected_client():
-        return
-    if _keep_alive_enabled() and MANAGER.has_active():
-        _shutdown_task = background_tasks.create(
-            _keep_alive_until_idle(), name="keep-alive-while-jobs-run")
+    if app.is_stopping or _has_connected_client() or _keep_alive_enabled():
         return
     _shutdown_task = background_tasks.create(
         _shutdown_after(_env_float("VMI_GUI_SHUTDOWN_GRACE", DEFAULT_SHUTDOWN_GRACE)),
@@ -169,6 +150,13 @@ def index() -> None:
     def change_keep_alive(event):
         app.storage.general[KEEP_ALIVE_KEY] = bool(event.value)
 
+    with ui.dialog() as stop_dialog, ui.card().classes("w-96 gap-3"):
+        ui.label("Stop VMI Analysis?").classes("text-lg font-semibold")
+        ui.label("This disconnects every browser and cancels running and queued jobs.")
+        with ui.row().classes("w-full justify-end"):
+            ui.button("Cancel", on_click=stop_dialog.close).props("flat")
+            ui.button("Stop server", on_click=_stop_server).props("color=negative unelevated")
+
     with ui.dialog() as settings_dialog, ui.card().classes("w-96 gap-3"):
         ui.label("Settings").classes("text-lg font-semibold")
         ui.separator()
@@ -178,10 +166,9 @@ def index() -> None:
                 value=_keep_alive_enabled(),
             ).props("dense").classes("vmi-setting-keep-alive")
         keep_alive.tooltip(
-            "Applies to every panel. While a job is running, keep this server "
-            "and the job alive when the page disconnects (closed tab, Edge "
-            "sleeping tab, locked screen, network loss). Turn off to stop the "
-            "server and cancel jobs when the last page closes.")
+            "Keep the server available after the last browser disconnects, even "
+            "when no jobs are running. Turn off to shut down and cancel jobs "
+            "after the last browser disconnects.")
         keep_alive.on_value_change(change_keep_alive)
         limits = list(range(1, len(TABS) + 1))
         if MANAGER.max_concurrent not in limits:
@@ -200,7 +187,9 @@ def index() -> None:
         with ui.row().classes("w-full gap-2"):
             ui.button("Save workflow", icon="save", on_click=save_workflow).props("flat")
             ui.button("Load workflow", icon="folder_open", on_click=load_workflow).props("flat")
-        with ui.row().classes("w-full justify-end"):
+        with ui.row().classes("w-full justify-between"):
+            ui.button("Stop server", icon="power_settings_new",
+                      on_click=stop_dialog.open).props("flat color=negative")
             ui.button("Close", on_click=lambda: settings_dialog.close()).props("flat")
 
     with ui.header().classes("items-center justify-between px-6 py-3") \
@@ -241,9 +230,7 @@ def index() -> None:
 
     with ui.footer().classes("px-6 py-2 items-center justify-between") \
             .style("background: #181715"):
-        ui.label("vmi-analysis-gui — independent jobs run concurrently; closing "
-                 "the last tab stops the server unless 'Keep running on "
-                 "disconnect' is on and a job is still running.") \
+        ui.label("To stop the application, choose Stop server in Settings.") \
             .classes("vmi-subtitle").style("color: #a09d96")
         ui.link("Tao (jakiesumrain@163.com)", "mailto:jakiesumrain@163.com") \
             .classes("vmi-subtitle").style("color: #cc785c")

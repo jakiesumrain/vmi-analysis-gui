@@ -14,7 +14,8 @@ MATLAB backend requires a MATLAB installation and CPBASEX basis data.
 MP4 export uses FFmpeg from the system PATH or the executable specified by
 `VMI_FFMPEG_EXE`. When FFmpeg is unavailable, the Movie panel saves an animated GIF.
 
-To uninstall, close VMI Analysis. In **Control Panel**, open **Programs and
+To uninstall, choose **Stop server** in VMI Analysis **Settings** and confirm.
+In **Control Panel**, open **Programs and
 Features**. Select **VMI Analysis** and click **Uninstall**. The uninstaller
 removes the installed files, shortcuts, and the settings and cache in the
 installation directory. It preserves the experiment workspace.

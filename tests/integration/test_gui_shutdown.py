@@ -28,11 +28,11 @@ settings.LEGACY_CONFIG = Path(os.environ['VMI_TEST_CONFIG_PATH'])
 from vmi_analysis.gui import app as gui
 from vmi_analysis.gui.jobs import MANAGER, Job
 app.storage.general['jobs.max_concurrent'] = 1
-app.storage.general['server.keep_alive_while_jobs'] = False
+app.storage.general[gui.KEEP_ALIVE_KEY] = False
 
 @app.post('/_test/keepalive')
 def set_keepalive(value: bool):
-    app.storage.general['server.keep_alive_while_jobs'] = value
+    app.storage.general[gui.KEEP_ALIVE_KEY] = value
 
 @app.post('/_test/gated')
 def start_gated_job(gate: str, marker: str):
@@ -61,7 +61,7 @@ def start_concurrent(marker: str):
 
 @app.post('/_test/shutdown')
 def stop_server():
-    app.shutdown()
+    gui._stop_server()
 
 gui.main()
 """
@@ -191,8 +191,7 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
                 if close_tab:
                     await client.disconnect()
                 else:
-                    # Exercise the app shutdown hook independently of on_disconnect,
-                    # through the same app.shutdown() path used by normal server exit.
+                    await self.enable_keep_alive()
                     response = await self.http.post(self.url + "/_test/shutdown")
                     response.raise_for_status()
                 await self.wait_stopped()
@@ -210,13 +209,25 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
     async def test_close_tab_cleans_up_running_and_queued_jobs(self):
         await self.check_running_job_cleanup(close_tab=True)
 
-    async def test_server_shutdown_hook_cleans_up_jobs(self):
+    async def test_explicit_stop_cleans_up_jobs_with_keep_alive_enabled(self):
         await self.check_running_job_cleanup(close_tab=False)
+        self.assertIn("stop requested in Settings", self.logs())
 
-    async def start_detached_job(self):
+    async def enable_keep_alive(self):
         response = await self.http.post(self.url + "/_test/keepalive",
                                         params={"value": "true"})
         response.raise_for_status()
+
+    async def test_keep_alive_keeps_an_idle_server_available(self):
+        await self.enable_keep_alive()
+        client = await self.connect()
+        await client.disconnect()
+        await asyncio.sleep(2.5)
+        self.assertIsNone(self.proc.poll())
+        await self.connect()
+
+    async def test_keep_alive_keeps_server_available_after_detached_job_finishes(self):
+        await self.enable_keep_alive()
         client = await self.connect()
         gate = Path(self.storage_folder.name) / "finish-job"
         marker = Path(self.storage_folder.name) / "job-finished"
@@ -233,17 +244,6 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
         # Wait longer than the configured 2-second shutdown grace.
         await asyncio.sleep(2.5)
         self.assertIsNone(self.proc.poll(), "keep-alive did not protect the job")
-        return gate, marker
-
-    async def test_keep_alive_keeps_server_and_jobs_after_disconnect(self):
-        gate, marker = await self.start_detached_job()
-        gate.touch()
-        await self.wait_stopped(timeout=8)
-        self.assertTrue(marker.is_file(), "the detached job did not complete")
-
-    async def test_keep_alive_can_be_cancelled_by_reconnecting(self):
-        gate, marker = await self.start_detached_job()
-        replacement = await self.connect()
         gate.touch()
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
@@ -253,10 +253,9 @@ class GuiShutdownTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.05)
         self.assertEqual(jobs[0]["status"], "done")
         self.assertTrue(marker.is_file())
-        await asyncio.sleep(3.2)
-        self.assertIsNone(self.proc.poll(), "reconnect did not cancel shutdown")
-        await replacement.disconnect()
-        await self.wait_stopped(timeout=8)
+        await asyncio.sleep(3.5)
+        self.assertIsNone(self.proc.poll(), "the server exited after the detached job completed")
+        await self.connect()
 
     async def test_last_tab_cleans_up_all_concurrent_jobs(self):
         client = await self.connect()
