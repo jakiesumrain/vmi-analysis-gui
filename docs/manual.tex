@@ -27,6 +27,8 @@
 \usepackage{url}
 \urlstyle{tt}
 \usepackage{tikz}
+\usepackage{graphicx}
+\graphicspath{{docs/}{./}}
 \usepackage{caption}
 \usepackage{amsmath}
 \usetikzlibrary{arrows.meta,positioning}
@@ -35,6 +37,9 @@
 \definecolor{vmdark}{HTML}{181715}
 \definecolor{vmcream}{HTML}{FAF9F5}
 \definecolor{vmhairline}{HTML}{E6DFD8}
+\definecolor{vmcoveraccent}{HTML}{F0AD8B}
+\definecolor{vmcovermuted}{HTML}{CEC5D8}
+\definecolor{vmcoverrule}{HTML}{54485F}
 
 \hypersetup{
   colorlinks=true,
@@ -69,25 +74,43 @@
 \sloppy
 
 \begin{titlepage}
-  \centering
-  \vspace*{2.5cm}
-  {\Huge\bfseries VMI Analysis GUI\par}
-  \vspace{0.6cm}
-  {\Large User Manual\par}
-  \vspace{1.2cm}
-  {\large Velocity-map imaging photoelectron analysis\\
-   and the NiceGUI web interface\par}
-  \vfill
-  \begin{tabular}{ll}
-    Application version & 0.1.0 \\
-    Document revision & 1.0 \\
-    Date & \today \\
-    License & Apache License, Version 2.0 \\
-  \end{tabular}
-  \vfill
-  {\small This manual describes the panels, input fields, processing
-   stages, output files, and operating constraints of the application.
-   Bundled CPBASEX uses the MIT License.}
+\thispagestyle{empty}
+\begin{tikzpicture}[remember picture, overlay]
+  \node[inner sep=0] at (current page.center)
+    {\includegraphics[width=\paperwidth,height=\paperheight]{cover-art.png}};
+  \coordinate (cover-left) at ([xshift=2cm]current page.north west);
+  \node[anchor=north west, inner sep=0, text=vmcoveraccent,
+        font=\sffamily\bfseries\small]
+    at ([yshift=-1.8cm]cover-left) {\textls[120]{USER MANUAL}};
+  \node[anchor=north west, inner sep=0, text=vmcream,
+        font=\fontsize{42}{46}\selectfont\bfseries]
+    at ([yshift=-2.55cm]cover-left) {VMI Analysis GUI};
+  \node[anchor=north west, inner sep=0, text=vmcovermuted,
+        align=left, font=\sffamily\large]
+    at ([yshift=-4.65cm]cover-left)
+    {Velocity-map imaging photoelectron analysis\\and the NiceGUI web interface};
+
+  \draw[vmcoverrule, line width=0.6pt]
+    ([yshift=-24.45cm]cover-left) -- ++(17cm,0);
+  \node[anchor=north west, inner sep=0, text=vmcream, font=\sffamily\small]
+    at ([yshift=-25.05cm]cover-left) {%
+      \begin{tabular}{@{}ll@{}}
+        \textcolor{vmcovermuted}{Application version} & 0.1.0 \\
+        \textcolor{vmcovermuted}{Document revision} & 1.0 \\
+      \end{tabular}};
+  \node[anchor=north west, inner sep=0, text=vmcream, font=\sffamily\small]
+    at ([xshift=8.7cm,yshift=-25.05cm]cover-left) {%
+      \begin{tabular}{@{}ll@{}}
+        \textcolor{vmcovermuted}{Date} & \today \\
+        \textcolor{vmcovermuted}{License} & Apache License, Version 2.0 \\
+      \end{tabular}};
+  \node[anchor=north west, inner sep=0, text=vmcovermuted,
+        align=left, text width=17cm, font=\sffamily\small]
+    at ([yshift=-26.65cm]cover-left)
+    {This manual describes the panels, input fields, processing stages,
+     output files, and operating constraints of the application.
+     Bundled CPBASEX uses the MIT License.};
+\end{tikzpicture}
 \end{titlepage}
 
 \markboth{Contents}{Contents}
@@ -2261,3 +2284,4 @@ $t_{b-1} \le \mathrm{GMD} < t_b$, with the first and last bins open-ended.
 \end{document}
 
 \end{document}
+
