@@ -200,6 +200,30 @@ class GuiSubmissionTests(unittest.TestCase):
         self.assertEqual(cfg["vmi_picasso"]["spectrum_plot"]["x_max"], -1)
         self.assertEqual(Path(job.extra["output_dir"]), ROOT / "centroiding/vmi_output")
 
+    def test_centroid_frame_limit_sanitizes_on_blur(self):
+        from nicegui import Client, app, ui
+        from vmi_analysis.gui.panels import centroid
+
+        key = storage_key("processing", "frame_limit")
+        store = {MIGRATED_KEY: True, key: 5}
+        manager = Mock()
+        manager.jobs.return_value = []
+        client = Client(ui.page("/_test_frame_limit"))
+        try:
+            with client, patch.object(app.storage, "_general", store):
+                centroid.build(manager)
+                frame_limit = next(element for element in client.elements.values()
+                                   if isinstance(element, ui.number)
+                                   and element.label == "Frame limit (0 = all)")
+                frame_limit.sanitize()
+                self.assertEqual(frame_limit.value, 5)
+                frame_limit.value = -1
+                frame_limit.sanitize()
+                self.assertEqual(frame_limit.value, 0)
+                self.assertEqual(store[key], 0)
+        finally:
+            client.delete()
+
     def test_pipeline_overrides_stale_dataset_map_and_tuning_mode(self):
         from vmi_analysis.gui.panels import pipeline
         store = {MIGRATED_KEY: True,

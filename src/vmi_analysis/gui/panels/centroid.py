@@ -98,7 +98,8 @@ def build(jobs: JobManager) -> None:
                 wid = persist(_make_widget(kind, label, value), storage_key(section, key))
                 widgets[(section, key, kind)] = wid
                 if key == "frame_limit":
-                    wid.props("min=0 step=1")
+                    wid.min = 0
+                    wid.props("step=1")
                     wid.bind_enabled_from(widgets[(section, "tuning_only", "bool")], "value", not_)
                 if key == "abel_rotation_deg":
                     wid.bind_enabled_from(widgets[(section, "enable_abel", "bool")], "value")
