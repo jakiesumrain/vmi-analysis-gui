@@ -873,8 +873,8 @@ Field & Type and default & Saved key & CLI flag & Meaning \\
 \bottomrule
 \endfoot
 \emph{HDF5 directory} & folder, empty & \code{accumulate.\allowbreak{}h5\_\allowbreak{}dir} &
-\emph{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir} & Required folder of \code{*.\allowbreak{}h5} files. Accumulation uses
-every frame. Both histogram previews read from this folder. \\
+\emph{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir} & Required folder of \code{*.\allowbreak{}h5} files for accumulation
+and histogram previews. \\
 \addlinespace
 \code{Output image (.txt)} & save, empty & \code{accumulate.\allowbreak{}output\_\allowbreak{}path} &
 \emph{-\allowbreak{}-\allowbreak{}output-\allowbreak{}path} & Accumulated matrix (text) and the base name for the
@@ -888,6 +888,11 @@ optional dark subtraction. Ignored in simple-sum mode. \\
 \emph{Workers} & number, 6 & \code{accumulate.\allowbreak{}max\_\allowbreak{}workers} &
 \emph{-\allowbreak{}-\allowbreak{}max-\allowbreak{}workers} & Worker processes; the program caps them at the number
 of files. \\
+\addlinespace
+\emph{Frame limit (0 = all)} & integer, 0 & \code{accumulate.\allowbreak{}frame\_\allowbreak{}limit} &
+\code{-\allowbreak{}-\allowbreak{}frame-\allowbreak{}limit} & Processes up to the first N frames in filename
+order and frame order within each file. Zero processes all frames.
+Use a fresh output path or clear the result when changing the limit. \\
 \addlinespace
 \emph{Denoise (2$\times$2 opening)} & checkbox, on & \code{accumulate.\allowbreak{}do\_\allowbreak{}denoise} &
 \emph{-\allowbreak{}-\allowbreak{}do-\allowbreak{}denoise} / \code{-\allowbreak{}-\allowbreak{}no-\allowbreak{}do-\allowbreak{}denoise} & Applies a 2$\times$2 morphological
@@ -1007,7 +1012,7 @@ Thresholding, denoising, and GMD weighting apply only to the accumulation job.
 \subsection{Centroiding}
 \label{sec:centroiding}
 
-\textbf{Purpose.} Localise electron spots in every frame with Picasso, build
+\textbf{Purpose.} Localise electron spots in the selected frames with Picasso, build
 the 2D VMI histogram, optionally invert it, and produce the photoelectron
 spectrum. The panel launches
 \code{vmi\_\allowbreak{}analysis.centroiding.process\_\allowbreak{}andor\_\allowbreak{}vmi\_\allowbreak{}PICASSO\_\allowbreak{}v5\_\allowbreak{}h5\_\allowbreak{}batch}
@@ -1191,6 +1196,12 @@ currently unused. \\
 \emph{-\allowbreak{}-\allowbreak{}tuning-\allowbreak{}only} / \code{-\allowbreak{}-\allowbreak{}no-\allowbreak{}tuning-\allowbreak{}only} & Runs the single-frame tuning
 check and stops before the batch (see below). The Pipeline panel forces this
 off in its own snapshot without changing the saved form. \\
+\addlinespace
+\emph{Frame limit (0 = all)} & integer, 0 & \code{processing.\allowbreak{}frame\_\allowbreak{}limit} &
+\code{-\allowbreak{}-\allowbreak{}frame-\allowbreak{}limit} & Processes up to the first N frames in filename
+order and frame order within each file. Zero processes all frames. This field
+is disabled in Tuning mode. Use a fresh checkpoint filename or clear the
+checkpoint when changing the limit. \\
 \end{longtable}
 \end{center}
 
@@ -2216,11 +2227,11 @@ backend, for example \code{Agg}. \\
     panel's previous job is still active. Wait, or stop the conflicting job
     in its own panel.
   \item[Changing parameters does nothing.] Some stages resume from existing
-    outputs. Accumulate skips the computation when the output text file
-    exists; Centroiding skips localisation when the checkpoint exists; the
-    Pipeline skips stages whose outputs exist. Delete the relevant output to
-    force recomputation. In Centroiding, leave \emph{Also delete checkpoint}
-    checked in \emph{Clear outputs} to rerun localisation.
+    outputs. Accumulate and Centroiding can reuse a result or checkpoint
+    created with the same frame limit. The Pipeline can skip stages whose
+    outputs exist. Delete the relevant output to force recomputation. In
+    Centroiding, leave \emph{Also delete checkpoint} checked in
+    \emph{Clear outputs} to rerun localisation.
   \item[GMD weighting has no effect.] The map may be missing, partial, or all
     weights are 1.0. A map built with \emph{First N files} only covers those
     files; frames outside it silently keep weight 1.0.

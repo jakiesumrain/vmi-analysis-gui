@@ -71,6 +71,8 @@ def build(jobs: JobManager) -> None:
                                    "accumulate.im_threshold")
             max_workers = persist(num_input("Workers", 6, step=1),
                                   "accumulate.max_workers")
+            frame_limit = persist(num_input("Frame limit (0 = all)", 0, min=0, step=1),
+                                  "accumulate.frame_limit")
             do_denoise = persist(ui.checkbox("Denoise (2×2 opening)",
                                              value=True),
                                  "accumulate.do_denoise")
@@ -202,6 +204,10 @@ def build(jobs: JobManager) -> None:
                                 "accumulate.gmd_w_max")
 
         def run():
+            limit = frame_limit.value or 0
+            if not np.isfinite(limit) or limit < 0 or limit != int(limit):
+                ui.notify("Frame limit must be zero or a positive integer.", type="negative")
+                return
             job_id_hint = str(time.time_ns())[-8:]
             live_path = GENERATED / f"accum_live_{job_id_hint}.npy"
             if live_path.exists():
@@ -212,6 +218,7 @@ def build(jobs: JobManager) -> None:
                    "--h5-dir", h5_dir.value,
                    "--output-path", output_path.value,
                    "--max-workers", str(int(max_workers.value or 1)),
+                   "--frame-limit", str(int(limit)),
                    "--gmd-map-path", gmd_map_path.value,
                    "--gmd-w-min", str(gmd_w_min.value),
                    "--gmd-w-max", str(gmd_w_max.value),

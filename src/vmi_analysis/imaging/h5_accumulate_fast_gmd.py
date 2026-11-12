@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Accumulate all frames with threshold + morphological denoising + optional GMD scaling.
+Accumulate camera frames with threshold, morphological denoising and optional GMD scaling.
 
 GMD scaling: each frame's contribution is weighted by mean_gmd / gmd_of_that_frame,
 so frames from weaker FEL pulses get proportionally higher weight.
@@ -11,8 +11,11 @@ This uses the pre-computed gmd_map_all.txt (frame_idx → GMD value).
 import argparse
 import h5py
 import numpy as np
+from numpy.lib.npyio import DataSource
 import cv2
 import os
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
@@ -24,6 +27,7 @@ im_threshold = 5
 do_denoise   = True
 kernel       = np.ones((2, 2), dtype=np.uint8)
 max_workers  = 6
+frame_limit  = 0
 
 # Simple sum mode: sum all frames as-is — no threshold, no denoising.
 # Dark subtraction and GMD weighting still apply if configured below.
@@ -52,13 +56,15 @@ live_every   = 25      # write the partial image every N completed files
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Accumulate all frames with threshold + denoise + optional GMD scaling.")
+        description="Accumulate camera frames with threshold, denoising and optional GMD scaling.")
     p.add_argument("--h5-dir", default=h5_dir)
     p.add_argument("--output-path", default=output_path)
     p.add_argument("--im-threshold", type=float, default=im_threshold)
     p.add_argument("--do-denoise", action=argparse.BooleanOptionalAction,
                    default=do_denoise)
     p.add_argument("--max-workers", type=int, default=max_workers)
+    p.add_argument("--frame-limit", type=int, default=frame_limit,
+                   help="Process the first N frames in file order (0 = all).")
     p.add_argument("--simple-sum", action="store_true", default=simple_sum)
     p.add_argument("--gmd-map-path", default=gmd_map_path)
     p.add_argument("--enable-gmd", action="store_true", default=enable_gmd)
@@ -73,6 +79,8 @@ def parse_args():
     if not args.h5_dir:
         p.error("--h5-dir is required "
                 "(no dataset is bundled with this repository).")
+    if args.frame_limit < 0:
+        p.error("--frame-limit must be zero or a positive integer.")
     if args.enable_gmd and not args.gmd_map_path:
         p.error("--enable-gmd requires --gmd-map-path.")
     return args
@@ -126,11 +134,11 @@ def load_gmd_weights(path, n_total_frames):
 
 
 def process_h5(args):
-    """Accumulate all frames in one h5 file with dark subtraction + threshold + denoising + GMD weight."""
-    fpath, base_frame_idx = args
+    """Accumulate a prefix of one HDF5 file with the configured corrections."""
+    fpath, base_frame_idx, stop = args
 
     with h5py.File(fpath, 'r') as hf:
-        data = hf['raw/data'][:]                   # (N, H, W) uint16
+        data = hf['raw/data'][:stop]               # (N, H, W) uint16
 
     n = data.shape[0]
     if n == 0:
@@ -192,6 +200,13 @@ def plot_accumulated(total_acc, title_suffix="", show=True):
 def main():
     # Skip straight to plotting if the accumulated result already exists
     if os.path.exists(output_path):
+        with DataSource().open(output_path, mode="rt", encoding="utf-8") as saved:
+            first_line = saved.readline()
+        prefix = "# frame_limit="
+        saved_limit = int(first_line[len(prefix):]) if first_line.startswith(prefix) else 0
+        if saved_limit != frame_limit:
+            raise SystemExit(f"[Error] {output_path} was created with frame limit {saved_limit}. "
+                             "Choose a different output path or clear the existing result.")
         print(f"[Resume] {output_path} exists — skipping accumulation, plotting directly")
         total_acc = np.loadtxt(output_path)
         plot_accumulated(total_acc, " (loaded from file)", show=not no_show)
@@ -201,17 +216,25 @@ def main():
         os.path.join(h5_dir, f)
         for f in os.listdir(h5_dir) if f.endswith('.h5')
     ])
-    n_files = len(files)
-    workers = min(max_workers, n_files) if n_files else 1
-    print(f"Found {n_files} h5 files, processing with {workers} workers (processes)...")
-    if simple_sum:
-        print("Simple sum mode: ON (no threshold, no denoising)")
-
-    # Pre-count total frames for GMD weight array
+    # Keep the original acquisition offsets for GMD weighting.
+    batch_args = []
     n_total = 0
     for f in files:
         with h5py.File(f, 'r') as hf:
-            n_total += hf['raw/data'].shape[0]
+            count = hf['raw/data'].shape[0]
+        if not frame_limit or n_total < frame_limit:
+            stop = min(count, frame_limit - n_total) if frame_limit else None
+            if stop != 0:
+                batch_args.append((f, n_total, stop))
+        n_total += count
+    n_files = len(batch_args)
+    workers = min(max_workers, n_files) if n_files else 1
+    print(f"Found {len(files)} h5 files, processing {n_files} with {workers} workers (processes)...")
+    if frame_limit:
+        print(f"Processing the first {min(frame_limit, n_total)} of {n_total} frames "
+              f"(requested {frame_limit})")
+    if simple_sum:
+        print("Simple sum mode: ON (no threshold, no denoising)")
 
     # Load dark frame
     dark_frame = np.load(dark_path) if dark_path and os.path.exists(dark_path) else None
@@ -226,15 +249,6 @@ def main():
         print(f"GMD weighting ENABLED")
     else:
         print(f"GMD weighting DISABLED")
-
-    # Build args with base frame indices
-    batch_args = []
-    idx = 0
-    for f in files:
-        with h5py.File(f, 'r') as hf:
-            n = hf['raw/data'].shape[0]
-        batch_args.append((f, idx))
-        idx += n
 
     t_start = time.time()
     total_frames = 0
@@ -262,6 +276,8 @@ def main():
                     else:
                         total_acc += acc
                 except Exception as e:
+                    if frame_limit:
+                        raise
                     print(f"\n[Error] {e}")
                 n_done += 1
                 if live_path and total_acc is not None and n_done % live_every == 0:
@@ -275,7 +291,18 @@ def main():
     print(f"\n{total_frames} frames processed in {t_end - t_start:.1f}s")
     print(f"Sum of all counts: {np.sum(total_acc):.0f}")
 
-    np.savetxt(output_path, total_acc)
+    if frame_limit:
+        # Publish the limited result only after the complete matrix is written.
+        output = Path(output_path)
+        with NamedTemporaryFile(dir=output.parent, suffix=output.suffix, delete=False) as handle:
+            temporary = Path(handle.name)
+        try:
+            np.savetxt(temporary, total_acc, header=f"frame_limit={frame_limit}")
+            os.replace(temporary, output_path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    else:
+        np.savetxt(output_path, total_acc)
     print(f"Saved to {output_path}")
 
     gmd_label = "ON" if gmd_weights is not None else "OFF"
@@ -290,6 +317,7 @@ if __name__ == '__main__':
     im_threshold = _args.im_threshold
     do_denoise = _args.do_denoise
     max_workers = _args.max_workers
+    frame_limit = _args.frame_limit
     simple_sum = _args.simple_sum
     gmd_map_path = _args.gmd_map_path
     enable_gmd = _args.enable_gmd

@@ -1,6 +1,7 @@
 """Panel: Picasso centroiding with saved fields and explicit CLI inputs."""
 
 import sys
+from operator import not_
 from pathlib import Path
 
 from nicegui import app, ui
@@ -53,6 +54,7 @@ FIELDS = [
     ("processing", "mask_center_y", "float", "Mask center Y (empty = image center)"),
     ("processing", "mask_radius", "float", "Mask radius (empty = automatic)"),
     ("processing", "tuning_only", "bool", "Tuning mode only"),
+    ("processing", "frame_limit", "int", "Frame limit (0 = all)"),
     ("histogram", "enable_abel", "bool", "Abel inversion"),
     ("histogram", "abel_rotation_deg", "float", "Image rotation before Abel inversion (°)"),
     ("histogram", "resolution_factor", "int", "Histogram resolution factor"),
@@ -95,6 +97,9 @@ def build(jobs: JobManager) -> None:
                 value = _section(doc, section).get(key, "")
                 wid = persist(_make_widget(kind, label, value), storage_key(section, key))
                 widgets[(section, key, kind)] = wid
+                if key == "frame_limit":
+                    wid.props("min=0 step=1")
+                    wid.bind_enabled_from(widgets[(section, "tuning_only", "bool")], "value", not_)
                 if key == "abel_rotation_deg":
                     wid.bind_enabled_from(widgets[(section, "enable_abel", "bool")], "value")
                     wid.props('hint="Align the polarization vertically. Use 0° if it is already vertical. '
@@ -174,7 +179,9 @@ def _save(widgets) -> bool:
         if kind == "bool":
             sec[key] = bool(v)
         elif kind in ("int", "float"):
-            if (v is None or v == "") and section in ("spectrum_plot", "energy_calibration"):
+            if key == "frame_limit":
+                sec[key] = v or 0
+            elif (v is None or v == "") and section in ("spectrum_plot", "energy_calibration"):
                 # Empty optional values are omitted so the script uses defaults.
                 sec[key] = None if section == "energy_calibration" else -1.0
             elif (v is None or v == "") and key in ("tuning_frame_index", "mask_center_x",

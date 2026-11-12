@@ -10,6 +10,9 @@ import unittest
 
 import h5py
 import numpy as np
+import pandas as pd
+
+from vmi_analysis.centroiding.plot_data import SUMMARY_DATA, TUNING_DATA, load_plot_data
 
 ROOT = Path(__file__).resolve().parents[2]
 COMMANDS = (
@@ -21,13 +24,13 @@ COMMANDS = (
 
 
 class PackageLayoutTests(unittest.TestCase):
-    def run_command(self, command, cwd, *, workspace=None):
+    def run_command(self, command, cwd, *, workspace=None, returncode=0):
         env = dict(os.environ, MPLBACKEND="Agg", PYTHONIOENCODING="utf-8")
         if workspace is not None:
             env["VMI_WORKSPACE_DIR"] = str(workspace)
         result = subprocess.run([sys.executable, *command], cwd=cwd, env=env,
-                                capture_output=True, text=True, timeout=90)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                                capture_output=True, encoding="utf-8", timeout=90)
+        self.assertEqual(result.returncode, returncode, result.stdout + result.stderr)
         return result
 
     def test_all_analysis_modules_from_unrelated_cwd(self):
@@ -50,6 +53,55 @@ class PackageLayoutTests(unittest.TestCase):
                               "--simple-sum", "--max-workers", "2", "--no-show"], folder)
             self.assertTrue(output.with_suffix(".png").is_file())
             np.testing.assert_array_equal(np.loadtxt(output), data.sum(axis=0))
+
+    def test_accumulation_limit_spans_files_and_preserves_gmd_weights(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            frames = np.arange(1, 7, dtype=np.uint16)[:, None, None] * np.ones((8, 8), dtype=np.uint16)
+            for name, data in (("RAW-c.h5", frames[5:]), ("RAW-b.h5", frames[2:5]), ("RAW-a.h5", frames[:2])):
+                with h5py.File(folder / name, "w") as handle:
+                    handle.create_dataset("raw/data", data=data)
+            gmd = np.array([1, 2, 3, 4, 5, 6], dtype=float)
+            gmd_path = folder / "gmd.txt"
+            gmd_path.write_text("".join(f"{i} file 0 0 {value}\n" for i, value in enumerate(gmd)), encoding="utf-8")
+            output = folder / "sum.txt"
+            command = ["-m", "vmi_analysis.imaging.h5_accumulate_fast_gmd",
+                       "--h5-dir", str(folder), "--output-path", str(output),
+                       "--simple-sum", "--max-workers", "2", "--no-show",
+                       "--enable-gmd", "--gmd-map-path", str(gmd_path),
+                       "--gmd-w-min", "0", "--gmd-w-max", "0"]
+            self.run_command([*command, "--frame-limit", "3"], folder)
+            expected = (frames[:3] * (gmd.mean() / gmd[:3])[:, None, None]).sum(axis=0)
+            np.testing.assert_allclose(np.loadtxt(output), expected)
+            result = self.run_command(command, folder, returncode=1)
+            self.assertIn("was created with frame limit 3", result.stderr)
+
+    def test_centroid_limit_preserves_frame_ids_and_tuning_can_use_later_frames(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            y, x = np.indices((32, 32))
+            frames = np.stack([100 + 500 * np.exp(-((x - (12.4 + i))**2 + (y - 15.2)**2) / 3)
+                               for i in range(5)]).astype(np.uint16)
+            for name, data in (("RAW-b.h5", frames[2:]), ("RAW-a.h5", frames[:2])):
+                with h5py.File(folder / name, "w") as handle:
+                    handle.create_dataset("raw/data", data=data)
+            output = folder / "results"
+            command = ["-m", "vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch",
+                       "--h5-dir", str(folder), "--output-dir", str(output),
+                       "--min-net-gradient", "20", "--fitting-method", "lq",
+                       "--no-parallel", "--no-abel"]
+            self.run_command([*command, "--frame-limit", "3"], folder)
+            checkpoint = output / "vmi_results_raw.h5"
+            localizations = pd.read_hdf(checkpoint, "localizations")
+            np.testing.assert_array_equal(localizations["frame"], [0, 1, 2])
+            metadata, _ = load_plot_data(output / SUMMARY_DATA)
+            self.assertEqual(metadata["n_frames"], 3)
+            result = self.run_command(command, folder, returncode=1)
+            self.assertIn("does not contain a complete checkpoint for frame limit 0", result.stderr)
+            self.run_command([*command, "--frame-limit", "3", "--tuning-only",
+                              "--tuning-frame-index", "4"], folder)
+            metadata, _ = load_plot_data(output / TUNING_DATA)
+            self.assertEqual(metadata["frame_index"], 4)
 
     def test_dark_frame_default_writes_to_workspace_instead_of_source(self):
         with tempfile.TemporaryDirectory() as folder:
