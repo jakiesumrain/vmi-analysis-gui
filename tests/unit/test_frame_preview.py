@@ -42,6 +42,12 @@ class FramePreviewTests(unittest.TestCase):
         self.assertEqual(len(figure.data), 1)
         self.assertGreater(len(figure.data[0].x), 1)
 
+    def test_histogram_linear_y_and_explicit_x_format(self):
+        figure = frame_histogram_figure(np.arange(100.0), log_y=False,
+                                        x_tickformat=".1e")
+        self.assertEqual(figure.layout.yaxis.type, "linear")
+        self.assertEqual(figure.layout.xaxis.tickformat, ".1e")
+
     def test_pick_frame_index_random_and_range(self):
         refs = frame_preview.list_raw_frames(self.folder)
         self.assertEqual(frame_preview.pick_frame(refs, 3).global_index, 3)

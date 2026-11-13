@@ -165,7 +165,8 @@ def build(jobs: JobManager) -> None:
                         gmd_values, title=f"GMD value distribution · column {column}",
                         x_label=f"GMD value (map column {column})",
                         y_label="Frames", count_label="frames",
-                        auto_bins=True, **limits)
+                        auto_bins=True, log_y=False, x_tickformat=".1e",
+                        **limits)
                 else:
                     finite = int(np.isfinite(weights).sum())
                     caption = (f"{len(weights):,} mapped frames · mode {mode} · "
@@ -174,7 +175,7 @@ def build(jobs: JobManager) -> None:
                         weights, title=f"GMD weight distribution · {mode}",
                         x_label=f"GMD weight ({mode})",
                         y_label="Frames", count_label="frames",
-                        auto_bins=True, **limits)
+                        auto_bins=True, log_y=False, **limits)
                 with ui.row().classes("w-full items-center justify-between"):
                     ui.label(caption).classes("vmi-caption")
                     ui.button("Hide", icon="visibility_off",
