@@ -9,9 +9,10 @@ from vmi_analysis.centroiding.options import centroid_cli_args
 from ..jobs import Job, JobManager, Stage
 from .. import theme
 from ..settings import centroid_settings, output_dir as centroid_output_dir, binning_cli_args
-from .common import JobView, REPO_ROOT, num_input, path_input, persist
-from .pes import default_output_dir
-from .binning import _suffix
+from .common import JobView, REPO_ROOT, confirm_clear_outputs, num_input, path_input, persist
+from .pes import default_output_dir, _output_files as pes_outputs
+from .binning import _suffix, _output_files as binning_outputs
+from .centroid import OUTPUT_NAMES as CENTROID_OUTPUTS
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
 CIRC_DIR = REPO_ROOT / "circularization"
@@ -69,8 +70,9 @@ def build(jobs: JobManager) -> None:
                 "pipeline.skip_existing")
 
         def run():
-            suffix = _suffix(weight_mode.value, weight_power.value)
             try:
+                power = float(weight_power.value) if weight_power.value is not None else 1.0
+                suffix = _suffix(weight_mode.value, power)
                 cfg = centroid_settings()
                 vmi = cfg["vmi_picasso"]
                 # The pipeline's chosen inputs must reach all stages, even
@@ -115,7 +117,7 @@ def build(jobs: JobManager) -> None:
                          "--gmd-col", str(app.storage.general.get("binning.gmd_col", 4)),
                          "--gmd-floor", str(app.storage.general.get("binning.gmd_floor", 1e-12)),
                          "--weight-mode", weight_mode.value,
-                         "--weight-power", str(weight_power.value),
+                         "--weight-power", str(power),
                          "--no-show"],
                     cwd=str(CENTROID_DIR),
                     outputs=[str(out_dir / f"vmi_2d_gmd_all{suffix}.npy")],
@@ -133,12 +135,48 @@ def build(jobs: JobManager) -> None:
                 ),
             ]
             job = jobs.submit(Job(name="Pipeline", stages=stages,
-                                  skip_existing=bool(skip_existing.value)))
+                                  skip_existing=bool(skip_existing.value),
+                                  extra={"output_dir": str(out_dir), "suffix": suffix}))
             current_job["job"] = job
             view.attach(job)
 
-        view.run_button("Run pipeline", on_click=run)
+        def clear():
+            job = view.job or next((job for job in reversed(jobs.jobs()) if job.name == "Pipeline"), None)
+            if job is None or job.finished is None:
+                ui.notify("Clear outputs after a Pipeline run finishes.", type="info")
+                return
+            confirm_clear_outputs(_written_outputs(job), "Delete outputs written by this Pipeline run?",
+                                  on_cleared=view.results.clear)
+
+        with ui.row().classes("gap-2"):
+            view.run_button("Run pipeline", on_click=run)
+            ui.button("Clear outputs", icon="delete", on_click=clear).props("flat color=negative")
         ui.label("Watch each stage's detailed parameters on its own tab; "
                  "this panel uses the same defaults.").classes("vmi-subtitle")
 
     view.place_console()
+
+
+def _written_outputs(job):
+    if job.started is None or job.finished is None or not job.stages:
+        return []
+    directory = Path(job.extra["output_dir"])
+    suffix = job.extra["suffix"]
+    targets = []
+    for stage in job.stages:
+        if stage.started is None or stage.finished is None:
+            continue
+        candidates = [Path(stage.cwd or REPO_ROOT) / path for path in stage.outputs]
+        if stage.name == "Centroiding":
+            candidates.extend(directory / name for name in CENTROID_OUTPUTS)
+        elif stage.name == "Binning":
+            candidates.extend(binning_outputs(directory, suffix))
+        elif stage.name == "PES":
+            candidates.extend(pes_outputs(candidates[0].parent, suffix, directory))
+        for path in candidates:
+            try:
+                if path.is_file() and stage.started <= path.stat().st_mtime <= stage.finished:
+                    targets.append(path)
+            except OSError:
+                continue
+    return targets

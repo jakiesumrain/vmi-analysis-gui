@@ -8,7 +8,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 
@@ -227,6 +227,24 @@ class CentroidScriptCalibrationTests(unittest.TestCase):
             np.testing.assert_array_equal(arrays["frame"], raw.astype(float) + 98)
             np.testing.assert_array_equal(arrays["x"], locs.x)
             np.testing.assert_array_equal(arrays["photons"], locs.photons)
+
+            with patch.dict(self.env, OUTPUT_DIR=folder, TUNING_FRAME_INDEX=1,
+                            ENABLE_MEDIAN_SUBTRACTION=False, _run_picasso_batch=Mock(return_value=locs),
+                            sigma_clipped_stats=Mock()) as env, \
+                    patch.object(self.env["plt"], "show"), redirect_stdout(io.StringIO()):
+                self.env["run_tuning_check"]([(str(path), 0), (str(path), 1)], None, None)
+                np.testing.assert_array_equal(env["_run_picasso_batch"].call_args.args[0][0], raw + 100)
+                env["sigma_clipped_stats"].assert_not_called()
+
+            fit = Mock(return_value=None)
+            for enabled, dark_frame, offset in ((False, None, 0), (True, None, 2),
+                                                (False, np.full(raw.shape, 5), 5)):
+                with self.subTest(enabled=enabled, offset=offset), \
+                        patch.dict(self.env, ENABLE_MEDIAN_SUBTRACTION=enabled, _run_picasso_batch=fit,
+                                   sigma_clipped_stats=lambda *args, **kw: (2., 2., 0.)):
+                    self.env["process_h5_file_batch"]((path, 0, 2, dark_frame, None, 5, 400))
+                    np.testing.assert_array_equal(fit.call_args.args[0],
+                                                  np.stack([raw, raw + 100]).astype(float) - offset)
 
 
 if __name__ == "__main__":

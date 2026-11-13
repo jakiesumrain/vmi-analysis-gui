@@ -127,8 +127,7 @@ def command_access(cmd, cwd=None):
     elif module == "vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch":
         read(value("--h5-dir"))
         if "--dark-subtraction" in args:
-            dark = value("--dark-file")
-            read(dark, CENTROID_DIR) if dark else read(value("--dark-data-dir"))
+            read(value("--dark-file"), CENTROID_DIR)
         if "--flat-field" in args:
             read(value("--flat-field-file"))
         if "--gmd-weighting" in args:

@@ -133,6 +133,28 @@ class PanelHelperTests(unittest.TestCase):
 
 
 class PanelBuildTests(unittest.TestCase):
+    def test_extracted_file_follows_image_folder(self):
+        from nicegui import Client, app, ui
+
+        client = Client(ui.page("/_test_calibration_output_path"))
+        try:
+            store = {"calibration.image": "first/vmi_2d_raw.npy", "calibration.output": "old/extracted.txt"}
+            with client, patch.object(app.storage, "_general", store):
+                calibration.build()
+                fields = {field._props.get("label"): field for field in client.elements.values()
+                          if isinstance(field, ui.input)}
+                image = fields["VMI image (.npy)"]
+                extracted = fields["Extracted trig-fit file"]
+                self.assertEqual(Path(extracted.value), Path("first/extracted.txt"))
+                extracted.value = "first/custom.txt"
+                image.value = "first/another.npy"
+                self.assertEqual(extracted.value, "first/custom.txt")
+                image.value = "second/vmi_2d_raw.npy"
+                self.assertEqual(Path(extracted.value), Path("second/extracted.txt"))
+                self.assertEqual(store["calibration.output"], extracted.value)
+        finally:
+            client.delete()
+
     def test_circularize_reassignment_is_opt_in_and_restores_saved_path(self):
         from nicegui import Client, app, ui
 

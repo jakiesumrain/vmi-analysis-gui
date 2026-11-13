@@ -164,6 +164,97 @@ class StandaloneInputsTests(unittest.TestCase):
 
 
 class GuiSubmissionTests(unittest.TestCase):
+    def test_clear_actions_delete_panel_outputs_and_preserve_other_files(self):
+        from nicegui import Client, app, ui
+        from vmi_analysis.circularization.polar_fit import SESSION_SCHEMA
+        from vmi_analysis.gui.jobs import Job, Stage
+        from vmi_analysis.gui.panels import accumulate, binning, calibration, centroid, circularize, dark, gmd_map, movie, pes, pipeline
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            preserved = [root / name for name in ("detector.npy", "notes.txt", "trig_order_notes.png",
+                                                   "vmi_2d_gmd_bin0_minusinf_1.00e-08_w-gmd.npy")]
+            for path in preserved:
+                path.touch()
+            data = root / "dataset"
+            data.mkdir()
+            frames = root / "movie_frames" / "saved"
+            frames.mkdir(parents=True)
+            (frames / "movie-source.json").write_text(json.dumps({"dataset": str(data), "output_dir": folder}))
+            (frames / "frame_0000.png").touch()
+            (frames / "movie-path.txt").touch()
+            preview = root / "circ_polar.npz"
+            partial = root / "accum_live.npy"
+            for path in (preview, partial):
+                path.touch()
+            store = {MIGRATED_KEY: True, "gmd_map.output_path": str(root / "map.txt"),
+                     "movie.h5_dir": str(data), "movie.movie_dir": folder,
+                     "dark.out_dir": folder, "accumulate.output_path": str(root / "sum.txt"),
+                     storage_key("vmi_picasso", "output_dir"): folder,
+                     "binning.output_dir": folder, "pes.output_dir": folder,
+                     "circularize.inp": str(preserved[0]), "circularize.out": str(root / "corrected.txt"),
+                     "circularize.plot_dir": folder, "calibration.output": str(root / "rings.txt"),
+                     "calibration.session": str(root / "session.json")}
+            cases = (
+                (gmd_map, "Clear output", {"map.txt": "map"}),
+                (movie, "Clear outputs", {"dataset.mp4": "movie", "dataset.gif": "movie"}),
+                (dark, "Clear output", {"dark_median.npy": "dark", "dark_median_info.txt": "info"}),
+                (accumulate, "Clear output", {"sum.txt": "image", "sum.png": "plot"}),
+                (centroid, "Clear outputs", {**dict.fromkeys(centroid.OUTPUT_NAMES, "output"), "vmi_results_raw.h5": "checkpoint"}),
+                (binning, "Clear outputs", dict.fromkeys(("vmi_2d_gmd_all_w-gmd_norm.npy", "vmi_gmd_bins_w-gmd_norm.png",
+                                                         "vmi_2d_gmd_bin0_minusinf_1.00e-08_w-gmd_norm.npy"), "bin")),
+                (calibration, "Clear calibration file", {"rings.txt": "# empty calibration"}),
+                (calibration, "Clear session file", {"session.json": json.dumps({"schema": SESSION_SCHEMA})}),
+                (circularize, "Clear outputs", dict.fromkeys(("corrected.txt", "trig_order_1.png", "reassignment_map.png"), "plot")),
+                (pes, "Clear outputs", dict.fromkeys((*pes.PES_PLOTS, "gmd_bins_results.npz",
+                                                      "energy_l10_GMD_bin0_minusinf_1.00e-08_w-gmd_norm.txt"), "PES")),
+                (pipeline, "Clear outputs", {"pipeline-map.txt": "map", "vmi_2d_gmd_all.npy": "sum",
+                                             "vmi_gmd_bins.png": "plot", "gmd_bins_results.npz": "PES"}),
+            )
+            manager = Mock()
+            for panel, label, files in cases:
+                with self.subTest(panel=panel.__name__, label=label):
+                    for name, content in files.items():
+                        (root / name).write_text(content, encoding="utf-8")
+                    stage = Stage("GMD map", [], cwd=folder, outputs=["pipeline-map.txt"], started=0, finished=1e12)
+                    skipped = Stage("Centroiding", [], cwd=folder, outputs=["detector.npy"], status="skipped")
+                    bins = Stage("Binning", [], cwd=folder, outputs=["vmi_2d_gmd_all.npy"], started=0, finished=1e12)
+                    spectra = Stage("PES", [], cwd=folder, outputs=["gmd_bins_results.npz"], started=0, finished=1e12)
+                    manager.jobs.return_value = [
+                        Job("Pipeline", stages=[stage, skipped, bins, spectra], status="done", started=0, finished=1e12,
+                            extra={"output_dir": folder, "suffix": ""}),
+                        Job("Accumulate", extra={"output_path": str(root / "sum.txt"), "live_path": str(partial)}, status="done"),
+                        Job("Circularize", extra={"output": str(root / "corrected.txt"), "polar_preview": str(preview)}, status="done"),
+                    ]
+                    callbacks = {}
+                    button = ui.button
+
+                    def capture(text="", *args, **kwargs):
+                        if kwargs.get("on_click"):
+                            callbacks[text] = kwargs["on_click"]
+                        return button(text, *args, **kwargs)
+
+                    client = Client(ui.page("/_test_clear_outputs"))
+                    try:
+                        with client, patch.object(app.storage, "_general", store), patch.object(ui, "button", capture), \
+                                patch.object(movie, "GENERATED", root):
+                            panel.build(manager)
+                            if label == "Clear calibration file":
+                                element = next(el for el in client.elements.values()
+                                               if isinstance(el, button) and el.text == label)
+                                listener, = element._event_listeners.values()
+                                listener.handler(None)
+                            else:
+                                callbacks[label]()
+                            callbacks["Delete"]()
+                        self.assertTrue(all(not (root / name).exists() for name in files))
+                        self.assertTrue(all(path.exists() for path in preserved))
+                    finally:
+                        client.delete()
+            self.assertFalse(frames.exists())
+            self.assertFalse(preview.exists())
+            self.assertFalse(partial.exists())
+
     def submit_form(self, panel, store, label="Run"):
         from nicegui import Client, app, ui
         captured = {}
@@ -223,6 +314,37 @@ class GuiSubmissionTests(unittest.TestCase):
                 self.assertEqual(store[key], 0)
         finally:
             client.delete()
+
+    def test_centroid_median_subtraction_is_disabled_by_dark_subtraction(self):
+        from nicegui import Client, app, ui
+        from vmi_analysis.gui.panels import centroid
+
+        key = storage_key("processing", "enable_median_subtraction")
+        store = {MIGRATED_KEY: True}
+        manager = Mock()
+        manager.jobs.return_value = []
+        client = Client(ui.page("/_test_median_subtraction"))
+        try:
+            with client, patch.object(app.storage, "_general", store):
+                centroid.build(manager)
+                checks = {element.text: element for element in client.elements.values()
+                          if isinstance(element, ui.checkbox)}
+                median = checks["Per-frame median subtraction"]
+                dark = checks["Dark subtraction"]
+                self.assertTrue(median.enabled)
+                self.assertTrue(median.value)
+                median.value = False
+                dark.value = True
+                self.assertFalse(median.enabled)
+                dark.value = False
+                self.assertTrue(median.enabled)
+                self.assertFalse(median.value)
+                self.assertFalse(store[key])
+        finally:
+            client.delete()
+
+        config = parse_centroid_args(["--h5-dir", "data", "--no-median-subtraction"]).settings
+        self.assertFalse(config["vmi_picasso"]["processing"]["enable_median_subtraction"])
 
     def test_pipeline_overrides_stale_dataset_map_and_tuning_mode(self):
         from vmi_analysis.gui.panels import pipeline

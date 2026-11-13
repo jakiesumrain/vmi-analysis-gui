@@ -10,7 +10,7 @@ import tomllib
 DEFAULT_CONFIG = {"vmi_picasso": {
     "h5_dir": "", "h5_pattern": "RAW-*.h5", "h5_dataset": "raw/data",
     "h5_meta": "raw/meta", "meta_column_gmd": 1, "gmd_map_path": "",
-    "dark_data_dir": "", "dark_h5_pattern": "RAW-*.h5", "dark_file": "",
+    "dark_file": "",
     "output_dir": "vmi_output", "checkpoint_file": "vmi_results_raw.h5",
     "box_size": 5, "min_net_gradient": 400.0, "camera_baseline": 0.0,
     "camera_sensitivity": 1.0, "camera_gain": 1.0, "camera_qe": 0.9,
@@ -18,8 +18,8 @@ DEFAULT_CONFIG = {"vmi_picasso": {
     "fitting_method": "mle", "tuning_frame_index": None,
     "tuning_bins_photons": 40, "tuning_bins_net_gradient": 40, "tuning_bins_precision": 40,
     "processing": {"enable_parallel": True, "num_cores": 6, "frame_limit": 0,
-                   "enable_dark_subtraction": False, "dark_method": "mean",
-                   "dark_frame_count": 2000, "enable_flat_field": False,
+                   "enable_dark_subtraction": False, "enable_median_subtraction": True,
+                   "enable_flat_field": False,
                    "flat_field_file": "", "enable_circular_mask": False,
                    "mask_center_x": None, "mask_center_y": None, "mask_radius": None,
                    "tuning_only": False},
@@ -100,8 +100,7 @@ def validate_settings(config, require_input=False):
 def parse_centroid_args(argv=None):
     parser = argparse.ArgumentParser(description="Picasso centroiding and VMI spectrum analysis")
     parser.add_argument("--config", help="Optional legacy TOML defaults; explicit arguments take precedence")
-    choices = {"mle_method": ["sigma", "sigmaxy"], "fitting_method": ["mle", "lq"],
-               "dark_method": ["mean", "median"]}
+    choices = {"mle_method": ["sigma", "sigmaxy"], "fitting_method": ["mle", "lq"]}
     for group, key, default in options():
         kwargs = {"dest": f"{group}__{key}", "default": argparse.SUPPRESS}
         if isinstance(default, bool):
@@ -116,6 +115,10 @@ def parse_centroid_args(argv=None):
             kwargs.update(type=int, help="Global tuning frame index (default: random frame)")
         elif key == "frame_limit":
             kwargs["help"] = "Process the first N frames in file order (0 = all; ignored in Tuning mode)"
+        elif key == "enable_median_subtraction":
+            kwargs["help"] = "Subtract each frame's 3-sigma-clipped median (default: on; ignored with dark subtraction)"
+        elif key == "dark_file":
+            kwargs["help"] = "Precomputed dark .npy file (required with --dark-subtraction)"
         parser.add_argument("--" + flag_name(group, key), **kwargs)
     args = parser.parse_args(argv)
     try:

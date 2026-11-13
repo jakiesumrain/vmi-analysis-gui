@@ -35,6 +35,8 @@ class Stage:
     cwd: str | None = None
     outputs: list[str] = field(default_factory=list)  # skip if all exist
     status: str = "queued"
+    started: float | None = None
+    finished: float | None = None
 
 
 @dataclass
@@ -325,11 +327,13 @@ class JobManager:
                                f"(outputs exist)")
                 continue
             stage.status = "running"
+            stage.started = time.time()
             job.log.append(f"\n[stage {i+1}/{n}] {stage.name}")
             job.extra["stage_index"] = i
             job.progress = None
             rc = self._run_cmd(job, stage.cmd, stage.cwd,
                                prefix=f"[{stage.name}] ")
+            stage.finished = time.time()
             stage.status = ("cancelled" if job._cancel_requested
                             else "done" if rc == 0 else "failed")
             if rc != 0 or job._cancel_requested:

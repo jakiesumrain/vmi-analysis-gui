@@ -9,6 +9,7 @@ from operator import not_
 from pathlib import Path
 
 import numpy as np
+from vmi_analysis.paths import validate_distinct_output
 from nicegui import ui
 from plotly.colors import get_colorscale
 
@@ -22,7 +23,7 @@ from ..jobs import Job, JobManager, ResourceBusyError
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
                      open_folder_button, path_input, persist,
-                     zoomable_image, delete_outputs)
+                     zoomable_image, confirm_clear_outputs)
 
 
 def build(jobs: JobManager) -> None:
@@ -53,6 +54,12 @@ def build(jobs: JobManager) -> None:
 
     def finished(job):
         live_area.visible = False
+        live_path = job.extra.get("live_path")
+        if live_path:
+            try:
+                Path(live_path).unlink(missing_ok=True)
+            except OSError as exc:
+                view.log.push(f"[gui] Could not remove live preview: {exc}")
         _results(job)
 
     view = JobView(jobs, job_name='Accumulate', results_builder=finished, live_builder=_live)
@@ -245,17 +252,17 @@ def build(jobs: JobManager) -> None:
                     return
                 view.results.clear()
                 with view.results:
-                    _result_file((output_path.value or "").strip())
+                    _result_file(str(REPO_ROOT / output_path.value) if output_path.value else "")
             ui.button("View saved result", icon="analytics", on_click=show_saved).props("flat")
             ui.button("Clear output", icon="delete",
-                      on_click=lambda: _clear_output(output_path)) \
+                      on_click=lambda: _clear_output(output_path, view, (dark_path.value, gmd_map_path.value))) \
                 .props("flat color=negative")
 
     view.place_console()
     live_area.move()
 
 
-def _clear_output(output_path) -> None:
+def _clear_output(output_path, view, inputs) -> None:
     """Delete the accumulated .txt (and its .png) so the next run recomputes.
 
     The script skips accumulation whenever the output file exists
@@ -266,40 +273,26 @@ def _clear_output(output_path) -> None:
     if not txt:
         ui.notify("Set an output path first.", type="warning")
         return
-    targets = [Path(txt), Path(os.path.splitext(txt)[0] + ".png")]
-    existing = [p for p in targets if p.exists()]
-    if not existing:
-        ui.notify(f"Nothing to delete at {txt}", type="info")
+    target = REPO_ROOT / txt
+    targets = [target, target.with_suffix(".png")]
+    try:
+        for path in targets:
+            validate_distinct_output(path, zip(("dark frame", "GMD map"), inputs), cwd=REPO_ROOT)
+    except (OSError, ValueError) as exc:
+        ui.notify(str(exc), type="warning")
         return
-
-    def do_delete():
-        failed = delete_outputs(existing)
-        if failed is None:
-            return
-        dlg.close()
-        if failed:
-            ui.notify("Could not delete: " + "; ".join(failed),
-                      type="negative")
-        else:
-            ui.notify(f"Deleted {len(existing)} file(s) — "
-                      "next run recomputes from scratch.", type="positive")
-
-    with ui.dialog() as dlg, ui.card().classes("gap-2"):
-        ui.label("Delete the existing accumulated output?") \
-            .classes("vmi-caption")
-        for p in existing:
-            ui.label(str(p)).classes("text-sm") \
-                .style("word-break: break-all")
-        with ui.row().classes("w-full justify-end gap-2"):
-            ui.button("Cancel", on_click=dlg.close).props("flat")
-            ui.button("Delete", on_click=do_delete) \
-                .props("unelevated color=negative")
-    dlg.open()
+    for job in view.jobs.jobs():
+        if (job.name == "Accumulate" and job.extra.get("live_path")
+                and (Path(job.cwd or REPO_ROOT) / job.extra["output_path"]).resolve() == target.resolve()):
+            targets.append(Path(job.extra["live_path"]))
+    confirm_clear_outputs(targets, "Delete accumulated outputs?", on_cleared=view.results.clear)
 
 
 def _results(job: Job):
     if job.status == "done":
-        _result_file(job.extra.get("output_path", ""))
+        output = job.extra.get("output_path")
+        if output:
+            _result_file(str(Path(job.cwd or REPO_ROOT) / output))
 
 
 def _interactive_plot(figure=None):
