@@ -16,6 +16,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from contextlib import contextmanager
@@ -57,6 +58,7 @@ class Job:
     writes: list[str] = field(default_factory=list)
     exclusive: list[str] = field(default_factory=list)
     wait_reason: str = ""
+    consume_output: Callable[[Job, str], bool] | None = field(default=None, repr=False)
     _access: Access = field(default_factory=Access, repr=False)
     _proc: subprocess.Popen | None = field(default=None, repr=False)
     _cancel_requested: bool = field(default=False, repr=False)
@@ -384,6 +386,8 @@ class JobManager:
                 for seg in line.replace("\r", "\n").split("\n"):
                     seg = seg.rstrip()
                     if not seg:
+                        continue
+                    if job.consume_output is not None and job.consume_output(job, seg):
                         continue
                     m = _PROGRESS_RE.search(seg)
                     if m:

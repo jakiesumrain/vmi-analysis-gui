@@ -18,6 +18,8 @@ frames) so that frame-to-frame intensity changes are directly comparable.
 """
 
 import argparse
+import base64
+from io import BytesIO
 import sys
 import h5py
 import numpy as np
@@ -55,6 +57,7 @@ movie_fps   = 0               # saved-movie frame rate; 0 -> same speed as playb
 headless    = False           # skip the playback window (for web/GUI use)
 dump_frames = r""             # optional dir for per-frame PNGs; empty to skip
 stream_pace = False           # dump frames at playback pace (live web view)
+preview_stream = False
 # ------------------------------------------
 
 
@@ -84,10 +87,14 @@ def parse_args():
     p.add_argument("--stream-pace", action="store_true", default=stream_pace,
                    help="Dump frames at playback pace (interval-ms between "
                         "frames) so a web UI can follow the movie live.")
+    p.add_argument("--preview-stream", action="store_true",
+                   help="Stream preview frames to stdout without saving files.")
     args = p.parse_args()
     if not args.h5_dir:
         p.error("--h5-dir is required "
                 "(no dataset is bundled with this repository).")
+    if args.preview_stream and (not args.headless or args.save_movie or args.dump_frames):
+        p.error("--preview-stream requires --headless --no-save-movie and no --dump-frames.")
     return args
 
 
@@ -198,6 +205,18 @@ def main():
     norm = (LogNorm(vmin=vmax * vmin_frac, vmax=vmax) if log_scale
             else matplotlib.colors.Normalize(vmin=vmax * vmin_frac, vmax=vmax))
 
+    if preview_stream:
+        for index, rec in enumerate(frames, start=1):
+            with BytesIO() as png:
+                plt.imsave(png, norm(preprocess(load_frame(rec), dark)),
+                           cmap=cmap, vmin=0.0, vmax=1.0, format="png")
+                encoded = base64.b64encode(png.getbuffer()).decode("ascii")
+            print(f"[preview-png] {index} {n_total} {encoded}", flush=True)
+            print(f"[stream] frame {index}/{n_total}", flush=True)
+            if index < n_total:
+                time.sleep(max(40, interval_ms) / 1000.0)
+        return
+
     # optional per-frame PNG dump (for the GUI scrub slider; with
     # --stream-pace the dump runs at playback speed for the live web view)
     if dump_frames:
@@ -294,4 +313,5 @@ if __name__ == '__main__':
     headless = _args.headless
     dump_frames = _args.dump_frames
     stream_pace = _args.stream_pace
+    preview_stream = _args.preview_stream
     main()

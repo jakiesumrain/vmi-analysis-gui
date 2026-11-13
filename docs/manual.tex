@@ -751,9 +751,8 @@ Matplotlib colormap name for the frame images. \\
 colour maximum. \\
 \addlinespace
 \emph{Save movie file} & checkbox, checked & \code{movie.\allowbreak{}save\_\allowbreak{}movie} &
-\emph{-\allowbreak{}-\allowbreak{}save-\allowbreak{}movie} / \code{-\allowbreak{}-\allowbreak{}no-\allowbreak{}save-\allowbreak{}movie} & Unchecked writes no movie and
-enables live playback in the page. It also enables or disables the next
-three fields. \\
+\emph{-\allowbreak{}-\allowbreak{}save-\allowbreak{}movie} / \code{-\allowbreak{}-\allowbreak{}no-\allowbreak{}save-\allowbreak{}movie} & Uncheck to preview frames without
+writing any movie or frame files. The next three fields apply when saving. \\
 \addlinespace
 \emph{Movie output folder} & folder, workspace \code{movies/\allowbreak{}} &
 \code{movie.movie\_\allowbreak{}dir} & \code{-\allowbreak{}-\allowbreak{}movie-\allowbreak{}dir} & Where the movie is written;
@@ -770,25 +769,25 @@ ffmpeg is unavailable. Disabled when not saving. \\
 
 \textbf{Buttons and controls.} \emph{Run}/\emph{Stop} submits job
 \code{Frame movie}. \emph{Clear outputs} lists and deletes the saved movie of
-the current dataset name and all dumped frame images. With saving disabled,
-\code{Pause}/\emph{Resume} freezes the in-page playback (the job itself is
-not paused), and the results include a frame slider. A folder button opens
-the movie's containing folder.
+the current dataset name and all dumped frame images. In preview mode,
+\emph{Pause} freezes the displayed frame while the job continues. Resume
+shows the latest available frame. The counter stops at the end of the run
+or when you click \emph{Stop}. Saved runs include a frame slider and a
+button to open the movie's folder.
 
-\textbf{Results and log.} Dumped frames are written to
+\textbf{Results and log.} Saved runs write frames to
 \code{.cache/\allowbreak{}vmi-\allowbreak{}analysis/\allowbreak{}movie\_\allowbreak{}frames/\allowbreak{}<run>/\allowbreak{}frame\_\allowbreak{}0000.png},
 \code{frame\_\allowbreak{}0001.png}, and so on. A saved movie is
 \code{<output folder>/\allowbreak{}<dataset folder name>.mp4} (or \code{.\allowbreak{}gif}). The
-console reports the fixed display scale, the dump location, stream progress
-(when saving is off), and the saved movie path. In live mode the page loops
-the frames and shows \emph{frame N / total}.
+console reports the fixed display scale and either preview progress or
+the saved output paths. The preview shows \emph{frame N / total}, where
+the total is the number of frames available for the run.
 
 \textbf{Pitfalls.} The movie name comes from the dataset folder's basename,
 so two datasets with the same folder name overwrite each other. Unlike GMD
 Map and Dark Frame, this panel enumerates \emph{all} \code{*.\allowbreak{}h5} files, so
 extra files change frame ordering. The colour maximum comes from the first
-\code{Scale frames} frames only; later brighter frames saturate. Frame dumps
-are always written, even when saving a movie is disabled.
+\code{Scale frames} frames only; later brighter frames saturate.
 
 \subsection{Dark Frame}
 \label{sec:dark}
