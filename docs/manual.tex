@@ -1451,6 +1451,20 @@ mean. \\
 \end{longtable}
 \end{center}
 
+\textbf{GMD histograms.} The \emph{GMD histograms} expansion has two
+diagnostic plots, each with its own required bin range and size:
+\emph{GMD bin min}, \emph{max}, \emph{size} for the selected GMD values, and
+\emph{Weight bin min}, \emph{max}, \emph{size} for the resulting weights
+(saved under \code{binning.gmd\_\allowbreak{}hist\_\allowbreak{}*} and
+\code{binning.weight\_\allowbreak{}hist\_\allowbreak{}*}). The GMD plot uses the raw
+values of the selected GMD column and the weight plot uses the current
+\emph{Weight mode} and \emph{Weight power}; both ignore the GMD floor and
+the GMD weight min/max, so the histograms show the unfiltered distributions.
+The GMD values histogram helps choose the thresholds; the weight histogram shows
+how much each frame contributes. These previews only read the map file and
+do not change the submitted Binning job, which still applies the floor and
+weight limits.
+
 \textbf{Bin and weight semantics.} A frame's bin index is the number of
 thresholds below its GMD value, so the first bin has no lower bound and the
 last has no upper bound. Events from frames beyond the end of the map are

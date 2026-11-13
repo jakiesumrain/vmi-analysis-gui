@@ -1,12 +1,18 @@
 """Panel: vmi_histogram_gmd_bins.py — GMD-binned 2D histograms."""
 
+import asyncio
 import re
 import sys
+from functools import partial
 from pathlib import Path
 
+import numpy as np
 from nicegui import ui
 
-from ..jobs import Job, JobManager
+from ..accumulate_plot import FRAME_HISTOGRAM_HEIGHT, frame_histogram_figure
+from ..centroid_plots import plot_options
+from ..gmd_histograms import gmd_histogram_samples
+from ..jobs import Job, JobManager, ResourceBusyError
 from .. import theme
 from ..settings import binning_inputs
 from ..resources import canonical_path
@@ -15,6 +21,11 @@ from .common import (JobView, REPO_ROOT, file_url, num_input,
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
 BIN_LABEL_PATTERN = r"bin\d+_(?:minusinf|[+-]?\d\.\d{2}e[+-]\d+|[+-]?inf|nan)_(?:plusinf|[+-]?\d\.\d{2}e[+-]\d+|[+-]?inf|nan)"
+
+
+def _resolve(path_text: str) -> Path:
+    path = Path(path_text).expanduser()
+    return path if path.is_absolute() else CENTROID_DIR / path
 
 
 def build(jobs: JobManager) -> None:
@@ -41,9 +52,12 @@ def build(jobs: JobManager) -> None:
                              .classes("w-full").props("outlined dense"),
                              "binning.thresholds")
         with ui.row().classes("gap-4 flex-wrap"):
-            gmd_col = persist(ui.select([4, 5], value=4,
-                                        label="GMD column (4=m1, 5=m2)")
-                              .props("outlined dense"), "binning.gmd_col")
+            gmd_col = persist(ui.select(
+                {4: "GMD value 1 (method 1)", 5: "GMD value 2 (method 2)"},
+                value=4, label="GMD column",
+            ).props("outlined dense").classes("w-64"), "binning.gmd_col")
+            gmd_col.tooltip("Which GMD value from the map drives binning, "
+                            "weights and the histograms: 4 = gmd_val1, 5 = gmd_val2.")
             weight_mode = persist(ui.select(["none", "gmd", "gmd_norm"],
                                             value="gmd_norm",
                                             label="Weight mode")
@@ -57,6 +71,118 @@ def build(jobs: JobManager) -> None:
                                  "binning.gmd_weight_min")
             weight_max = persist(num_input("GMD weight max", settings["gmd_weight_max"]),
                                  "binning.gmd_weight_max")
+
+        with ui.expansion("GMD histograms", icon="bar_chart", value=False).classes("w-full").props(
+            'header-class="vmi-section-toggle text-primary" expand-icon-class="text-primary"'
+        ):
+            ui.label("Diagnostic distributions from the GMD map above. The GMD "
+                     "floor and weight min/max are not applied here; set the "
+                     "min, max and bin size for each histogram.") \
+                .classes("vmi-subtitle")
+
+            ui.label("GMD values histogram").classes("vmi-caption")
+            with ui.row().classes("gap-3 items-end flex-wrap"):
+                gmd_hist_min = persist(
+                    num_input("GMD bin min", None, step="any").classes("w-36")
+                    .props('placeholder="required"'), "binning.gmd_hist_min")
+                gmd_hist_max = persist(
+                    num_input("GMD bin max", None, step="any").classes("w-36")
+                    .props('placeholder="required"'), "binning.gmd_hist_max")
+                gmd_hist_width = persist(
+                    num_input("GMD bin size", None, step="any").classes("w-36")
+                    .props('placeholder="required"'), "binning.gmd_hist_size")
+                gmd_values_button = ui.button("Histogram GMD values", icon="bar_chart") \
+                    .props("flat color=primary")
+            gmd_area = ui.column().classes("w-full gap-1")
+
+            ui.label("Weight histogram").classes("vmi-caption")
+            with ui.row().classes("gap-3 items-end flex-wrap"):
+                weight_hist_min = persist(
+                    num_input("Weight bin min", None, step="any").classes("w-36")
+                    .props('placeholder="required"'), "binning.weight_hist_min")
+                weight_hist_max = persist(
+                    num_input("Weight bin max", None, step="any").classes("w-36")
+                    .props('placeholder="required"'), "binning.weight_hist_max")
+                weight_hist_width = persist(
+                    num_input("Weight bin size", None, step="any").classes("w-36")
+                    .props('placeholder="required"'), "binning.weight_hist_size")
+                weights_button = ui.button("Histogram weights", icon="bar_chart") \
+                    .props("flat color=primary")
+            weights_area = ui.column().classes("w-full gap-1")
+            gmd_area.visible = weights_area.visible = False
+
+        def hide_histogram(area):
+            area.clear()
+            area.visible = False
+
+        def histogram_limits(label, low, high, width):
+            if any(widget.value is None for widget in (low, high, width)):
+                raise ValueError(f"Enter {label} bin min, max and size.")
+            return dict(x_min=float(low.value), x_max=float(high.value),
+                        bin_width=float(width.value))
+
+        async def show_gmd_histogram(kind):
+            sample = "GMD values" if kind == "gmd" else "weights"
+            path_text = (gmd_map.value or "").strip()
+            if not path_text:
+                message = "Set the frame-to-GMD map first."
+                view.log.push(f"[GMD histogram] {message}")
+                ui.notify(message, type="warning")
+                return
+            map_path = _resolve(path_text)
+            area, button = ((gmd_area, gmd_values_button) if kind == "gmd"
+                            else (weights_area, weights_button))
+            button.disable()
+            button.props("loading")
+            try:
+                limits = (histogram_limits("GMD values", gmd_hist_min, gmd_hist_max,
+                                           gmd_hist_width) if kind == "gmd"
+                          else histogram_limits("weights", weight_hist_min,
+                                                weight_hist_max, weight_hist_width))
+                column = int(gmd_col.value or 4)
+                mode = weight_mode.value or "gmd_norm"
+                power = float(weight_power.value or 1.0)
+                view.log.push(f"[GMD histogram] Reading {map_path}…")
+                with jobs.preview_read_access([map_path]) as stopping:
+                    gmd_values, weights, mean_gmd = await asyncio.to_thread(
+                        gmd_histogram_samples, map_path, column, mode, power)
+            except (OSError, ValueError, KeyError, ResourceBusyError) as exc:
+                view.log.push(f"[GMD histogram] Error: {exc}")
+                ui.notify(str(exc), type="negative")
+                return
+            finally:
+                button.props(remove="loading")
+                button.enable()
+
+            area.clear()
+            with area:
+                if kind == "gmd":
+                    caption = (f"{len(gmd_values):,} mapped frames · mean GMD "
+                               f"{mean_gmd:.3e} · map column {column}")
+                    figure = frame_histogram_figure(
+                        gmd_values, title=f"GMD value distribution · column {column}",
+                        x_label=f"GMD value (map column {column})",
+                        y_label="Frames", count_label="frames", **limits)
+                else:
+                    finite = int(np.isfinite(weights).sum())
+                    caption = (f"{len(weights):,} mapped frames · mode {mode} · "
+                               f"{len(weights) - finite:,} non-finite values omitted")
+                    figure = frame_histogram_figure(
+                        weights, title=f"GMD weight distribution · {mode}",
+                        x_label=f"GMD weight ({mode})",
+                        y_label="Frames", count_label="frames", **limits)
+                with ui.row().classes("w-full items-center justify-between"):
+                    ui.label(caption).classes("vmi-caption")
+                    ui.button("Hide", icon="visibility_off",
+                              on_click=partial(hide_histogram, area)) \
+                        .props("flat dense color=secondary")
+                ui.plotly(plot_options(figure)).classes("w-full") \
+                    .style(f"height: {FRAME_HISTOGRAM_HEIGHT}px")
+            area.visible = True
+            view.log.push(f"[GMD histogram] Plotted {sample} · {caption}")
+
+        gmd_values_button.on_click(partial(show_gmd_histogram, "gmd"))
+        weights_button.on_click(partial(show_gmd_histogram, "weights"))
 
         def run():
             cmd = [sys.executable, "-m", "vmi_analysis.centroiding.vmi_histogram_gmd_bins",

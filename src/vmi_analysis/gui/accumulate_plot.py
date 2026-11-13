@@ -33,8 +33,9 @@ def accumulation_figure(values, *, title="Accumulated image", revision=None, col
 
 def frame_histogram_figure(values, *, title="Raw frame histogram",
                            bins=160, log_y=True, x_min=None, x_max=None,
-                           bin_width=None, x_label="Raw pixel value (counts)"):
-    """Plot the distribution of pixel values in an image."""
+                           bin_width=None, x_label="Raw pixel value (counts)",
+                           y_label="Pixels", count_label="pixels"):
+    """Plot a one-dimensional distribution (pixels or per-frame samples)."""
     values = np.asarray(values, dtype=float).ravel()
     values = values[np.isfinite(values)]
     if values.size == 0:
@@ -71,13 +72,13 @@ def frame_histogram_figure(values, *, title="Raw frame histogram",
         x=centers, y=counts, width=widths,
         marker_color="#cc785c", marker_line_width=0,
         customdata=np.column_stack([edges[:-1], edges[1:]]),
-        hovertemplate="Pixel value %{customdata[0]:.4g}–%{customdata[1]:.4g}"
-                      "<br>%{y} pixels<extra></extra>"), row=1, col=1)
+        hovertemplate="Bin %{customdata[0]:.4g}–%{customdata[1]:.4g}"
+                      f"<br>%{{y}} {count_label}<extra></extra>"), row=1, col=1)
     fig.update_xaxes(title_text=x_label, showgrid=False,
                      zeroline=False)
     if x_min is not None or x_max is not None:
         fig.update_xaxes(range=[lower, upper])
-    fig.update_yaxes(title_text="Pixels", type="log" if log_y else "linear")
+    fig.update_yaxes(title_text=y_label, type="log" if log_y else "linear")
     _style(fig, title)
     fig.update_layout(height=FRAME_HISTOGRAM_HEIGHT,
                       margin={"l": 70, "r": 30, "t": 60, "b": 50})
