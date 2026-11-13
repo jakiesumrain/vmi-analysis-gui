@@ -369,6 +369,25 @@ class GuiSubmissionTests(unittest.TestCase):
         for stage in job.stages:
             self.assertNotIn("--config", stage.cmd)
 
+    def test_binning_histogram_bins_start_blank_for_auto_binning(self):
+        from nicegui import Client, app, ui
+        from vmi_analysis.gui.panels import binning
+        manager = Mock()
+        manager.jobs.return_value = []
+        client = Client(ui.page("/_test_binning_bins"))
+        labels = {"GMD bin min", "GMD bin max", "GMD bin size",
+                  "Weight bin min", "Weight bin max", "Weight bin size"}
+        try:
+            with client, patch.object(app.storage, "_general", {MIGRATED_KEY: True}):
+                binning.build(manager)
+            fields = {element.label: element.value
+                      for element in client.elements.values()
+                      if getattr(element, "label", None) in labels}
+            self.assertEqual(set(fields), labels)
+            self.assertTrue(all(value is None for value in fields.values()))
+        finally:
+            client.delete()
+
     def test_binning_uses_explicit_paths_and_dark_preserves_zero_frames(self):
         from vmi_analysis.gui.panels import binning, dark
         store = {MIGRATED_KEY: True, "binning.checkpoint": "chosen.h5",
