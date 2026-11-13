@@ -37,6 +37,11 @@ class FramePreviewTests(unittest.TestCase):
         expected = np.arange(2 * 8 * 8, dtype=np.uint16).reshape(2, 8, 8)[0] + 1000
         np.testing.assert_array_equal(frame_preview.load_raw_frame(refs[2]), expected)
 
+    def test_histogram_uses_auto_bins_when_limits_are_blank(self):
+        figure = frame_histogram_figure(np.arange(100.0), auto_bins=True)
+        self.assertEqual(len(figure.data), 1)
+        self.assertGreater(len(figure.data[0].x), 1)
+
     def test_pick_frame_index_random_and_range(self):
         refs = frame_preview.list_raw_frames(self.folder)
         self.assertEqual(frame_preview.pick_frame(refs, 3).global_index, 3)

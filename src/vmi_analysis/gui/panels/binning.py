@@ -84,13 +84,13 @@ def build(jobs: JobManager) -> None:
             with ui.row().classes("gap-3 items-end flex-wrap"):
                 gmd_hist_min = persist(
                     num_input("GMD bin min", None, step="any").classes("w-36")
-                    .props('placeholder="required"'), "binning.gmd_hist_min")
+                    .props('placeholder="auto"'), "binning.gmd_hist_min")
                 gmd_hist_max = persist(
                     num_input("GMD bin max", None, step="any").classes("w-36")
-                    .props('placeholder="required"'), "binning.gmd_hist_max")
+                    .props('placeholder="auto"'), "binning.gmd_hist_max")
                 gmd_hist_width = persist(
                     num_input("GMD bin size", None, step="any").classes("w-36")
-                    .props('placeholder="required"'), "binning.gmd_hist_size")
+                    .props('placeholder="auto"'), "binning.gmd_hist_size")
                 gmd_values_button = ui.button("Histogram GMD values", icon="bar_chart") \
                     .props("flat color=primary")
             gmd_area = ui.column().classes("w-full gap-1")
@@ -99,13 +99,13 @@ def build(jobs: JobManager) -> None:
             with ui.row().classes("gap-3 items-end flex-wrap"):
                 weight_hist_min = persist(
                     num_input("Weight bin min", None, step="any").classes("w-36")
-                    .props('placeholder="required"'), "binning.weight_hist_min")
+                    .props('placeholder="auto"'), "binning.weight_hist_min")
                 weight_hist_max = persist(
                     num_input("Weight bin max", None, step="any").classes("w-36")
-                    .props('placeholder="required"'), "binning.weight_hist_max")
+                    .props('placeholder="auto"'), "binning.weight_hist_max")
                 weight_hist_width = persist(
                     num_input("Weight bin size", None, step="any").classes("w-36")
-                    .props('placeholder="required"'), "binning.weight_hist_size")
+                    .props('placeholder="auto"'), "binning.weight_hist_size")
                 weights_button = ui.button("Histogram weights", icon="bar_chart") \
                     .props("flat color=primary")
             weights_area = ui.column().classes("w-full gap-1")
@@ -115,11 +115,13 @@ def build(jobs: JobManager) -> None:
             area.clear()
             area.visible = False
 
-        def histogram_limits(label, low, high, width):
-            if any(widget.value is None for widget in (low, high, width)):
-                raise ValueError(f"Enter {label} bin min, max and size.")
-            return dict(x_min=float(low.value), x_max=float(high.value),
-                        bin_width=float(width.value))
+        def histogram_limits(low, high, width):
+            """Blank fields are passed as None so NumPy chooses them."""
+            return dict(
+                x_min=None if low.value is None else float(low.value),
+                x_max=None if high.value is None else float(high.value),
+                bin_width=None if width.value is None else float(width.value),
+            )
 
         async def show_gmd_histogram(kind):
             sample = "GMD values" if kind == "gmd" else "weights"
@@ -135,9 +137,9 @@ def build(jobs: JobManager) -> None:
             button.disable()
             button.props("loading")
             try:
-                limits = (histogram_limits("GMD values", gmd_hist_min, gmd_hist_max,
+                limits = (histogram_limits(gmd_hist_min, gmd_hist_max,
                                            gmd_hist_width) if kind == "gmd"
-                          else histogram_limits("weights", weight_hist_min,
+                          else histogram_limits(weight_hist_min,
                                                 weight_hist_max, weight_hist_width))
                 column = int(gmd_col.value or 4)
                 mode = weight_mode.value or "gmd_norm"
@@ -162,7 +164,8 @@ def build(jobs: JobManager) -> None:
                     figure = frame_histogram_figure(
                         gmd_values, title=f"GMD value distribution · column {column}",
                         x_label=f"GMD value (map column {column})",
-                        y_label="Frames", count_label="frames", **limits)
+                        y_label="Frames", count_label="frames",
+                        auto_bins=True, **limits)
                 else:
                     finite = int(np.isfinite(weights).sum())
                     caption = (f"{len(weights):,} mapped frames · mode {mode} · "
@@ -170,7 +173,8 @@ def build(jobs: JobManager) -> None:
                     figure = frame_histogram_figure(
                         weights, title=f"GMD weight distribution · {mode}",
                         x_label=f"GMD weight ({mode})",
-                        y_label="Frames", count_label="frames", **limits)
+                        y_label="Frames", count_label="frames",
+                        auto_bins=True, **limits)
                 with ui.row().classes("w-full items-center justify-between"):
                     ui.label(caption).classes("vmi-caption")
                     ui.button("Hide", icon="visibility_off",

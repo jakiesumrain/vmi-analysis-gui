@@ -34,7 +34,8 @@ def accumulation_figure(values, *, title="Accumulated image", revision=None, col
 def frame_histogram_figure(values, *, title="Raw frame histogram",
                            bins=160, log_y=True, x_min=None, x_max=None,
                            bin_width=None, x_label="Raw pixel value (counts)",
-                           y_label="Pixels", count_label="pixels"):
+                           y_label="Pixels", count_label="pixels",
+                           auto_bins=False):
     """Plot a one-dimensional distribution (pixels or per-frame samples)."""
     values = np.asarray(values, dtype=float).ravel()
     values = values[np.isfinite(values)]
@@ -63,6 +64,9 @@ def frame_histogram_figure(values, *, title="Raw frame histogram",
         bins = np.append(left_edges[left_edges < upper], upper)
         if np.any(np.diff(bins) <= 0):
             raise ValueError("Histogram bin width is too small for the selected X range.")
+    elif auto_bins:
+        # No user-supplied size: let NumPy choose the bin edges.
+        bins = np.histogram_bin_edges(values, bins="auto", range=(lower, upper))
 
     counts, edges = np.histogram(values, bins=bins, range=(lower, upper))
     widths = np.diff(edges)

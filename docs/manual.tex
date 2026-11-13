@@ -1452,11 +1452,14 @@ mean. \\
 \end{center}
 
 \textbf{GMD histograms.} The \emph{GMD histograms} expansion has two
-diagnostic plots, each with its own required bin range and size:
+diagnostic plots, each with an optional bin range and size:
 \emph{GMD bin min}, \emph{max}, \emph{size} for the selected GMD values, and
 \emph{Weight bin min}, \emph{max}, \emph{size} for the resulting weights
 (saved under \code{binning.gmd\_\allowbreak{}hist\_\allowbreak{}*} and
-\code{binning.weight\_\allowbreak{}hist\_\allowbreak{}*}). The GMD plot uses the raw
+\code{binning.weight\_\allowbreak{}hist\_\allowbreak{}*}). Leave min or max
+blank to use the data range, and leave size blank to let NumPy's automatic
+bin selection choose the edges. Supplying fields narrows the range or fixes
+the bin size. The GMD plot uses the raw
 values of the selected GMD column and the weight plot uses the current
 \emph{Weight mode} and \emph{Weight power}; both ignore the GMD floor and
 the GMD weight min/max, so the histograms show the unfiltered distributions.
