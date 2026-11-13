@@ -295,10 +295,10 @@ panel-specific fields are in Section~\ref{sec:panels}.
 
 Open \emph{Settings} to set the job limit or control shutdown after a
 disconnect. Use the same menu to save and load workflow files.
-The tabs appear in this order:
-\code{GMD Map}, \emph{Movie}, \emph{Dark Frame}, \emph{Accumulate},
-\code{Centroiding}, \emph{Binning}, \emph{Trig Calibration}, \emph{Circularize}, \emph{PES},
-\code{Pipeline}.
+The tab bar shows \emph{GMD Map}, \emph{Movie}, \emph{Dark Frame},
+\emph{Accumulate}, and \emph{Centroiding}. Open \emph{More...} to access
+\emph{Binning}, \emph{Trig Calibration}, \emph{Circularize}, \emph{PES},
+and \emph{Pipeline}.
 
 Every panel is built when the page loads and keeps its own run state,
 progress, log, and results. Switching tabs does not stop or restart work.
@@ -380,11 +380,12 @@ When a job fails, read the console for error details. Results can include
   \item the exact output paths and a summary of what was written.
 \end{itemize}
 
-A few panels also offer \emph{View saved result(s)} and
-\code{Clear output(s)} buttons. The first re-renders existing outputs
-without rerunning (it refuses while a job is active); the second asks for
-confirmation and deletes the listed outputs. These buttons are not present
-on every panel; the panel reference states which ones have them.
+\emph{View saved result(s)} reopens existing results on panels that offer it.
+Use \emph{Clear output(s)} to delete the listed files after confirmation.
+Trig Calibration has separate clear buttons for the calibration and session
+files. Pipeline clears files written during the last selected run in this
+server session, excluding stages that it skipped. Jobs can reserve files and
+prevent deletion while they run or wait in the queue.
 
 \subsection{The local file picker}
 \label{sec:picker}
@@ -564,8 +565,7 @@ values into its map.
 A dark frame is a \code{.\allowbreak{}npy} array with the same shape as one
 camera frame. Dark Frame computes the array from dark acquisitions.
 Movie and Accumulate subtract the array when you supply it.
-In Centroiding, enable dark subtraction to use a precomputed array or to
-compute one from the dark HDF5 directory.
+In Centroiding, select the precomputed dark array and enable dark subtraction.
 
 \subsection{Circularization calibration files}
 \label{sec:calibfiles}
@@ -768,8 +768,10 @@ ffmpeg is unavailable. Disabled when not saving. \\
 \end{center}
 
 \textbf{Buttons and controls.} \emph{Run}/\emph{Stop} submits job
-\code{Frame movie}. \emph{Clear outputs} lists and deletes the saved movie of
-the current dataset name and all dumped frame images. In preview mode,
+\code{Frame movie}. \emph{Clear outputs} lists the saved movie files for
+the selected dataset name and the frame dumps linked to the dataset and output
+folder. Older dumps without dataset information remain on disk. The same
+button dismisses a completed live preview. In preview mode,
 \emph{Pause} freezes the displayed frame while the job continues. Resume
 shows the latest available frame. The counter stops at the end of the run
 or when you click \emph{Stop}. Saved runs include a frame slider and a
@@ -780,7 +782,8 @@ button to open the movie's folder.
 \code{frame\_\allowbreak{}0001.png}, and so on. A saved movie is
 \code{<output folder>/\allowbreak{}<dataset folder name>.mp4} (or \code{.\allowbreak{}gif}). The
 console reports the fixed display scale and either preview progress or
-the saved output paths. The preview shows \emph{frame N / total}, where
+the saved output paths. The preview shows zero-based X and Y pixel axes
+and \emph{frame N / total}, where
 the total is the number of frames available for the run.
 
 \textbf{Pitfalls.} The movie name comes from the dataset folder's basename,
@@ -1060,17 +1063,9 @@ used only when GMD weighting is on. The label is misleading: an empty or
 missing file produces a warning and all event weights become 1.0; there is
 no fallback to \code{raw/\allowbreak{}meta}. \\
 \addlinespace
-\emph{Dark HDF5 directory} & folder, empty & \code{vmi\_\allowbreak{}picasso.\allowbreak{}dark\_\allowbreak{}data\_\allowbreak{}dir} &
-\emph{-\allowbreak{}-\allowbreak{}dark-\allowbreak{}data-\allowbreak{}dir} & Dark acquisitions, used only when dark subtraction
-is on and no usable pre-computed dark file exists. \\
-\addlinespace
-\emph{Dark pattern} & text, \code{RAW-\allowbreak{}*.\allowbreak{}h5} & \code{vmi\_\allowbreak{}picasso.\allowbreak{}dark\_\allowbreak{}h5\_\allowbreak{}pattern} &
-\emph{-\allowbreak{}-\allowbreak{}dark-\allowbreak{}h5-\allowbreak{}pattern} & Glob inside the dark folder; ignored unless the
-dark folder is used. \\
-\addlinespace
 \code{Pre-\allowbreak{}computed dark .npy} & file, empty & \code{vmi\_\allowbreak{}picasso.\allowbreak{}dark\_\allowbreak{}file} &
-\emph{-\allowbreak{}-\allowbreak{}dark-\allowbreak{}file} & Highest-priority dark frame, for example one produced by
-the Dark Frame panel. Relative paths are joined to \code{centroiding/\allowbreak{}}. \\
+\emph{-\allowbreak{}-\allowbreak{}dark-\allowbreak{}file} & Required when dark subtraction is on. Use the array from
+the Dark Frame panel or an equivalent precomputed array. Relative paths are joined to \code{centroiding/\allowbreak{}}. \\
 \addlinespace
 \emph{Output directory} & folder, \code{vmi\_\allowbreak{}output} & \code{vmi\_\allowbreak{}picasso.\allowbreak{}output\_\allowbreak{}dir} &
 \emph{-\allowbreak{}-\allowbreak{}output-\allowbreak{}dir} & Directory for every output (created if missing). A
@@ -1154,17 +1149,15 @@ processing is off. \\
 \addlinespace
 \emph{Dark subtraction} & checkbox, off & \code{processing.\allowbreak{}enable\_\allowbreak{}dark\_\allowbreak{}subtraction} &
 \emph{-\allowbreak{}-\allowbreak{}dark-\allowbreak{}subtraction} / \code{-\allowbreak{}-\allowbreak{}no-\allowbreak{}dark-\allowbreak{}subtraction} & Master switch for
-dark correction. When no dark file or folder is usable the script falls back
-to a per-frame clipped median background. \\
+dark correction. Requires a valid precomputed dark array. Disables the
+per-frame median option. \\
 \addlinespace
-\emph{Dark method} & select, \code{mean} & \code{processing.\allowbreak{}dark\_\allowbreak{}method} &
-\emph{-\allowbreak{}-\allowbreak{}dark-\allowbreak{}method} & How a dark frame built from the dark folder is
-combined: streaming mean (low memory) or median (all selected frames in
-memory). Ignored when a pre-computed \code{.\allowbreak{}npy} is used. \\
-\addlinespace
-\emph{Dark frame count} & number, 2000 & \code{processing.\allowbreak{}dark\_\allowbreak{}frame\_\allowbreak{}count} &
-\emph{-\allowbreak{}-\allowbreak{}dark-\allowbreak{}frame-\allowbreak{}count} & Frames used for the computed dark; must be at
-least 1. Unlike the Dark Frame panel, 0 is \emph{not} ``all frames'' here. \\
+\emph{Per-frame median subtraction} & checkbox, on &
+\code{processing.\allowbreak{}enable\_\allowbreak{}median\_\allowbreak{}subtraction} &
+\code{-\allowbreak{}-\allowbreak{}median-\allowbreak{}subtraction} /
+\code{-\allowbreak{}-\allowbreak{}no-\allowbreak{}median-\allowbreak{}subtraction} &
+Subtracts the 3$\sigma$-clipped median from every pixel in each frame when
+dark subtraction is off. To compare batch runs, use separate checkpoint files. \\
 \addlinespace
 \emph{Flat field} & checkbox, off & \code{processing.\allowbreak{}enable\_\allowbreak{}flat\_\allowbreak{}field} &
 \emph{-\allowbreak{}-\allowbreak{}flat-\allowbreak{}field} / \code{-\allowbreak{}-\allowbreak{}no-\allowbreak{}flat-\allowbreak{}field} & Enables per-pixel flat
@@ -1475,7 +1468,8 @@ are \code{minusinf}, \code{plusinf} or a threshold; the summed file
 empty for \code{none}, \code{\_\allowbreak{}w-\allowbreak{}gmd} for \code{gmd}, \code{\_\allowbreak{}w-\allowbreak{}gmd\_\allowbreak{}norm}
 for \code{gmd\_\allowbreak{}norm} with power exactly 1, and
 \code{\_\allowbreak{}w-\allowbreak{}gmd\_\allowbreak{}norm\_\allowbreak{}p<value>} otherwise. The results area displays the
-overview PNG.
+overview PNG. \emph{Clear outputs} lists the bin images and overview for the
+selected output directory and weighting.
 
 \textbf{Pitfalls.} The histogram size is hardcoded to 1024$\times$1024
 camera pixels and the checkpoint's real image shape is not read. The
@@ -1586,9 +1580,9 @@ Fit the $P_2(\cos\theta)$ anisotropy amplitude. \\
 \emph{Iterative terms} & checkbox, on & \code{calibration.\allowbreak{}iterative} &
 Fit $1,2,\ldots,N$ terms cumulatively instead of all at once. \\
 \addlinespace
-\emph{Extracted trig-fit file} & save, \code{circularization/\allowbreak{}extracted-\allowbreak{}YYYYMMDD.\allowbreak{}txt} &
-\code{calibration.\allowbreak{}output} & Accepted rings are appended here; create a fresh file per
-calibration. \\
+\emph{Extracted trig-fit file} & save, \code{extracted.txt} beside the VMI image &
+\code{calibration.\allowbreak{}output} & Accepted rings are appended here.
+Selecting an image in a different folder updates this path. You can edit it. \\
 \addlinespace
 \emph{Provenance comments} & checkbox, on & \code{calibration.\allowbreak{}provenance} &
 Include band, filter, Abel method, and RMS comments. The fit center and
@@ -1812,9 +1806,9 @@ the job. The GUI's \emph{No Jacobian} default differs from the command-line defa
 is the most consequential default difference in this panel. Beyond the last
 assigned radius, reassignment keeps the final radial offset constant.
 Circularize checks the combined warp for invalid radii and folds on the output
-grid before resampling. There are no
-\code{View saved result} or \emph{Clear output} buttons, and the progress bar
-stays empty because the script does not print percentages.
+grid before resampling. \emph{Clear outputs} lists the selected corrected image,
+the diagnostic plots in the plot output directory, and any matching polar
+preview cache from this server session. The script does not print percentages.
 
 \subsection{PES / Abel inversion}
 \label{sec:pes}
@@ -1899,9 +1893,8 @@ needs the basis file \code{G\_\allowbreak{}r512\_\allowbreak{}k512\_\allowbreak{
 calibration files are missing and when the MATLAB basis is absent. The
 default PyAbel backend needs neither MATLAB nor the basis file.
 
-\textbf{Pitfalls.} The panel has no \emph{View saved result} or
-\code{Clear output} buttons, so after a reload past results cannot be
-reopened from the interface. The progress bar stays empty because the script
+\textbf{Pitfalls.} \emph{Clear outputs} lists the overview plots, results archive,
+and per-bin files for the selected weight suffix. The progress bar stays empty because the script
 does not print percentages. Individual bin failures are reported and
 processing continues; if no bin succeeds the job fails. Weighted and
 unweighted runs write to different automatic output directories so their

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse, Response
 from nicegui import app, ui
 
 from ..jobs import Job, JobManager, MANAGER, TERMINAL
+from ..resources import canonical_path
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
                      open_folder_button, path_input, persist,
@@ -27,10 +28,49 @@ function vmiMovieStart(url) {
   const p = {url, index: 0, paused: false};
   window.vmiMovie = p;
   const img = document.getElementById('vmi-live-img');
-  if (img) img.removeAttribute('src');
+  if (img) img.replaceChildren();
   const ctr = document.getElementById('vmi-live-counter');
   if (ctr) ctr.textContent = '';
   vmiMovieStep(p);
+}
+function vmiMovieDraw(svg, frame) {
+  const {width, height} = frame;
+  if (svg.dataset.shape !== width + 'x' + height || !svg.firstChild) {
+    svg.dataset.shape = width + 'x' + height;
+    svg.replaceChildren();
+    const scale = 570 / Math.max(width, height);
+    const w = width * scale, h = height * scale;
+    const left = 65, top = 14;
+    svg.setAttribute('viewBox', `0 0 ${left + w + 20} ${top + h + 54}`);
+    const add = (tag, attrs, label) => {
+      const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, value);
+      if (label !== undefined) el.textContent = label;
+      svg.append(el);
+    };
+    const line = (x1, y1, x2, y2) =>
+      add('line', {x1, y1, x2, y2, stroke: 'currentColor'});
+    const text = (x, y, label, anchor = 'middle', transform = '') =>
+      add('text', {x, y, 'text-anchor': anchor, transform, fill: 'currentColor', 'font-size': 13}, label);
+    add('image', {x: left, y: top, width: w, height: h});
+    line(left, top, left, top + h);
+    line(left, top + h, left + w, top + h);
+    const ticks = size => [...new Set(Array.from({length: 5},
+      (_, i) => Math.round(i * (size - 1) / 4)))];
+    for (const tick of ticks(width)) {
+      const x = left + (tick + .5) * scale;
+      line(x, top + h, x, top + h + 5);
+      text(x, top + h + 20, tick);
+    }
+    for (const tick of ticks(height)) {
+      const y = top + (tick + .5) * scale;
+      line(left - 5, y, left, y);
+      text(left - 9, y + 4, tick, 'end');
+    }
+    text(left + w / 2, top + h + 41, 'X (pixels)');
+    text(17, top + h / 2, 'Y (pixels)', 'middle', `rotate(-90 17 ${top + h / 2})`);
+  }
+  svg.firstChild.setAttribute('href', 'data:image/png;base64,' + frame.png);
 }
 async function vmiMovieStep(p) {
   if (p !== window.vmiMovie) return;
@@ -43,7 +83,7 @@ async function vmiMovieStep(p) {
         const frame = await response.json();
         if (p !== window.vmiMovie || p.paused) return;
         const img = document.getElementById('vmi-live-img');
-        if (img) img.src = 'data:image/png;base64,' + frame.png;
+        if (img) vmiMovieDraw(img, frame);
         const ctr = document.getElementById('vmi-live-counter');
         if (ctr) ctr.textContent = 'frame ' + frame.index + ' / ' + frame.total;
         p.index = frame.index;
@@ -80,8 +120,9 @@ def _consume_preview_frame(job: Job, line: str) -> bool:
     prefix = "[preview-png] "
     if not line.startswith(prefix):
         return False
-    index, total, png = line[len(prefix):].split(" ", 2)
-    job.extra["preview_frame"] = {"index": int(index), "total": int(total), "png": png}
+    index, total, width, height, png = line[len(prefix):].split(" ", 4)
+    job.extra["preview_frame"] = {"index": int(index), "total": int(total),
+                                  "width": int(width), "height": int(height), "png": png}
     return True
 
 
@@ -182,8 +223,7 @@ def build(jobs: JobManager) -> None:
         with ui.row().classes("gap-2"):
             view.run_button(on_click=run)
             ui.button("Clear outputs", icon="delete",
-                      on_click=lambda: _clear_outputs(
-                          movie_dir, h5_dir)) \
+                      on_click=lambda: _clear_outputs(movie_dir, h5_dir, view, clear_preview)) \
                 .props("flat color=negative")
         ui.label("Turn off Save movie file to preview frames without saving files.").classes("vmi-subtitle")
 
@@ -194,12 +234,20 @@ def build(jobs: JobManager) -> None:
             pause_btn = ui.button("Pause", on_click=lambda: _toggle_pause()) \
                 .props("flat dense color=primary")
             ui.label("").props("id=vmi-live-counter").classes("vmi-subtitle")
-        # a plain <img>, not ui.image: the JS player drives src directly,
-        # and Quasar's QImg wrapper div would swallow the updates
-        live_img = ui.element("img").props("id=vmi-live-img") \
+        live_img = ui.element("svg").props('id=vmi-live-img role=img aria-label="Movie preview with pixel axes"') \
             .classes("w-full max-w-2xl")
         live_img.visible = False
         live_state = {"job": None}
+
+        def clear_preview():
+            if view.job is None or view.job.status not in TERMINAL:
+                return False
+            had_preview = view.job.extra.pop("preview_frame", None) is not None or live_img.visible
+            if had_preview:
+                ui.run_javascript("vmiMovieStop()")
+                live_state["job"] = None
+                live_label.visible = live_row.visible = live_img.visible = False
+            return had_preview
 
         def _toggle_pause():
             if live_state["job"] is None:
@@ -225,29 +273,50 @@ def build(jobs: JobManager) -> None:
     view.place_console()
 
 
-def _clear_outputs(movie_dir, h5_dir) -> None:
-    """Delete the saved movie file(s) and the dumped scrubber frames."""
-    name = (os.path.basename(os.path.normpath(h5_dir.value))
-            if h5_dir.value else "")
-    targets = []
-    if name and movie_dir.value:
-        for ext in (".mp4", ".gif"):
-            p = Path(movie_dir.value) / (name + ext)
-            if p.exists():
-                targets.append(p)
-    frames_dir = GENERATED / "movie_frames"
-    frame_pngs = (sorted(frames_dir.rglob("frame_*.png"))
-                  if frames_dir.exists() else [])
-    if not targets and not frame_pngs:
-        ui.notify("Nothing to delete.", type="info")
+def _saved_frame_dirs(dataset: Path, output_dir: Path):
+    for source in sorted((GENERATED / "movie_frames").glob("*/movie-source.json")):
+        if source.parent.is_symlink() or source.parent.is_junction() or source.is_symlink():
+            continue
+        try:
+            metadata = json.loads(source.read_text(encoding="utf-8"))
+            if (canonical_path(metadata["dataset"]) == dataset
+                    and canonical_path(metadata["output_dir"]) == output_dir):
+                yield source.parent
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+
+
+def _clear_outputs(movie_dir, h5_dir, view: JobView, clear_preview) -> None:
+    """Clear the selected movie and its identified saved-frame dumps."""
+    if not h5_dir.value:
+        if clear_preview():
+            ui.notify("Movie preview cleared.", type="positive")
+            return
+        ui.notify("Choose the dataset whose saved outputs you want to clear.", type="info")
+        return
+    dataset = canonical_path(h5_dir.value, REPO_ROOT)
+    output_dir = canonical_path(movie_dir.value or REPO_ROOT, REPO_ROOT)
+    name = os.path.basename(os.path.normpath(h5_dir.value))
+    movies = [path for ext in (".mp4", ".gif")
+              if (path := output_dir / (name + ext)).is_file()]
+    frame_dirs = list(_saved_frame_dirs(dataset, output_dir))
+    frame_pngs = [path for folder in frame_dirs for path in sorted(folder.glob("frame_*.png"))]
+    sidecars = [path for folder in frame_dirs for filename in ("movie-source.json", "movie-path.txt")
+                if (path := folder / filename).is_file()]
+    targets = {path: path.lstat() for path in movies + frame_pngs + sidecars}
+    if not targets:
+        if clear_preview():
+            ui.notify("Movie preview cleared.", type="positive")
+        else:
+            ui.notify("No saved movie outputs for this dataset. Preview runs save no files.", type="info")
         return
 
     with ui.dialog() as dlg, ui.card():
         ui.label("Delete movie outputs?").classes("vmi-caption")
-        for p in targets:
+        for p in movies:
             ui.label(str(p)).style("font-family: monospace")
         if frame_pngs:
-            ui.label(f"{len(frame_pngs)} dumped frame PNGs in {frames_dir}") \
+            ui.label(f"{len(frame_pngs)} saved frame images for this dataset") \
                 .style("font-family: monospace")
         with ui.row().classes("gap-2"):
             ui.button("Delete", color="negative", on_click=lambda: do_delete())
@@ -255,12 +324,16 @@ def _clear_outputs(movie_dir, h5_dir) -> None:
     dlg.open()
 
     def do_delete():
-        failed = delete_outputs(targets + frame_pngs)
+        failed = delete_outputs([*movies, *frame_pngs], expected=targets)
         if failed is None:
             return
-        if frame_pngs:
+        if not failed:
+            failed = delete_outputs(sidecars, expected=targets)
+            if failed is None:
+                return
+        for folder in frame_dirs:
             try:
-                frames_dir.rmdir()
+                folder.rmdir()
             except OSError:
                 pass
         dlg.close()
@@ -268,8 +341,9 @@ def _clear_outputs(movie_dir, h5_dir) -> None:
             ui.notify("Could not delete: " + "; ".join(failed),
                       type="negative")
         else:
-            ui.notify(f"Deleted {len(targets) + len(frame_pngs)} file(s)",
-                      type="positive")
+            view.results.clear()
+            clear_preview()
+            ui.notify("Saved movie outputs cleared.", type="positive")
 
 
 def _results(job: Job):

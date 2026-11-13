@@ -105,13 +105,17 @@ body {
 .q-card {
   border-radius: 12px;
 }
-.q-tab {
+.q-tab, .vmi-more-panels {
   color: var(--vmi-muted);
   text-transform: none;
   font-weight: 500;
   border-radius: 8px;
 }
-.q-tab--active {
+.vmi-more-panels {
+  min-height: 48px;
+  flex-shrink: 0;
+}
+.q-tab--active, .vmi-more-panels-active {
   color: var(--vmi-ink);
   background: var(--vmi-surface-card);
 }

@@ -1,5 +1,6 @@
 """Panel: circularization.py — single-image circularization."""
 
+import re
 import sys
 from pathlib import Path
 
@@ -12,9 +13,10 @@ from ..centroid_plots import _heatmap, _image_axes, _style, plot_options
 from ..jobs import Job, JobManager
 from .. import theme
 from ..settings import centroid_settings, output_dir
+from ..resources import canonical_path
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
                      open_folder_button, path_input, persist,
-                     zoomable_image)
+                     zoomable_image, confirm_clear_outputs)
 from .polar_preview import (bind_percentiles, polar_controls, polar_preview,
                             set_polar_source, set_polar_view)
 
@@ -154,7 +156,37 @@ def build(jobs: JobManager):
             polar_card.set_visibility(False)
             view.attach(jobs.submit(job))
 
-        view.run_button(on_click=run)
+        def clear():
+            if not out.value:
+                ui.notify("Set an output image path first.", type="warning")
+                return
+            inputs = (("input image", inp.value), ("extracted calibration file", extracted.value),
+                      ("radial reassignment file", reassign.value))
+            try:
+                target = validate_distinct_output(out.value, inputs, cwd=CIRC_DIR)
+                directory = canonical_path(plot_dir.value, CIRC_DIR)
+                diagnostics = [path for path in _diagnostic_files(directory) if path.is_file()]
+                for path in diagnostics:
+                    validate_distinct_output(path, inputs, cwd=CIRC_DIR)
+            except (OSError, ValueError) as exc:
+                ui.notify(str(exc), type="warning")
+                return
+            targets = [target, *diagnostics]
+            for job in jobs.jobs():
+                if (job.name == "Circularize" and job.extra.get("polar_preview")
+                        and canonical_path(job.extra["output"], job.cwd) == canonical_path(target)):
+                    targets.append(job.extra["polar_preview"])
+
+            def cleared():
+                view.results.clear()
+                polar_data.clear()
+                polar_card.set_visibility(False)
+
+            confirm_clear_outputs(targets, "Delete Circularize outputs and diagnostic plots?", on_cleared=cleared)
+
+        with ui.row().classes("gap-2"):
+            view.run_button(on_click=run)
+            ui.button("Clear outputs", icon="delete", on_click=clear).props("flat color=negative")
 
         polar_data, polar_widgets = {}, {}
         with ui.column().classes("w-full gap-2 border-t border-stone-200 pt-4 polar-guide-group") as polar_card:
@@ -208,6 +240,12 @@ def build(jobs: JobManager):
         return int(max_trig_n.value or 0)
 
     return use_calibration
+
+
+def _diagnostic_files(directory):
+    return [directory / "reassignment_map.png",
+            *(path for path in sorted(directory.glob("trig_order_*.png"))
+              if re.fullmatch(r"trig_order_\d+\.png", path.name))]
 
 
 def _results(job: Job):

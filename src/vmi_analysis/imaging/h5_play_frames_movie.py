@@ -24,6 +24,7 @@ import sys
 import h5py
 import numpy as np
 import inspect
+import json
 import os
 import time
 from pathlib import Path
@@ -207,11 +208,13 @@ def main():
 
     if preview_stream:
         for index, rec in enumerate(frames, start=1):
+            image = preprocess(load_frame(rec), dark)
+            height, width = image.shape
             with BytesIO() as png:
-                plt.imsave(png, norm(preprocess(load_frame(rec), dark)),
+                plt.imsave(png, norm(image),
                            cmap=cmap, vmin=0.0, vmax=1.0, format="png")
                 encoded = base64.b64encode(png.getbuffer()).decode("ascii")
-            print(f"[preview-png] {index} {n_total} {encoded}", flush=True)
+            print(f"[preview-png] {index} {n_total} {width} {height} {encoded}", flush=True)
             print(f"[stream] frame {index}/{n_total}", flush=True)
             if index < n_total:
                 time.sleep(max(40, interval_ms) / 1000.0)
@@ -221,6 +224,11 @@ def main():
     # --stream-pace the dump runs at playback speed for the live web view)
     if dump_frames:
         os.makedirs(dump_frames, exist_ok=True)
+        if save_movie:
+            (Path(dump_frames) / "movie-source.json").write_text(json.dumps({
+                "dataset": str(Path(h5_dir).resolve()),
+                "output_dir": str(Path(movie_dir or os.getcwd()).resolve()),
+            }), encoding="utf-8")
         for rec in frames:
             img = preprocess(load_frame(rec), dark)
             plt.imsave(os.path.join(dump_frames, f"frame_{rec[3]:04d}.png"),

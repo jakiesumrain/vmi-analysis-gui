@@ -6,8 +6,10 @@ from pathlib import Path
 
 from nicegui import app, ui
 from plotly.colors import get_colorscale
+from vmi_analysis.paths import validate_distinct_output
 from vmi_analysis.centroiding.options import centroid_cli_args, section as _section, validate_settings
-from vmi_analysis.centroiding.plot_data import TUNING_DATA, SUMMARY_DATA
+from vmi_analysis.centroiding.plot_data import (ABEL_IMAGE, RAW_IMAGE, SPECTRUM_CSV,
+                                                SUMMARY_DATA, SUMMARY_PNG, TUNING_DATA, TUNING_PNG)
 
 from ..jobs import Job, JobManager
 from .. import theme
@@ -18,6 +20,7 @@ from .common import (JobView, REPO_ROOT, file_url, open_folder_button,
                      path_input, persist, zoomable_image, delete_outputs)
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
+OUTPUT_NAMES = (TUNING_PNG, SUMMARY_PNG, TUNING_DATA, SUMMARY_DATA, RAW_IMAGE, ABEL_IMAGE, SPECTRUM_CSV)
 
 # (section path, key, kind, label) — kind: str/int/float/bool/select:opts
 FIELDS = [
@@ -26,8 +29,6 @@ FIELDS = [
     ("vmi_picasso", "h5_dataset", "str", "Frame dataset"),
     ("vmi_picasso", "h5_meta", "str", "Metadata dataset"),
     ("vmi_picasso", "gmd_map_path", "file:.txt", "GMD map file (empty = raw/meta)"),
-    ("vmi_picasso", "dark_data_dir", "dir", "Dark HDF5 directory"),
-    ("vmi_picasso", "dark_h5_pattern", "str", "Dark pattern"),
     ("vmi_picasso", "dark_file", "file:.npy", "Pre-computed dark .npy"),
     ("vmi_picasso", "output_dir", "dir", "Output directory"),
     ("vmi_picasso", "checkpoint_file", "str", "Checkpoint filename"),
@@ -45,8 +46,7 @@ FIELDS = [
     ("processing", "enable_parallel", "bool", "Parallel processing"),
     ("processing", "num_cores", "int", "CPU cores"),
     ("processing", "enable_dark_subtraction", "bool", "Dark subtraction"),
-    ("processing", "dark_method", "select:median,mean", "Dark method"),
-    ("processing", "dark_frame_count", "int", "Dark frame count"),
+    ("processing", "enable_median_subtraction", "bool", "Per-frame median subtraction"),
     ("processing", "enable_flat_field", "bool", "Flat field"),
     ("processing", "flat_field_file", "file:.txt,.npy", "Flat field file"),
     ("processing", "enable_circular_mask", "bool", "Circular mask"),
@@ -97,6 +97,9 @@ def build(jobs: JobManager) -> None:
                 value = _section(doc, section).get(key, "")
                 wid = persist(_make_widget(kind, label, value), storage_key(section, key))
                 widgets[(section, key, kind)] = wid
+                if key == "enable_median_subtraction":
+                    wid.bind_enabled_from(widgets[(section, "enable_dark_subtraction", "bool")], "value", not_)
+                    wid.tooltip("Subtract the 3σ-clipped median of each frame.")
                 if key == "frame_limit":
                     wid.min = 0
                     wid.props("step=1")
@@ -148,7 +151,7 @@ def build(jobs: JobManager) -> None:
                     _result_files(_output_dir(centroid_settings()))
             ui.button("View saved results", icon="insights", on_click=show_saved).props("flat color=secondary")
             ui.button("Clear outputs", icon="delete",
-                      on_click=_clear_outputs).props("flat color=negative")
+                      on_click=lambda: _clear_outputs(view)).props("flat color=negative")
 
     view.place_console()
 
@@ -203,7 +206,7 @@ def _save(widgets) -> bool:
     return True
 
 
-def _clear_outputs() -> None:
+def _clear_outputs(view: JobView) -> None:
     """Delete centroiding outputs so the next Run starts fresh.
 
     The script skips the whole batch when the checkpoint exists
@@ -212,15 +215,25 @@ def _clear_outputs() -> None:
     """
     doc = centroid_settings()
     out_dir = _output_dir(doc)
-    checkpoint = out_dir / str(doc["vmi_picasso"].get("checkpoint_file", ""))
-    targets = [out_dir / name for name in (
-        "01_tuning_check_picasso.png", "04_final_summary.png",
-        TUNING_DATA, SUMMARY_DATA, "vmi_2d_raw.npy", "vmi_3d_abel.npy", "energy_spectrum.csv")]
-    existing = [p for p in targets if p.exists()]
-    has_checkpoint = checkpoint.exists()
+    vmi = doc["vmi_picasso"]
+    inputs = (("HDF5 directory", vmi["h5_dir"]), ("GMD map", vmi["gmd_map_path"]),
+              ("dark frame", vmi["dark_file"]), ("flat field", vmi["processing"]["flat_field_file"]))
+    try:
+        checkpoint = validate_distinct_output(out_dir / vmi["checkpoint_file"], inputs,
+                                              cwd=CENTROID_DIR, output_label="checkpoint")
+        for name in OUTPUT_NAMES:
+            validate_distinct_output(out_dir / name, inputs, cwd=CENTROID_DIR)
+    except (OSError, ValueError) as exc:
+        ui.notify(str(exc), type="warning")
+        return
+    existing = [out_dir / name for name in OUTPUT_NAMES if (out_dir / name).is_file()]
+    has_checkpoint = checkpoint.is_file()
     if not existing and not has_checkpoint:
         ui.notify(f"Nothing to delete in {out_dir}", type="info")
         return
+    expected = {path: path.lstat() for path in existing}
+    if has_checkpoint:
+        expected[checkpoint] = checkpoint.lstat()
 
     def _size(p: Path) -> str:
         n = p.stat().st_size
@@ -248,10 +261,11 @@ def _clear_outputs() -> None:
         doomed = list(existing)
         if with_checkpoint and has_checkpoint:
             doomed.append(checkpoint)
-        failed = delete_outputs(doomed)
+        failed = delete_outputs(doomed, expected=expected)
         if failed is None:
             return
         dlg.close()
+        view.results.clear()
         if failed:
             ui.notify("Could not delete: " + "; ".join(failed),
                       type="negative")

@@ -47,7 +47,7 @@ class PackageLayoutTests(unittest.TestCase):
             folder = Path(folder)
             source = folder / "RAW-test.h5"
             with h5py.File(source, "w") as handle:
-                handle.create_dataset("raw/data", data=np.arange(128, dtype=np.uint16).reshape(2, 8, 8))
+                handle.create_dataset("raw/data", data=np.arange(192, dtype=np.uint16).reshape(2, 8, 12))
             result = self.run_command(
                 ["-m", "vmi_analysis.imaging.h5_play_frames_movie",
                  "--h5-dir", str(folder), "--n-frames", "200", "--interval-ms", "40",
@@ -55,11 +55,13 @@ class PackageLayoutTests(unittest.TestCase):
                  "--no-save-movie", "--preview-stream"],
                 folder,
             )
-            frames = [line.split(" ", 3)[1:] for line in result.stdout.splitlines()
+            frames = [line.split(" ", 5)[1:] for line in result.stdout.splitlines()
                       if line.startswith("[preview-png] ")]
-            self.assertEqual([(index, total) for index, total, _ in frames], [("1", "2"), ("2", "2")])
-            for _, _, png in frames:
-                self.assertTrue(base64.b64decode(png, validate=True).startswith(b"\x89PNG\r\n\x1a\n"))
+            self.assertEqual([frame[:4] for frame in frames], [["1", "2", "12", "8"], ["2", "2", "12", "8"]])
+            for *_, png in frames:
+                image = base64.b64decode(png, validate=True)
+                self.assertTrue(image.startswith(b"\x89PNG\r\n\x1a\n"))
+                self.assertEqual(image[16:24], b"\x00\x00\x00\x0c\x00\x00\x00\x08")
             self.assertEqual(list(folder.iterdir()), [source])
 
     def test_accumulation_module_with_worker_processes(self):
@@ -119,10 +121,37 @@ class PackageLayoutTests(unittest.TestCase):
             self.assertEqual(metadata["n_frames"], 3)
             result = self.run_command(command, folder, returncode=1)
             self.assertIn("does not contain a complete checkpoint for frame limit 0", result.stderr)
+            result = self.run_command([*command, "--frame-limit", "3", "--no-median-subtraction"],
+                                      folder, returncode=1)
+            self.assertIn("does not match background subtraction mode 'none'", result.stderr)
             self.run_command([*command, "--frame-limit", "3", "--tuning-only",
                               "--tuning-frame-index", "4"], folder)
             metadata, _ = load_plot_data(output / TUNING_DATA)
             self.assertEqual(metadata["frame_index"], 4)
+
+    def test_centroid_dark_subtraction_requires_precomputed_numpy_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            with h5py.File(folder / "RAW-dark.h5", "w") as handle:
+                handle.create_dataset("raw/data", data=np.full((1, 8, 8), 10, dtype=np.uint16))
+            config = folder / "config.toml"
+            config.write_text('[vmi_picasso]\ndark_data_dir = "."\n', encoding="utf-8")
+            command = ["-m", "vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch",
+                       "--config", str(config), "--h5-dir", str(folder), "--dark-subtraction"]
+            result = self.run_command(command, folder, returncode=1)
+            self.assertIn("Select a precomputed dark .npy file", result.stderr)
+            dark = folder / "dark.npy"
+            result = self.run_command([*command, "--dark-file", str(dark)], folder, returncode=1)
+            self.assertIn("Cannot load precomputed dark frame", result.stderr)
+            np.save(dark, np.zeros((1, 8)))
+            result = self.run_command([*command, "--dark-file", str(dark)], folder, returncode=1)
+            self.assertIn("does not match camera frame shape", result.stderr)
+            np.save(dark, np.full((8, 8), 3))
+            output = folder / "results"
+            self.run_command([*command, "--dark-file", str(dark), "--output-dir", str(output),
+                              "--tuning-only", "--no-median-subtraction"], folder)
+            _, arrays = load_plot_data(output / TUNING_DATA)
+            np.testing.assert_array_equal(arrays["frame"], np.full((8, 8), 7))
 
     def test_dark_frame_default_writes_to_workspace_instead_of_source(self):
         with tempfile.TemporaryDirectory() as folder:

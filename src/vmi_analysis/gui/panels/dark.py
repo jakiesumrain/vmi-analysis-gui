@@ -10,7 +10,7 @@ from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
                      open_folder_button, path_input, persist, render_image,
-                     zoomable_image, delete_outputs)
+                     zoomable_image, confirm_clear_outputs)
 
 
 
@@ -60,52 +60,31 @@ def build(jobs: JobManager) -> None:
         with ui.row().classes("gap-2"):
             view.run_button(on_click=run)
             ui.button("Clear output", icon="delete",
-                      on_click=lambda: _clear_output(out_dir, method)) \
+                      on_click=lambda: _clear_output(out_dir, method, view)) \
                 .props("flat color=negative")
 
     view.place_console()
 
 
-def _clear_output(out_dir, method) -> None:
+def _clear_output(out_dir, method, view) -> None:
     """Delete dark_{method}.npy (+ info) so the next run recomputes."""
-    folder = Path((out_dir.value or "").strip())
-    if not folder.is_dir():
+    folder = REPO_ROOT / (out_dir.value or "").strip()
+    if not out_dir.value or not folder.is_dir():
         ui.notify("Set an output directory first.", type="warning")
         return
     targets = [folder / f"dark_{method.value}.npy",
                folder / f"dark_{method.value}_info.txt"]
-    existing = [p for p in targets if p.exists()]
-    if not existing:
-        ui.notify(f"Nothing to delete in {folder}", type="info")
-        return
-
-    with ui.dialog() as dlg, ui.card():
-        ui.label("Delete dark frame outputs?").classes("vmi-caption")
-        for p in existing:
-            ui.label(str(p)).style("font-family: monospace")
-        with ui.row().classes("gap-2"):
-            ui.button("Delete", color="negative",
-                      on_click=lambda: do_delete())
-            ui.button("Cancel", on_click=dlg.close).props("flat")
-    dlg.open()
-
-    def do_delete():
-        failed = delete_outputs(existing)
-        if failed is None:
-            return
-        dlg.close()
-        if failed:
-            ui.notify("Could not delete: " + "; ".join(failed),
-                      type="negative")
-        else:
-            ui.notify(f"Deleted {len(existing)} file(s) from {folder}",
-                      type="positive")
+    for job in view.jobs.jobs():
+        if (job.name == "Dark frame" and job.extra.get("dark_npy")
+                and (Path(job.cwd or REPO_ROOT) / job.extra["dark_npy"]).resolve() == targets[0].resolve()):
+            targets.append(GENERATED / f"dark_frame_{job.id}.png")
+    confirm_clear_outputs(targets, "Delete dark frame outputs?", on_cleared=view.results.clear)
 
 
 def _results(job: Job):
     if job.status != "done":
         return
-    npy = Path(job.extra["dark_npy"])
+    npy = Path(job.cwd or REPO_ROOT) / job.extra["dark_npy"]
     if not npy.exists():
         return
     data = np.load(npy)
@@ -116,7 +95,7 @@ def _results(job: Job):
     png = render_image(data, GENERATED / f"dark_frame_{job.id}.png",
                        cmap="gray", log=False, vmin_pct=0, vmax_pct=99.9)
     zoomable_image(file_url(png)).classes("w-full max-w-2xl")
-    info = Path(job.extra["info"])
+    info = Path(job.cwd or REPO_ROOT) / job.extra["info"]
     if info.exists():
         ui.label(info.read_text(encoding="utf-8").strip()) \
             .classes("vmi-caption")

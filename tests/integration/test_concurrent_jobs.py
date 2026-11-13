@@ -183,6 +183,10 @@ class ConcurrentJobTests(unittest.TestCase):
             self.assertEqual(path.read_text(), 'unchanged')
             notify.assert_called_once()
             self.release(reader)
+            expected = {path: path.stat()}
+            path.write_text('updated after confirmation')
+            self.assertTrue(delete_outputs([path], expected=expected))
+            self.assertEqual(path.read_text(), 'updated after confirmation')
             self.assertEqual(delete_outputs([path]), [])
             self.assertFalse(path.exists())
 

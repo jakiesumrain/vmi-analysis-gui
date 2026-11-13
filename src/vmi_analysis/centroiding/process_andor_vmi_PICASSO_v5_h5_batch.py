@@ -52,7 +52,6 @@ from matplotlib.colors import LogNorm
 import h5py
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
-from concurrent.futures import ProcessPoolExecutor, as_completed
 import warnings
 
 # For per-frame background estimation when no dark frame available
@@ -111,12 +110,6 @@ OUTPUT_CSV = os.path.join(OUTPUT_DIR, "vmi_results.csv")
 CHECKPOINT_FILE = vmi_cfg.get("checkpoint_file", "vmi_results_raw.h5")
 
 # --- DARK/BACKGROUND DATA ---
-DARK_DATA_DIR = vmi_cfg.get("dark_data_dir", "")
-if DARK_DATA_DIR:
-    DARK_H5_PATTERN = os.path.join(DARK_DATA_DIR, vmi_cfg.get("dark_h5_pattern", "*.h5"))
-else:
-    DARK_H5_PATTERN = ""
-
 # --- CAMERA/DETECTOR ---
 SATURATION_LEVEL = 65535  # 16-bit camera
 
@@ -151,9 +144,8 @@ FRAME_LIMIT = proc_cfg["frame_limit"]
 DARK_FILE = vmi_cfg.get("dark_file", "")
 if DARK_FILE and not os.path.isabs(DARK_FILE):
     DARK_FILE = os.path.join(CENTROID_DIR, DARK_FILE)
-DARK_METHOD = proc_cfg.get("dark_method", "median")
-DARK_FRAME_COUNT = proc_cfg["dark_frame_count"]
 ENABLE_DARK_SUBTRACTION = proc_cfg["enable_dark_subtraction"]
+ENABLE_MEDIAN_SUBTRACTION = proc_cfg["enable_median_subtraction"] and not ENABLE_DARK_SUBTRACTION
 
 # --- FLAT FIELD CORRECTION ---
 ENABLE_FLAT_FIELD = proc_cfg["enable_flat_field"]
@@ -242,131 +234,26 @@ def load_frames_and_metadata():
 
     return h5_files, frame_info, img_shape, n_total_frames
 
-def calculate_dark_frame():
-    """Calculate dark frame from HDF5 files in dark data directory.
-
-    Priority:
-      1. dark_file: load pre-computed .npy file (fastest)
-      2. dark_data_dir: compute from H5 files
-      3. Neither: return None (per-frame sigma-clipped stats)
-
-    Uses method specified by DARK_METHOD config ("median" or "mean").
-    """
-    # Priority 1: pre-computed dark file
-    if DARK_FILE and os.path.exists(DARK_FILE):
-        print(f"[Dark] Loading pre-computed dark frame from: {DARK_FILE}")
-        dark_frame = np.load(DARK_FILE)
-        if dark_frame.shape != (1024, 1024):
-            print(f"[Dark] WARNING: unexpected shape {dark_frame.shape}")
-        print(f"[Dark] Loaded: mean={dark_frame.mean():.1f}, "
-              f"std={dark_frame.std():.1f}")
-        return dark_frame
-
-    # Priority 2: compute from H5 files
-    if not DARK_DATA_DIR or not DARK_H5_PATTERN:
-        print("[Dark] No dark data directory configured, skipping dark frame")
-        return None
-
-    print(f"[Dark] Loading background HDF5 files from: {DARK_H5_PATTERN}")
-
-    dark_h5_files = sorted(glob.glob(DARK_H5_PATTERN))
-
-    if len(dark_h5_files) == 0:
-        print(f"[Dark] WARNING: No background HDF5 files found! Using sigma-clipped stats instead.")
-        return None
-
-    print(f"[Dark] Found {len(dark_h5_files)} dark HDF5 files, method={DARK_METHOD}")
-
-    if DARK_METHOD == "mean":
-        dark_frame, n_used = _calc_dark_mean(dark_h5_files)
-    else:
-        dark_frame, n_used = _calc_dark_median(dark_h5_files)
-
-    if dark_frame is None:
-        print(f"[Dark] WARNING: No dark frames could be processed! "
-              f"Using sigma-clipped stats instead.")
-        return None
-
-    print(f"[Dark] Used {n_used} frames, method={DARK_METHOD}")
-    print(f"[Dark] Dark level: mean={dark_frame.mean():.1f}, "
-          f"std={dark_frame.std():.1f}")
-
+def load_dark_frame():
+    if not DARK_FILE or not DARK_FILE.lower().endswith(".npy"):
+        raise SystemExit("[Dark] Select a precomputed dark .npy file or turn off Dark subtraction.")
+    try:
+        with open(DARK_FILE, "rb") as handle:
+            dark_frame = np.load(handle, allow_pickle=False)
+    except (OSError, ValueError, EOFError) as exc:
+        raise SystemExit(f"[Dark] Cannot load precomputed dark frame {DARK_FILE}: {exc}") from exc
+    if (not isinstance(dark_frame, np.ndarray) or dark_frame.ndim != 2
+            or dark_frame.dtype.kind not in "iuf" or not np.isfinite(dark_frame).all()):
+        raise SystemExit(f"[Dark] Expected a finite 2D numeric array in {DARK_FILE}.")
+    print(f"[Dark] Loaded {DARK_FILE}: mean={dark_frame.mean():.1f}, std={dark_frame.std():.1f}")
     return dark_frame
 
-def _read_h5_data(fpath):
-    """Worker: return raw data from one H5 file."""
-    with h5py.File(fpath, 'r') as hf:
-        return hf[H5_DATASET][:]  # (N, H, W) uint16
 
-def _sum_h5_file(fpath):
-    """Worker: return (sum_of_frames, n_frames) for one H5 file."""
-    with h5py.File(fpath, 'r') as hf:
-        data = hf[H5_DATASET][:]  # (N, H, W) uint16
-    return data.sum(axis=0, dtype=np.float64), data.shape[0]
+def _background_mode(dark_frame):
+    if dark_frame is not None:
+        return "dark frame"
+    return "per-frame median" if ENABLE_MEDIAN_SUBTRACTION else "none"
 
-def _select_dark_files(dark_h5_files):
-    """Select enough files to cover DARK_FRAME_COUNT frames. Returns list of paths."""
-    with h5py.File(dark_h5_files[0], 'r') as hf:
-        frames_per_file = hf[H5_DATASET].shape[0]
-    n_needed = int(np.ceil(DARK_FRAME_COUNT / frames_per_file))
-    return dark_h5_files[:min(n_needed, len(dark_h5_files))]
-
-def _calc_dark_median(dark_h5_files):
-    """Calculate dark frame as median of subsampled frames (parallel read)."""
-    selected = _select_dark_files(dark_h5_files)
-    n_workers = min(len(selected), cpu_count())
-    print(f"[Dark] Median method: reading {len(selected)} H5 files ({n_workers} workers)...")
-
-    all_frames = []
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        futures = {executor.submit(_read_h5_data, f): f for f in selected}
-        for fut in as_completed(futures):
-            fname = os.path.basename(futures[fut])
-            try:
-                all_frames.append(fut.result())
-            except Exception as e:
-                print(f"[Dark] WARNING: Failed to read {fname}: {e}")
-
-    if not all_frames:
-        return None, 0
-
-    stack = np.concatenate(all_frames, axis=0)[:DARK_FRAME_COUNT]
-    dark_frame = np.median(stack, axis=0).astype(np.float64)
-    return dark_frame, stack.shape[0]
-
-def _calc_dark_mean(dark_h5_files):
-    """Calculate dark frame as mean of frames from selected files (parallel).
-
-    Uses enough files to cover DARK_FRAME_COUNT frames. All frames from
-    those selected files are used (no cropping).
-    """
-    selected = _select_dark_files(dark_h5_files)
-    n_workers = min(len(selected), cpu_count())
-    print(f"[Dark] Mean method: processing {len(selected)} H5 files in parallel "
-          f"({n_workers} workers)...")
-
-    running_sum = None
-    n_total = 0
-
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        futures = {executor.submit(_sum_h5_file, f): f for f in selected}
-        for fut in as_completed(futures):
-            fname = os.path.basename(futures[fut])
-            try:
-                file_sum, n_frames = fut.result()
-                if running_sum is None:
-                    running_sum = file_sum
-                else:
-                    running_sum += file_sum
-                n_total += n_frames
-            except Exception as e:
-                print(f"[Dark] WARNING: Failed to read {fname}: {e}")
-
-    if running_sum is None or n_total == 0:
-        return None, 0
-
-    dark_frame = running_sum / n_total
-    return dark_frame, n_total
 
 def load_flat_field():
     """Load flat field correction (still from TIFF -- single image)."""
@@ -569,18 +456,16 @@ def process_h5_file_batch(args):
         print(f"[Warning] Failed to read {h5_path}: {e}")
         return None
 
-    n_frames = data.shape[0]
-
     # --- Apply corrections to ALL frames at once (vectorized where possible) ---
     if dark_frame is not None:
         # Single vectorized subtraction: (N, H, W) - (H, W) broadcasts
         corrected = data.astype(np.float64) - dark_frame
     else:
-        # Per-frame sigma-clipped stats (still needs loop, but fast numpy)
         corrected = data.astype(np.float64)
-        for i in range(n_frames):
-            _, median_bkg, _ = sigma_clipped_stats(corrected[i], sigma=3.0)
-            corrected[i] -= median_bkg
+        if ENABLE_MEDIAN_SUBTRACTION:
+            for frame in corrected:
+                _, median_bkg, _ = sigma_clipped_stats(frame, sigma=3.0)
+                frame -= median_bkg
 
     if flat_field_normalized is not None:
         corrected = corrected / flat_field_normalized
@@ -653,6 +538,7 @@ def run_batch_processing_picasso(h5_files, total_frames, dark_frame, flat_field_
     files_with_detections = 0
 
     with pd.HDFStore(checkpoint_path, mode='w', complevel=1) as store:
+        store.get_node("/")._v_attrs.background_subtraction = _background_mode(dark_frame)
         if FRAME_LIMIT:
             store.get_node("/")._v_attrs.frame_limit = FRAME_LIMIT
         if ENABLE_PARALLEL:
@@ -1074,10 +960,11 @@ def run_tuning_check(frame_info, dark_frame, flat_field_normalized):
         corrected = test_frame.astype(np.float64) - dark_frame
     else:
         corrected = test_frame.astype(np.float64)
-        mean_bkg, median_bkg, std_bkg = sigma_clipped_stats(corrected, sigma=3.0)
-        corrected = corrected - median_bkg
-        print(f"[Tuning] Per-frame background: mean={mean_bkg:.1f}, "
-              f"median={median_bkg:.1f}, std={std_bkg:.1f}")
+        if ENABLE_MEDIAN_SUBTRACTION:
+            mean_bkg, median_bkg, std_bkg = sigma_clipped_stats(corrected, sigma=3.0)
+            corrected -= median_bkg
+            print(f"[Tuning] Per-frame background: mean={mean_bkg:.1f}, "
+                  f"median={median_bkg:.1f}, std={std_bkg:.1f}")
 
     if flat_field_normalized is not None:
         corrected = corrected / flat_field_normalized
@@ -1179,28 +1066,23 @@ def main():
     print(f"[Config] HDF5 dir: {H5_DIR}")
     print(f"[Config] HDF5 dataset: {H5_DATASET}")
     print(f"[Config] GMD map: {GMD_MAP_PATH}")
-    print(f"[Config] Dark dir: {DARK_DATA_DIR}")
     print(f"[Config] Output dir: {OUTPUT_DIR}")
     print(f"[Config] BOX_SIZE={BOX_SIZE}, MIN_NET_GRADIENT={MIN_NET_GRADIENT}")
-    print(f"[Config] Dark subtraction: {'ON' if ENABLE_DARK_SUBTRACTION else 'OFF'}" +
-          (f" ({DARK_METHOD})" if ENABLE_DARK_SUBTRACTION else ""))
+    print(f"[Config] Dark subtraction: {'ON' if ENABLE_DARK_SUBTRACTION else 'OFF'}")
     print(f"[Config] GMD weighting: {'ON' if ENABLE_GMD_WEIGHTING else 'OFF'}")
     print(f"[Config] Parallel: {'ON' if ENABLE_PARALLEL else 'OFF'} ({NUM_CORES} cores)")
     print(f"[Config] Tuning mode: {'ON' if TUNING_ONLY else 'OFF'}")
     print(f"[Config] Batch mode: ON  Fitting method: {FITTING_METHOD}")
     print("=" * 80)
 
-    # Setup
-    create_output_dir()
+    dark_frame = load_dark_frame() if ENABLE_DARK_SUBTRACTION else None
     h5_files, frame_info, img_shape, n_total_frames = load_frames_and_metadata()
+    if dark_frame is not None and dark_frame.shape != img_shape:
+        raise SystemExit(f"[Dark] Dark frame shape {dark_frame.shape} does not match camera frame shape {img_shape}.")
+    create_output_dir()
 
-    # Load corrections
-    if ENABLE_DARK_SUBTRACTION:
-        dark_frame = calculate_dark_frame()
-    else:
-        dark_frame = None
-        print(f"\n[Dark] Dark subtraction DISABLED (ENABLE_DARK_SUBTRACTION = False)")
-        print(f"[Dark] Background will be estimated per-frame using sigma-clipped stats")
+    background_mode = _background_mode(dark_frame)
+    print(f"[Config] Background subtraction: {background_mode}")
 
     flat_field_normalized = load_flat_field()
 
@@ -1229,6 +1111,12 @@ def main():
         with h5py.File(checkpoint_path, "r") as checkpoint:
             saved_limit = checkpoint.attrs.get("frame_limit", 0)
             saved_frames = checkpoint.attrs.get("limited_frames_processed")
+            saved_background = checkpoint.attrs.get("background_subtraction")
+        if isinstance(saved_background, bytes):
+            saved_background = saved_background.decode("utf-8")
+        if saved_background != background_mode and (saved_background is not None or background_mode == "none"):
+            raise SystemExit(f"[Error] {checkpoint_path} does not match background subtraction mode "
+                             f"'{background_mode}'. Choose a different checkpoint filename or clear the existing checkpoint.")
         if saved_limit != FRAME_LIMIT or (FRAME_LIMIT and saved_frames != total_frames):
             raise SystemExit(f"[Error] {checkpoint_path} does not contain a complete checkpoint "
                              f"for frame limit {FRAME_LIMIT}. Choose a different checkpoint "

@@ -217,20 +217,65 @@ def persist(widget, key: str):
     return widget
 
 
-def delete_outputs(paths):
+def delete_outputs(paths, *, expected=None):
     """Delete only when no running/queued job reads or writes these files."""
     try:
         with MANAGER.write_access(paths):
             failed = []
             for path in paths:
                 try:
+                    if expected is not None:
+                        current, prior = path.lstat(), expected[path]
+                        if (current.st_ino, current.st_size, current.st_mtime_ns) != (
+                                prior.st_ino, prior.st_size, prior.st_mtime_ns):
+                            failed.append(f"{path}: changed since confirmation opened")
+                            continue
                     Path(path).unlink(missing_ok=True)
+                except FileNotFoundError:
+                    continue
                 except OSError as exc:
                     failed.append(f"{path}: {exc}")
             return failed
     except ResourceBusyError as exc:
         ui.notify(str(exc), type="warning")
         return None
+
+
+def confirm_clear_outputs(paths, title, *, on_cleared=None):
+    """Confirm the exact files to remove, leaving folders and other files alone."""
+    targets = {}
+    for path in dict.fromkeys(map(Path, paths)):
+        if path.is_file():
+            try:
+                targets[path] = path.lstat()
+            except OSError as exc:
+                ui.notify(f"Could not inspect {path}: {exc}", type="negative")
+                return
+    if not targets:
+        ui.notify("No saved outputs found for this selection.", type="info")
+        return
+
+    def clear():
+        failed = delete_outputs(targets, expected=targets)
+        if failed is None:
+            return
+        dialog.close()
+        if on_cleared is not None:
+            on_cleared()
+        if failed:
+            ui.notify("Could not delete: " + "; ".join(failed), type="negative")
+        else:
+            ui.notify(f"Cleared {len(targets)} output file(s).", type="positive")
+
+    with ui.dialog() as dialog, ui.card().classes("w-full max-w-2xl"):
+        ui.label(title).classes("vmi-caption")
+        with ui.column().classes("w-full max-h-64 overflow-auto gap-1"):
+            for target in targets:
+                ui.label(str(target)).classes("break-all")
+        with ui.row().classes("gap-2"):
+            ui.button("Delete", color="negative", on_click=clear)
+            ui.button("Cancel", on_click=dialog.close).props("flat")
+    dialog.open()
 
 
 def text_area(label: str, value: str = "") -> ui.input:

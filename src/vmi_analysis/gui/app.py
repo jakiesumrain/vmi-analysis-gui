@@ -1,9 +1,10 @@
-"""VMI Analysis GUI — one tab per script plus the pipeline.
+"""VMI Analysis GUI.
 
 Launch from the repository root:  uv run vmi-analysis
 """
 
 import asyncio
+from functools import partial
 from importlib.resources import files
 from math import isfinite
 import os
@@ -91,18 +92,21 @@ def _schedule_shutdown_after_last_client(client) -> None:
         _shutdown_after(_env_float("VMI_GUI_SHUTDOWN_GRACE", DEFAULT_SHUTDOWN_GRACE)),
         name="auto-shutdown-check")
 
-TABS = [
+PRIMARY_PANELS = [
     ("GMD Map", gmd_map),
     ("Movie", movie),
     ("Dark Frame", dark),
     ("Accumulate", accumulate),
     ("Centroiding", centroid),
+]
+MORE_PANELS = [
     ("Binning", binning),
     ("Trig Calibration", calibration),
     ("Circularize", circularize),
     ("PES", pes),
     ("Pipeline", pipeline),
 ]
+TABS = PRIMARY_PANELS + MORE_PANELS
 
 
 @ui.page("/")
@@ -212,15 +216,41 @@ def index() -> None:
     ui.timer(1.0, refresh_queue)
 
     with ui.column().classes("w-full max-w-6xl mx-auto gap-4 p-6"):
-        with ui.tabs().classes("w-full") as tabs:
-            tab_objs = [ui.tab(name) for name, _ in TABS]
-        with ui.tab_panels(tabs, value=tab_objs[0]).classes("w-full bg-transparent"):
+        with ui.row().classes("w-full items-center justify-center gap-0 flex-nowrap"):
+            with ui.tabs().classes("min-w-0") as tabs:
+                for name, _ in PRIMARY_PANELS:
+                    ui.tab(name)
+            with ui.button("More...", icon="expand_more").props("flat no-caps") \
+                    .classes("vmi-more-panels") as more_button:
+                with ui.menu().props("anchor='bottom right' self='top right' role=menu"):
+                    more_items = {
+                        name: ui.menu_item(name, on_click=partial(tabs.set_value, name))
+                        .props("role=menuitemradio aria-checked=false")
+                        for name, _ in MORE_PANELS
+                    }
+
+            def update_panel_navigation(event):
+                active_class = "vmi-more-panels-active"
+                if event.value in more_items:
+                    more_button.classes(add=active_class)
+                else:
+                    more_button.classes(remove=active_class)
+                for name, item in more_items.items():
+                    selected = event.value == name
+                    item.props(f"aria-checked={str(selected).lower()}")
+                    if selected:
+                        item.classes(add=active_class)
+                    else:
+                        item.classes(remove=active_class)
+
+            tabs.on_value_change(update_panel_navigation)
+        with ui.tab_panels(tabs, value=PRIMARY_PANELS[0][0]).classes("w-full bg-transparent"):
             def export_calibration(extracted_path, image_path, manual_center, **settings):
                 return use_calibration(extracted_path, image_path, manual_center, **settings)
 
             with workflow.collect_fields(workflow_fields):
-                for tab, (_, module) in zip(tab_objs, TABS):
-                    with ui.tab_panel(tab):
+                for name, module in TABS:
+                    with ui.tab_panel(name):
                         if module is circularize:
                             use_calibration = module.build(MANAGER)
                         elif module is calibration:

@@ -99,11 +99,14 @@ class CentroidPlotTests(unittest.TestCase):
             np.testing.assert_array_equal(fig.data[2].x, energy)
             np.testing.assert_array_equal(fig.data[2].y, intensity)
             self.assertEqual(fig.layout.xaxis3.title.text, "Kinetic energy (eV)")
+            self.assertEqual(fig.layout.xaxis3.domain, (0, .75))
+            self.assertEqual(fig.layout.annotations[2].x, .375)
             self.assertEqual(fig.layout.yaxis3.title.text, "Intensity (arb. units)")
             self.assertEqual(tuple(fig.layout.yaxis3.range), (0, 20))
             info = fig.layout.annotations[-1]
             self.assertEqual(info.xref, "paper")
-            self.assertGreater(info.x, .5)  # stays in the right-hand summary panel
+            self.assertEqual(info.x, fig.layout.xaxis4.domain[0])
+            self.assertGreater(info.x, fig.layout.xaxis3.domain[1])
             self.assertLess(info.y, .5)
             self.assertTrue(plot_options(fig)["config"]["scrollZoom"])
             self.assertIn("Counts: %{customdata", fig.data[0].hovertemplate)

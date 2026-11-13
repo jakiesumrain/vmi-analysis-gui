@@ -133,6 +133,10 @@ def summary_figure(path):
     fig = make_subplots(rows=2, cols=2, horizontal_spacing=.14, vertical_spacing=.12,
                         subplot_titles=("2D VMI image (raw, log)", "3D VMI (Abel inverted, log)",
                                         "Photoelectron spectrum", "Analysis summary"))
+    fig.layout.xaxis3.domain = (0, .75)
+    fig.layout.xaxis4.domain = (.79, 1)
+    fig.layout.annotations[2].x = sum(fig.layout.xaxis3.domain) / 2
+    fig.layout.annotations[3].x = sum(fig.layout.xaxis4.domain) / 2
     fig.add_trace(_heatmap(raw, logarithmic=True, colorbar={"x": .44, "y": .78, "len": .44, "thickness": 12}), row=1, col=1)
     _image_axes(fig, raw, 1, 1, "x")
     if abel.size:

@@ -18,7 +18,7 @@ from pathlib import Path
 import time
 
 import numpy as np
-from nicegui import ui
+from nicegui import app, ui
 import plotly.graph_objects as go
 from plotly.colors import qualitative
 from plotly.subplots import make_subplots
@@ -30,12 +30,18 @@ from .. import theme
 from ..centroid_plots import _style, plot_options
 from ..jobs import MANAGER
 from ..settings import centroid_settings, output_dir
-from .common import REPO_ROOT, delete_outputs, num_input, path_input, persist
+from .common import REPO_ROOT, confirm_clear_outputs, num_input, path_input, persist
 
 from .polar_preview import (POLAR_HEIGHT, bind_percentiles, polar_controls, polar_preview,
                             render_polar_image as _render_polar_image, set_polar_source, set_polar_view)
 
 CIRC_DIR = REPO_ROOT / "circularization"
+
+
+def _image_folder(value):
+    path = Path((value or "").strip()).expanduser()
+    return path.parent if path.suffix.lower() == ".npy" else None
+
 
 FILTER_FIELDS = [
     ("smooth_theta", "Smooth θ", 1.0, 0.1),
@@ -515,11 +521,25 @@ def build(jobs=None, *, use_calibration=None) -> None:
                      {"name": "rms", "label": "RMS", "field": "rms"}],
             rows=[], row_key="radius").classes("w-full")
         with ui.row().classes("gap-4 flex-wrap items-end w-full"):
+            image_folder = _image_folder(widgets["image"].value)
             widgets["output"] = persist(path_input(
                 "Extracted trig-fit file",
-                str(CIRC_DIR / f"extracted-{time.strftime('%Y%m%d')}.txt"),
+                str((image_folder or CIRC_DIR) / "extracted.txt"),
                 browse="save", filters=[".txt"],
                 default_name="extracted.txt"), "calibration.output")
+            saved_output = widgets["output"].value
+            if ("calibration.image" in app.storage.general and image_folder is not None
+                    and (not saved_output or Path(saved_output).expanduser().parent != image_folder)):
+                widgets["output"].value = str(image_folder / "extracted.txt")
+
+            def follow_image(event):
+                nonlocal image_folder
+                folder = _image_folder(event.value)
+                if folder is not None and folder != image_folder:
+                    image_folder = folder
+                    widgets["output"].value = str(folder / "extracted.txt")
+
+            widgets["image"].on_value_change(follow_image)
             widgets["provenance"] = persist(
                 ui.checkbox("Provenance comments", value=True),
                 "calibration.provenance")
@@ -547,6 +567,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 "calibration.session")
             ui.button("Save session", on_click=lambda: _save_session())
             ui.button("Load session", on_click=lambda: _load_session())
+            ui.button("Clear session file", icon="delete", on_click=lambda: _confirm_clear_session()) \
+                .props("flat color=negative")
 
     console = theme.log_console()
 
@@ -959,6 +981,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
             ui.notify("Nothing to save yet.", type="warning")
             return
         try:
+            _check_loaded_image()
             path = (widgets["session"].value or "").strip()
             if not path:
                 raise ValueError("Choose a session file ending in .json.")
@@ -1050,6 +1073,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
             ui.notify("No accepted rings to write.", type="warning")
             return
         try:
+            _check_loaded_image()
             path = _calibration_path().resolve()
             blocks = [fit.source_block if fit.source_block is not None else
                       pf.ring_block_text(fit, provenance=bool(widgets["provenance"].value))
@@ -1070,6 +1094,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
 
         def confirm_rebuild():
             try:
+                _check_loaded_image()
                 with MANAGER.write_access([path]):
                     current = path.read_bytes() if path.exists() else None
                     if (current != saved or _calibration_path().resolve() != path
@@ -1101,6 +1126,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
             raise ValueError("Choose an extracted trig-fit .txt file.")
         return Path(value).expanduser().absolute()
 
+    def _check_loaded_image():
+        selected = widgets["image"].value
+        if state["image"] and (not selected or Path(selected).expanduser().resolve() != Path(state["image"]["path"])):
+            raise ValueError("Load image & remap before saving fits for the newly selected image.")
+
     async def _refresh_rings_from_file():
         try:
             path = _calibration_path()
@@ -1113,19 +1143,28 @@ def build(jobs=None, *, use_calibration=None) -> None:
         await _update_reduction()
         ui.notify(f"Loaded {len(rings)} ring(s) from {path.name}.")
 
+    def _confirm_clear_session():
+        try:
+            path = pf.session_output_path(widgets["session"].value,
+                                          image=widgets["image"].value, calibration=widgets["output"].value)
+            if path.is_file():
+                pf.load_session(path)
+        except (OSError, ValueError, AttributeError) as exc:
+            _notify_error(exc)
+            return
+        confirm_clear_outputs([path], "Delete the saved Trig Calibration session?")
+
     def _confirm_clear_file():
         try:
             path = _calibration_path()
-        except ValueError as exc:
+            if path.is_file():
+                pf.load_accepted_rings(path)
+        except (OSError, ValueError) as exc:
             _notify_error(exc)
             return
 
-        def clear():
-            failed = delete_outputs([path])
-            if failed is None:
-                return
-            if failed:
-                _notify_error(OSError(failed[0]))
+        def cleared():
+            if path.exists():
                 return
             if widgets["output"].value and Path(widgets["output"].value.strip()).expanduser().absolute() == path:
                 state["rings"] = []
@@ -1136,16 +1175,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 model_plots.clear()
                 _show_fit(None)
                 _update_overlay()
-            dialog.close()
-            ui.notify(f"Cleared {path.name}. Accept a ring to create it again.")
-
-        with ui.dialog() as dialog, ui.card():
-            ui.label("Clear the calibration file?").classes("text-lg")
-            ui.label(str(path)).classes("break-all")
-            with ui.row():
-                ui.button("Cancel", on_click=dialog.close).props("flat")
-                ui.button("Clear file", on_click=clear).props("color=negative")
-        dialog.open()
+        confirm_clear_outputs([path], "Delete the calibration file?", on_cleared=cleared)
 
     async def _accept():
         if state["last_fit"] is None:
@@ -1156,6 +1186,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
             ui.notify(issue, type="warning")
             return
         try:
+            _check_loaded_image()
             path = _calibration_path()
             block = pf.ring_block_text(
                 fit, provenance=bool(widgets["provenance"].value))
@@ -1207,6 +1238,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 ui.plotly(plot_options(figure)).classes("w-full")
 
     def _export_to_circularize():
+        try:
+            _check_loaded_image()
+        except (OSError, ValueError) as exc:
+            _notify_error(exc)
+            return
         if not widgets["output"].value:
             ui.notify("Set the extracted file first.", type="warning")
             return

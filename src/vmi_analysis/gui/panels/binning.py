@@ -1,5 +1,6 @@
 """Panel: vmi_histogram_gmd_bins.py — GMD-binned 2D histograms."""
 
+import re
 import sys
 from pathlib import Path
 
@@ -8,10 +9,12 @@ from nicegui import ui
 from ..jobs import Job, JobManager
 from .. import theme
 from ..settings import binning_inputs
+from ..resources import canonical_path
 from .common import (JobView, REPO_ROOT, file_url, num_input,
-                     open_folder_button, path_input, persist, zoomable_image)
+                     open_folder_button, path_input, persist, zoomable_image, confirm_clear_outputs)
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
+BIN_LABEL_PATTERN = r"bin\d+_(?:minusinf|[+-]?\d\.\d{2}e[+-]\d+|[+-]?inf|nan)_(?:plusinf|[+-]?\d\.\d{2}e[+-]\d+|[+-]?inf|nan)"
 
 
 def build(jobs: JobManager) -> None:
@@ -77,7 +80,21 @@ def build(jobs: JobManager) -> None:
                                                            else CENTROID_DIR / output.value)}))
             view.attach(job)
 
-        view.run_button(on_click=run)
+        def clear():
+            if not output.value:
+                ui.notify("Set an output directory first.", type="warning")
+                return
+            directory = canonical_path(output.value, CENTROID_DIR)
+            if weight_power.value is None:
+                ui.notify("Enter a weight power first.", type="warning")
+                return
+            suffix = _suffix(weight_mode.value, float(weight_power.value))
+            confirm_clear_outputs(_output_files(directory, suffix), "Delete Binning outputs?",
+                                  on_cleared=view.results.clear)
+
+        with ui.row().classes("gap-2"):
+            view.run_button(on_click=run)
+            ui.button("Clear outputs", icon="delete", on_click=clear).props("flat color=negative")
 
     view.place_console()
 
@@ -88,6 +105,12 @@ def _suffix(mode: str, power: float) -> str:
     if mode == "gmd_norm" and power != 1.0:
         return f"_w-gmd_norm_p{power}"
     return f"_w-{mode}"
+
+
+def _output_files(directory: Path, suffix: str):
+    pattern = re.compile(rf"vmi_2d_gmd_{BIN_LABEL_PATTERN}{re.escape(suffix)}\.npy")
+    return [directory / f"vmi_2d_gmd_all{suffix}.npy", directory / f"vmi_gmd_bins{suffix}.png",
+            *(path for path in sorted(directory.glob("vmi_2d_gmd_bin*.npy")) if pattern.fullmatch(path.name))]
 
 
 def _results(job: Job):
