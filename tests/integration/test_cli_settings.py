@@ -346,6 +346,18 @@ class GuiSubmissionTests(unittest.TestCase):
         config = parse_centroid_args(["--h5-dir", "data", "--no-median-subtraction"]).settings
         self.assertFalse(config["vmi_picasso"]["processing"]["enable_median_subtraction"])
 
+    def test_gmd_map_form_submits_hdf5_pattern(self):
+        from vmi_analysis.gui.panels import gmd_map
+        store = {MIGRATED_KEY: True,
+                 "gmd_map.h5_dir": "chosen data",
+                 "gmd_map.h5_pattern": "*RAW-*.h5",
+                 "gmd_map.gmd_path": "gmd.txt",
+                 "gmd_map.output_path": "map.txt",
+                 "gmd_map.n_files": 0}
+        job = self.submit_form(gmd_map, store)
+        self.assertEqual(job.cmd[job.cmd.index("--h5-dir") + 1], "chosen data")
+        self.assertEqual(job.cmd[job.cmd.index("--h5-pattern") + 1], "*RAW-*.h5")
+
     def test_pipeline_overrides_stale_dataset_map_and_tuning_mode(self):
         from vmi_analysis.gui.panels import pipeline
         store = {MIGRATED_KEY: True,
@@ -353,12 +365,17 @@ class GuiSubmissionTests(unittest.TestCase):
                  storage_key("vmi_picasso", "gmd_map_path"): "old map",
                  storage_key("processing", "tuning_only"): True,
                  storage_key("processing", "num_cores"): 3.0,
-                 "pipeline.h5_dir": "pipeline data", "pipeline.gmd_path": "gmd.txt",
+                 "pipeline.h5_dir": "pipeline data",
+                 "pipeline.h5_pattern": "*RAW-*.h5",
+                 "pipeline.gmd_path": "gmd.txt",
                  "pipeline.map_out": "new map.txt", "binning.thresholds": "1,2"}
         job = self.submit_form(pipeline, store, "Run pipeline")
         self.assertEqual([s.name for s in job.stages], ["GMD map", "Centroiding", "Binning", "PES"])
         cfg = parse_centroid_args(job.stages[1].cmd[3:]).settings["vmi_picasso"]
         self.assertEqual(cfg["h5_dir"], str(ROOT / "pipeline data"))
+        self.assertEqual(cfg["h5_pattern"], "*RAW-*.h5")
+        self.assertEqual(job.stages[0].cmd[job.stages[0].cmd.index("--h5-pattern") + 1],
+                         "*RAW-*.h5")
         self.assertEqual(cfg["gmd_map_path"], str(ROOT / "new map.txt"))
         self.assertFalse(cfg["processing"]["tuning_only"])
         self.assertEqual(cfg["processing"]["num_cores"], 3)

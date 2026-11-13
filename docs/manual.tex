@@ -241,9 +241,11 @@ Send the calibration to Circularize. Compare the two polar views after the run.
 The following sequence uses the current Binning and PES panels.
 
 \begin{enumerate}
-  \item \textbf{GMD Map.} Choose the folder of \code{RAW-\allowbreak{}*.\allowbreak{}h5} files and the
-        GMD timestamp file, choose an output map path, and Run. The result is
-        a frame-to-GMD map.
+  \item \textbf{GMD Map.} Choose the folder of HDF5 files, its HDF5
+        pattern (\code{RAW-\allowbreak{}*.\allowbreak{}h5} by default, or
+        \code{*RAW-\allowbreak{}*.\allowbreak{}h5} when names have a prefix before
+        \code{RAW-}), and the GMD timestamp file; choose an output map path,
+        and Run. The result is a frame-to-GMD map.
   \item \textbf{Centroiding.} Choose the same HDF5 folder and an output
         directory. First tick \emph{Tuning mode only}, enter a tuning frame
         index or leave it blank for a random frame, and run to inspect
@@ -524,6 +526,9 @@ This section describes the files the pipeline expects.
 \label{sec:rawdata}
 
 A dataset is a folder of HDF5 files, usually named \code{RAW-\allowbreak{}*.\allowbreak{}h5}.
+Tools that scan a pattern default to \code{RAW-\allowbreak{}*.\allowbreak{}h5}; if the
+acquisition adds a prefix before \code{RAW-}, set the panel's
+\emph{HDF5 pattern} to \code{*RAW-\allowbreak{}*.\allowbreak{}h5}.
 Each file holds two datasets:
 
 \begin{center}
@@ -649,7 +654,13 @@ Field & Type and default & Saved key & CLI flag & Meaning \\
 \bottomrule
 \endfoot
 \emph{HDF5 directory} & folder, empty & \code{gmd\_\allowbreak{}map.\allowbreak{}h5\_\allowbreak{}dir} &
-\emph{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir} & Folder scanned for \code{RAW-\allowbreak{}*.\allowbreak{}h5} files, sorted by name. Required. \\
+\emph{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir} & Folder scanned for the pattern below. Required. \\
+\addlinespace
+\emph{HDF5 pattern} & text, \code{RAW-\allowbreak{}*.\allowbreak{}h5} &
+\code{gmd\_\allowbreak{}map.\allowbreak{}h5\_\allowbreak{}pattern} &
+\code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}pattern} & Glob inside the HDF5 directory; files are
+sorted by name. Use \code{*RAW-\allowbreak{}*.\allowbreak{}h5} when filenames have a prefix before
+\code{RAW-}. \\
 \addlinespace
 \code{GMD timestamp file (current-\allowbreak{}time-\allowbreak{}both.txt)} & file, empty &
 \code{gmd\_\allowbreak{}map.gmd\_\allowbreak{}path} & \code{-\allowbreak{}-\allowbreak{}gmd-\allowbreak{}path} & The GMD table
@@ -666,7 +677,7 @@ A map built for a subset is valid only for that subset. \\
 \end{longtable}
 \end{center}
 
-\textbf{Buttons.} \emph{Run}/\emph{Stop} submits the four values as job
+\textbf{Buttons.} \emph{Run}/\emph{Stop} submits the five values as job
 \code{GMD map}. \emph{Clear output} asks for confirmation and deletes the
 output file so the next run rewrites it. \emph{open containing folder}
 appears in the results and opens the output's folder in the file manager.
@@ -1922,6 +1933,11 @@ Field & Type and default & Saved key & CLI flag & Meaning \\
 stage 1 \code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir} & Dataset for the whole pipeline; also forced into
 the Centroiding snapshot as an absolute path. Required. \\
 \addlinespace
+\emph{HDF5 pattern} & text, \code{RAW-\allowbreak{}*.\allowbreak{}h5} &
+\code{pipeline.\allowbreak{}h5\_\allowbreak{}pattern} & stage 1
+\code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}pattern} & Glob for the GMD map and Centroiding stages; also
+written into the Centroiding snapshot. Use \code{*RAW-\allowbreak{}*.\allowbreak{}h5} for prefixed names. \\
+\addlinespace
 \emph{GMD timestamp file} & file, empty & \code{pipeline.\allowbreak{}gmd\_\allowbreak{}path} &
 stage 1 \code{-\allowbreak{}-\allowbreak{}gmd-\allowbreak{}path} & GMD table for stage 1. Required. \\
 \addlinespace
@@ -1973,9 +1989,9 @@ PyAbel backend & \code{circularization/\allowbreak{}} &
 
 \textbf{Borrowed and forced settings.} The pipeline takes every Centroiding
 setting from the saved form, but overrides exactly three values in its own
-snapshot: the HDF5 directory, the GMD map path, and \emph{Tuning mode only}
-(forced off, so a pipeline run is always a full batch and never produces a
-tuning check). Thresholds, GMD column and GMD floor are taken from the
+snapshot: the HDF5 directory, the HDF5 pattern, the GMD map path, and
+\emph{Tuning mode only} (forced off, so a pipeline run is always a full batch
+and never produces a tuning check). Thresholds, GMD column and GMD floor are taken from the
 Binning tab's saved settings; the Pipeline fields supply the weight mode and
 power. The pipeline has no output-directory field: the Centroiding output
 directory is used. The PES stage always uses the PyAbel backend with the
@@ -2136,7 +2152,9 @@ Module & Purpose and main inputs \\
 \endhead
 \bottomrule
 \code{vmi\_\allowbreak{}analysis.gmd.build\_\allowbreak{}gmd\_\allowbreak{}map} & Build the frame-to-GMD map;
-\code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir}, \code{-\allowbreak{}-\allowbreak{}gmd-\allowbreak{}path}, \code{-\allowbreak{}-\allowbreak{}output-\allowbreak{}path}, \code{-\allowbreak{}-\allowbreak{}n-\allowbreak{}files}. \\
+\code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir}, \code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}pattern},
+\code{-\allowbreak{}-\allowbreak{}gmd-\allowbreak{}path}, \code{-\allowbreak{}-\allowbreak{}output-\allowbreak{}path},
+\code{-\allowbreak{}-\allowbreak{}n-\allowbreak{}files}. \\
 \addlinespace
 \code{vmi\_\allowbreak{}analysis.imaging.h5\_\allowbreak{}play\_\allowbreak{}frames\_\allowbreak{}movie} & Render or stream a
 movie; \code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir}, \code{-\allowbreak{}-\allowbreak{}n-\allowbreak{}frames}, \code{-\allowbreak{}-\allowbreak{}cmap}, \code{-\allowbreak{}-\allowbreak{}log-\allowbreak{}scale},
@@ -2236,9 +2254,15 @@ backend, for example \code{Agg}. \\
     fit file in Trig Calibration or supply a compatible export. Supply the
     radial reassignment file before starting PES.
   \item[The frame histogram or movie disagrees with another tool.] Frame
-    enumeration differs between tools: GMD Map and Dark Frame use
-    \code{RAW-\allowbreak{}*.\allowbreak{}h5}, while Movie, Accumulate and the frame histogram use all
-    \code{*.\allowbreak{}h5} files sorted by name. Extra HDF5 files change indices.
+    enumeration differs between tools: GMD Map and Dark Frame use the HDF5
+    pattern (\code{RAW-\allowbreak{}*.\allowbreak{}h5} by default, adjustable for prefixed names), while
+    Movie, Accumulate and the frame histogram use all \code{*.\allowbreak{}h5} files sorted
+    by name. Extra HDF5 files change indices.
+  \item[GMD Map fails immediately with ``No HDF5 files matching''.] The
+    selected directory contains no file whose name matches the panel's
+    \emph{HDF5 pattern}. For names such as
+    \code{ODL-150-\allowbreak{}RAW-\allowbreak{}S00000.\allowbreak{}h5}, set the pattern to
+    \code{*RAW-\allowbreak{}*.\allowbreak{}h5}; the job now stops before writing an empty map.
   \item[Out-of-memory during dark computation.] The median method holds the
     selected dark frames in memory. Reduce \emph{Dark frame count} or use the
     mean method.
