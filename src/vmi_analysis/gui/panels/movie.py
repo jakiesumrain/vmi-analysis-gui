@@ -6,50 +6,83 @@ import sys
 import uuid
 from pathlib import Path
 
-from nicegui import ui
+from fastapi.responses import JSONResponse, Response
+from nicegui import app, ui
 
-from ..jobs import Job, JobManager, TERMINAL
+from ..jobs import Job, JobManager, MANAGER, TERMINAL
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     open_folder_button, path_input, persist, serve_dir,
+                     open_folder_button, path_input, persist,
                      zoomable_image, delete_outputs)
 
-# In-page movie player: steps the dumped frame PNGs in place at the playback
-# interval, loops over the available frames (like the matplotlib pop-up did)
-# and preloads the next frame so stepping is flicker-free. The Python side
-# only tells it how many frames are available (vmiMovieAvail).
+# Fetch the newest frame without storing image payloads in the UI event history.
 _PLAYER_JS = """
 <script>
-window.vmiMovie = {timer: null, idx: 0, avail: 0, total: 0,
-                   base: '', bust: '', interval: 500, paused: false};
+window.vmiMovie = null;
 
-function vmiMovieUrl(i) {
-  const p = window.vmiMovie;
-  return p.base + '/frame_' + String(i).padStart(4, '0') + '.png?t=' + p.bust;
+function vmiMovieStop() {
+  window.vmiMovie = null;
 }
-function vmiMovieStart(base, bust, interval, total) {
-  const p = window.vmiMovie;
-  if (p.timer) clearInterval(p.timer);
-  p.base = base; p.bust = bust; p.total = total;
-  p.interval = Math.max(40, interval);
-  p.idx = 0; p.avail = 0; p.paused = false;
-  p.timer = setInterval(vmiMovieStep, p.interval);
-}
-function vmiMovieAvail(n) { window.vmiMovie.avail = n; }
-function vmiMovieStep() {
-  const p = window.vmiMovie;
-  if (p.paused || p.avail < 1) return;
-  if (p.idx >= p.avail) p.idx = 0;  // loop, like the pop-up window did
+function vmiMovieStart(url) {
+  const p = {url, index: 0, paused: false};
+  window.vmiMovie = p;
   const img = document.getElementById('vmi-live-img');
-  if (img) img.src = vmiMovieUrl(p.idx);
+  if (img) img.removeAttribute('src');
   const ctr = document.getElementById('vmi-live-counter');
-  if (ctr) ctr.textContent = 'frame ' + (p.idx + 1) + ' / ' + p.total;
-  p.idx = (p.idx + 1) % p.avail;
-  const pre = new Image();  // preload the next frame for smooth stepping
-  pre.src = vmiMovieUrl(p.idx);
+  if (ctr) ctr.textContent = '';
+  vmiMovieStep(p);
+}
+async function vmiMovieStep(p) {
+  if (p !== window.vmiMovie) return;
+  try {
+    if (!p.paused) {
+      const response = await fetch(p.url + '?after=' + p.index, {cache: 'no-store'});
+      if (p !== window.vmiMovie || p.paused) return;
+      if (response.status === 410) vmiMovieStop();
+      if (response.status === 200) {
+        const frame = await response.json();
+        if (p !== window.vmiMovie || p.paused) return;
+        const img = document.getElementById('vmi-live-img');
+        if (img) img.src = 'data:image/png;base64,' + frame.png;
+        const ctr = document.getElementById('vmi-live-counter');
+        if (ctr) ctr.textContent = 'frame ' + frame.index + ' / ' + frame.total;
+        p.index = frame.index;
+        if (p.index === frame.total) vmiMovieStop();
+      }
+    }
+  } catch {
+    // The next poll can recover from a transient network interruption.
+  } finally {
+    if (p === window.vmiMovie) setTimeout(() => vmiMovieStep(p), 50);
+  }
 }
 </script>
 """
+
+
+@app.get("/movie-preview/{job_id}")
+async def _preview_frame(job_id: str, after: int = 0):
+    headers = {"Cache-Control": "no-store"}
+    job = MANAGER.get(job_id)
+    if job is None:
+        return Response(status_code=410, headers=headers)
+    status = job.status
+    if job.cancel_requested or status in {"failed", "cancelled"}:
+        return Response(status_code=410, headers=headers)
+    frame = job.extra.get("preview_frame")
+    if frame is None or frame["index"] <= after:
+        return Response(status_code=410 if status == "done" else 204,
+                        headers=headers)
+    return JSONResponse(frame, headers=headers)
+
+
+def _consume_preview_frame(job: Job, line: str) -> bool:
+    prefix = "[preview-png] "
+    if not line.startswith(prefix):
+        return False
+    index, total, png = line[len(prefix):].split(" ", 2)
+    job.extra["preview_frame"] = {"index": int(index), "total": int(total), "png": png}
+    return True
 
 
 def build(jobs: JobManager) -> None:
@@ -100,8 +133,7 @@ def build(jobs: JobManager) -> None:
             w.bind_enabled_from(save_movie, "value")
 
         def run():
-            frames_dir = GENERATED / "movie_frames" / uuid.uuid4().hex
-            frames_dir.mkdir(parents=True, exist_ok=True)
+            saving = bool(save_movie.value)
             live_label.visible = False
             live_row.visible = False
             live_img.visible = False
@@ -119,31 +151,32 @@ def build(jobs: JobManager) -> None:
                    "--movie-ext", movie_ext.value,
                    "--movie-fps", str(movie_fps.value or 0),
                    "--headless",
-                   "--save-movie" if save_movie.value else "--no-save-movie",
-                   "--dump-frames", str(frames_dir)]
+                   "--save-movie" if saving else "--no-save-movie"]
             if log_scale.value:
                 cmd.append("--log-scale")
-            if not save_movie.value:
-                # embedded live playback: frames stream in at playback pace
-                cmd.append("--stream-pace")
-            job = jobs.submit(Job(
-                name="Frame movie", cmd=cmd, cwd=str(REPO_ROOT),
-                extra={"frames_dir": str(frames_dir)}))
-            live_state["job"] = None if save_movie.value else job
-            if save_movie.value:
-                ui.run_javascript(
-                    "if (window.vmiMovie.timer) "
-                    "clearInterval(window.vmiMovie.timer)")
+            for previous in jobs.jobs():
+                if previous.name == "Frame movie" and previous.status in TERMINAL:
+                    previous.extra.pop("preview_frame", None)
+            job = Job(name="Frame movie", cmd=cmd, cwd=str(REPO_ROOT))
+            if saving:
+                frames_dir = GENERATED / "movie_frames" / uuid.uuid4().hex
+                cmd.extend(["--dump-frames", str(frames_dir)])
+                job.extra["frames_dir"] = str(frames_dir)
+            else:
+                cmd.append("--preview-stream")
+                job.consume_output = _consume_preview_frame
+            jobs.submit(job)
+            live_state["job"] = None if saving else job
+            if saving:
+                ui.run_javascript("vmiMovieStop()")
             else:
                 live_label.visible = True
                 live_row.visible = True
                 live_img.visible = True
                 pause_btn.text = "Pause"
+                pause_btn.enable()
                 ui.run_javascript(
-                    f"vmiMovieStart({json.dumps(serve_dir(frames_dir))}, "
-                    f"{json.dumps(job.id)}, "
-                    f"{int(interval_ms.value or 500)}, "
-                    f"{int(n_frames.value or 0)})")
+                    f"vmiMovieStart({json.dumps(f'movie-preview/{job.id}')})")
             view.attach(job)
 
         with ui.row().classes("gap-2"):
@@ -152,9 +185,7 @@ def build(jobs: JobManager) -> None:
                       on_click=lambda: _clear_outputs(
                           movie_dir, h5_dir)) \
                 .props("flat color=negative")
-        ui.label("Tip: with 'Save movie file' unchecked the movie plays "
-                 "live below as the frames stream in (at the Interval "
-                 "pace).").classes("vmi-subtitle")
+        ui.label("Turn off Save movie file to preview frames without saving files.").classes("vmi-subtitle")
 
         live_label = ui.label("Live playback").classes("vmi-caption")
         live_label.visible = False
@@ -171,8 +202,10 @@ def build(jobs: JobManager) -> None:
         live_state = {"job": None}
 
         def _toggle_pause():
+            if live_state["job"] is None:
+                return
             ui.run_javascript(
-                "window.vmiMovie.paused = !window.vmiMovie.paused")
+                "if (window.vmiMovie) window.vmiMovie.paused = !window.vmiMovie.paused")
             pause_btn.text = ("Resume" if pause_btn.text == "Pause"
                               else "Pause")
 
@@ -180,16 +213,14 @@ def build(jobs: JobManager) -> None:
             job = live_state["job"]
             if job is None:
                 return
-            frames_dir = Path(job.extra["frames_dir"])
-            n = sum(1 for _ in frames_dir.glob("frame_*.png"))
-            if job.status in TERMINAL:
+            if job.cancel_requested or job.status in TERMINAL:
                 live_state["job"] = None
-                ui.run_javascript(f"vmiMovieAvail({n})")
-            else:
-                # one behind the newest: that file may still be mid-write
-                ui.run_javascript(f"vmiMovieAvail({max(0, n - 1)})")
-
-        ui.timer(0.3, _live_tick)
+                was_paused = pause_btn.text == "Resume"
+                pause_btn.disable()
+                if job.cancel_requested or job.status != "done" or was_paused:
+                    ui.run_javascript("vmiMovieStop()")
+                return
+        ui.timer(0.1, _live_tick)
 
     view.place_console()
 
@@ -242,7 +273,7 @@ def _clear_outputs(movie_dir, h5_dir) -> None:
 
 
 def _results(job: Job):
-    if job.status != "done":
+    if job.status != "done" or "frames_dir" not in job.extra:
         return
     frames_dir = Path(job.extra["frames_dir"])
     result_path = frames_dir / "movie-path.txt"

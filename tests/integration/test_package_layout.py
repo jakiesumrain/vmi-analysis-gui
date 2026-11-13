@@ -1,5 +1,6 @@
 """Exercise real entry points and writable paths after relocating source files."""
 
+import base64
 import os
 from pathlib import Path
 import subprocess
@@ -40,6 +41,26 @@ class PackageLayoutTests(unittest.TestCase):
                     result = self.run_command(["-m", "vmi_analysis." + module, "--help"], folder)
                     self.assertIn("usage:", result.stdout.lower())
             self.assertFalse((Path(folder) / "src").exists())
+
+    def test_movie_preview_stream_writes_no_outputs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            source = folder / "RAW-test.h5"
+            with h5py.File(source, "w") as handle:
+                handle.create_dataset("raw/data", data=np.arange(128, dtype=np.uint16).reshape(2, 8, 8))
+            result = self.run_command(
+                ["-m", "vmi_analysis.imaging.h5_play_frames_movie",
+                 "--h5-dir", str(folder), "--n-frames", "200", "--interval-ms", "40",
+                 "--movie-dir", str(folder / "movies"), "--headless",
+                 "--no-save-movie", "--preview-stream"],
+                folder,
+            )
+            frames = [line.split(" ", 3)[1:] for line in result.stdout.splitlines()
+                      if line.startswith("[preview-png] ")]
+            self.assertEqual([(index, total) for index, total, _ in frames], [("1", "2"), ("2", "2")])
+            for _, _, png in frames:
+                self.assertTrue(base64.b64decode(png, validate=True).startswith(b"\x89PNG\r\n\x1a\n"))
+            self.assertEqual(list(folder.iterdir()), [source])
 
     def test_accumulation_module_with_worker_processes(self):
         with tempfile.TemporaryDirectory() as folder:
