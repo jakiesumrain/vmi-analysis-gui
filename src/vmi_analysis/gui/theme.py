@@ -56,7 +56,8 @@ def run_button(label: str = "Run", **kwargs) -> ui.button:
 
 
 def status_badge(text: str = "idle") -> ui.badge:
-    return ui.badge(text).classes("vmi-badge-idle")
+    # No Quasar background colour class: status styling is owned by theme.css.
+    return ui.badge(text, color=None).classes("vmi-badge-idle")
 
 
 def set_badge(badge: ui.badge, status: str) -> None:
