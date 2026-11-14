@@ -314,6 +314,7 @@ class JobView:
                 .classes("grow").props("color=primary track-color=grey-9")
             self.progress.visible = False
         self.log = None
+        self.console_hint = None
         self.wait_label = ui.label("").classes("vmi-subtitle")
         self.wait_label.visible = False
         self.results = None
@@ -348,9 +349,14 @@ class JobView:
         self.action_button.set_enabled(not stopping)
 
     def place_console(self) -> None:
-        """Create the log console and results area; call at panel bottom."""
-        self.log = theme.log_console()
-        self.results = ui.column().classes("w-full gap-4")
+        """Create the labelled log console and results area; call at panel bottom."""
+        with ui.column().classes("vmi-console w-full gap-2"):
+            with ui.row().classes("vmi-console-head w-full items-center justify-between"):
+                ui.label("Console").classes("vmi-console-title")
+                self.console_hint = ui.label("Output appears here after a run.") \
+                    .classes("vmi-caption")
+            self.log = theme.log_console()
+            self.results = ui.column().classes("w-full gap-4")
         ui.timer(self._interval, self.refresh)
         self.refresh()
 
@@ -381,8 +387,18 @@ class JobView:
         self.wait_label.text = j.wait_reason if j is not None else ""
         if j is None:
             theme.set_badge(self.badge, "idle")
+            if self.console_hint is not None:
+                self.console_hint.text = "Output appears here after a run."
             return
         theme.set_badge(self.badge, j.status)
+        if self.console_hint is not None:
+            self.console_hint.text = {
+                "running": "Streaming output…",
+                "queued": "Queued — waiting for a slot",
+                "done": "Finished — results below",
+                "failed": "Failed — see log for details",
+                "cancelled": "Cancelled",
+            }.get(j.status, "Output appears here after a run.")
         running = j.status == "running"
         self.spinner.visible = running
         self.progress.visible = running

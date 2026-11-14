@@ -309,6 +309,13 @@ primary button with black text; blue (`#3b82f6`) is the data/focus accent
 and amber (`#f59e0b`) marks warnings and fit overlays. Headings, controls
 and body copy use Geist Sans; logs and identifiers use Geist Mono.
 
+The shell is a persistent workbench: a left rail groups tools into
+*Acquire*, *Analyze* and *Automate*; the main workspace opens with a
+four-cell status strip (active jobs, queued jobs, job limit, server mode);
+each panel ends in a labelled console dock that streams job output. The
+rail becomes a horizontally scrollable strip on narrow screens, and the
+status strip reflows to two columns.
+
 Each panel begins with a heading and a short task summary. The Binning,
 PES, and Pipeline summaries identify their current development status.
 

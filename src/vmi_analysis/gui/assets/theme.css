@@ -62,19 +62,101 @@ html, body {
 }
 .vmi-footer a { color: var(--vmi-body) !important; }
 .vmi-footer a:hover { color: var(--vmi-ink) !important; }
-.vmi-nav {
+.vmi-workbench {
+  display: flex;
+  align-items: stretch;
   width: 100%;
   min-width: 0;
-  border-bottom: 1px solid var(--vmi-hairline);
 }
-.vmi-shell {
-  width: 100%;
-  max-width: 88rem;
+.vmi-sidebar {
+  flex: 0 0 15.5rem;
+  width: 15.5rem;
   min-width: 0;
-  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  align-self: flex-start;
+  height: calc(100vh - 6.25rem);
+  max-height: calc(100vh - 3.5rem);
+  position: sticky;
+  top: 0;
+  overflow-y: auto;
+  padding: 1.1rem 0.65rem 1rem;
+  background: #050505;
+  border-right: 1px solid var(--vmi-hairline);
+}
+.vmi-sidebar-title {
+  padding: 0 0.6rem 0.9rem;
+  color: var(--vmi-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.vmi-sidebar-group {
+  padding: 0.9rem 0.6rem 0.3rem;
+  color: var(--vmi-muted-soft);
+  font-size: 0.65rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+}
+.vmi-sidebar-foot {
+  margin-top: auto;
+  padding: 1rem 0.6rem 0;
+  border-top: 1px solid var(--vmi-hairline);
+}
+.vmi-sidebar-foot-label {
+  color: var(--vmi-muted);
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+.vmi-sidebar-foot-note {
+  color: var(--vmi-muted-soft);
+  font-size: 0.66rem;
+}
+.vmi-workspace {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
   padding: 1.25rem 1.5rem 2rem;
 }
-.vmi-shell > * { min-width: 0; max-width: 100%; }
+.vmi-tab-panels { min-width: 0; }
+
+.vmi-stat-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  width: 100%;
+  margin-bottom: 1.25rem;
+  overflow: hidden;
+  background: var(--vmi-hairline);
+  border: 1px solid var(--vmi-hairline);
+  border-radius: 8px;
+}
+.vmi-stat {
+  min-width: 0;
+  padding: 0.75rem 0.9rem;
+  background: var(--vmi-surface-card);
+}
+.vmi-stat-label {
+  color: var(--vmi-muted);
+  font-size: 0.66rem;
+  font-weight: 500;
+}
+.vmi-stat-value {
+  color: var(--vmi-ink);
+  font-size: 1.15rem;
+  font-weight: 600;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  transition: color 160ms ease;
+}
+.vmi-stat-note {
+  overflow: hidden;
+  color: var(--vmi-muted);
+  font-size: 0.7rem;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ---- type ---- */
 .vmi-title {
@@ -120,6 +202,15 @@ html, body {
 }
 
 /* ---- log console ---- */
+.vmi-console {
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--vmi-hairline);
+}
+.vmi-console-title {
+  color: var(--vmi-ink);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
 .vmi-log {
   background: #050505;
   color: #d4d4d4;
@@ -184,16 +275,55 @@ html, body {
 .q-tab--active { color: var(--vmi-ink); background: transparent !important; }
 .q-tab__indicator { background: var(--vmi-ink) !important; height: 2px !important; }
 .q-tab:hover { color: var(--vmi-ink); }
-.vmi-more-panels {
+
+/* ---- persistent workspace rail ---- */
+.vmi-sidebar .q-tabs {
+  width: 100%;
+  border-bottom: 0 !important;
   color: var(--vmi-muted);
-  text-transform: none;
-  font-weight: 500;
-  border-radius: 0;
-  min-height: 48px;
-  flex-shrink: 0;
 }
-.vmi-more-panels:hover { color: var(--vmi-ink); }
-.vmi-more-panels-active { color: var(--vmi-ink) !important; }
+.vmi-sidebar .q-tabs__content {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  width: 100%;
+  overflow: visible;
+}
+.vmi-sidebar .q-tab {
+  flex: 0 0 auto;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 0.55rem;
+  border-radius: 6px;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+.vmi-sidebar .q-tab__content {
+  align-items: flex-start;
+  min-width: 0;
+}
+.vmi-sidebar .q-tab__label {
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+.vmi-sidebar .q-tab:hover { background: var(--vmi-surface-soft); }
+.vmi-sidebar .q-tab--active {
+  background: var(--vmi-surface-elevated);
+  color: var(--vmi-ink);
+}
+.vmi-sidebar .q-tab__indicator {
+  top: 50% !important;
+  bottom: auto !important;
+  left: 0 !important;
+  right: auto !important;
+  width: 2px !important;
+  height: 14px !important;
+  transform: translateY(-50%);
+  border-radius: 2px;
+  background: var(--vmi-blue) !important;
+}
+.vmi-sidebar .q-tabs__arrow { display: none; }
 .q-menu {
   background: var(--vmi-surface-elevated);
   border: 1px solid var(--vmi-hairline);
@@ -330,20 +460,60 @@ html, body {
 }
 .polar-guide-layer [data-polar-guide="xy"]::before { inset: 6px; border-radius: 50%; }
 
+@keyframes vmi-panel-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.q-tab-panel { animation: vmi-panel-enter 180ms ease-out both; }
+.vmi-panel { transition: border-color 180ms ease; }
+.vmi-panel:hover { border-color: var(--vmi-hairline-strong); }
+
 @media (max-width: 900px) {
   .vmi-header { flex-wrap: wrap; gap: 10px; }
-  .vmi-shell { padding: 1rem; }
-  .vmi-panel { padding: 1rem; }
-  .vmi-nav { overflow-x: auto; scrollbar-width: none; }
-  .vmi-nav::-webkit-scrollbar { display: none; }
-  .vmi-nav .q-tabs { flex: 0 0 auto; }
-  .vmi-more-panels {
-    position: sticky;
-    right: 0;
-    z-index: 2;
-    background: var(--vmi-canvas);
-    box-shadow: -12px 0 16px rgba(0, 0, 0, 0.65);
+  .vmi-workbench { flex-direction: column; }
+  .vmi-sidebar {
+    flex: none;
+    width: 100%;
+    height: auto;
+    max-height: none;
+    position: static;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0.35rem 1rem;
+    border-right: 0;
+    border-bottom: 1px solid var(--vmi-hairline);
   }
+  .vmi-sidebar-title,
+  .vmi-sidebar-group,
+  .vmi-sidebar-foot { display: none; }
+  .vmi-sidebar .q-tabs__content {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0;
+    width: max-content;
+  }
+  .vmi-sidebar .q-tab {
+    flex: 0 0 auto;
+    width: auto !important;
+    min-height: 40px;
+    padding: 0 0.7rem;
+    border-radius: 0;
+    white-space: nowrap;
+  }
+  .vmi-sidebar .q-tab--active { background: transparent; }
+  .vmi-sidebar .q-tab__indicator {
+    top: auto !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 2px !important;
+    transform: none;
+  }
+  .vmi-workspace { padding: 1rem; }
+  .vmi-stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vmi-stat-note { display: none; }
+  .vmi-panel { padding: 1rem; }
   .q-tab { padding: 0 10px; font-size: 0.82rem; }
 }
 @media (max-width: 600px) {
@@ -352,6 +522,9 @@ html, body {
   .vmi-subtitle { font-size: 0.78rem; }
   .vmi-header { padding-inline: 1rem !important; }
   .vmi-header .q-btn { padding-inline: 0.6rem; }
+  .vmi-stat { padding: 0.6rem 0.7rem; }
+  .vmi-workspace { padding: 0.85rem; }
+  .vmi-sidebar { padding-inline: 0.75rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

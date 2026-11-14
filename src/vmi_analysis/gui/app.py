@@ -4,7 +4,6 @@ Launch from the repository root:  uv run vmi-analysis
 """
 
 import asyncio
-from functools import partial
 from importlib.resources import files
 from math import isfinite
 import os
@@ -92,21 +91,23 @@ def _schedule_shutdown_after_last_client(client) -> None:
         _shutdown_after(_env_float("VMI_GUI_SHUTDOWN_GRACE", DEFAULT_SHUTDOWN_GRACE)),
         name="auto-shutdown-check")
 
-PRIMARY_PANELS = [
+TABS = [
     ("GMD Map", gmd_map),
     ("Movie", movie),
     ("Dark Frame", dark),
     ("Accumulate", accumulate),
     ("Centroiding", centroid),
-]
-MORE_PANELS = [
     ("Binning", binning),
     ("Trig Calibration", calibration),
     ("Circularize", circularize),
     ("PES", pes),
     ("Pipeline", pipeline),
 ]
-TABS = PRIMARY_PANELS + MORE_PANELS
+SIDEBAR_GROUPS = (
+    ("Acquire", ("GMD Map", "Movie", "Dark Frame", "Accumulate")),
+    ("Analyze", ("Centroiding", "Binning", "Trig Calibration", "Circularize", "PES")),
+    ("Automate", ("Pipeline",)),
+)
 
 
 @ui.page("/")
@@ -200,62 +201,70 @@ def index() -> None:
         with ui.row().classes("items-baseline gap-3"):
             ui.label("VMI Analysis").classes("vmi-title vmi-title-md vmi-title-bold")
             ui.label("photoelectron imaging toolbox").classes("vmi-subtitle")
-        with ui.row().classes("items-center gap-4"):
-            queue_label = ui.label("").classes("vmi-caption")
+        with ui.row().classes("items-center gap-3"):
             ui.button("Settings", icon="settings",
                       on_click=lambda: settings_dialog.open()).props("outline dense")
 
+    def stat_tile(label, value, note):
+        with ui.column().classes("vmi-stat"):
+            ui.label(label).classes("vmi-stat-label")
+            value_label = ui.label(value).classes("vmi-stat-value")
+            note_label = ui.label(note).classes("vmi-stat-note")
+        return value_label, note_label
+
     def refresh_queue():
         running = MANAGER.running()
-        n_queued = sum(1 for j in MANAGER.jobs() if j.status == "queued")
-        queue_label.text = ("running: " + ", ".join(job.name for job in running)) if running else "idle"
-        if n_queued:
-            queue_label.text += f"  ·  {n_queued} queued"
+        n_queued = sum(1 for job in MANAGER.jobs() if job.status == "queued")
+        running_value.text = str(len(running))
+        running_note.text = (" · ".join(job.name for job in running)
+                             if running else "idle")
+        queued_value.text = str(n_queued)
+        queued_note.text = "waiting for a slot" if n_queued else "none waiting"
+        limit_value.text = str(MANAGER.max_concurrent)
+        keep_value.text = "Keep-alive" if _keep_alive_enabled() else "Auto-stop"
+        keep_note.text = ("after disconnect" if _keep_alive_enabled()
+                          else "after last client")
 
+    with ui.row().classes("vmi-workbench w-full no-wrap"):
+        with ui.column().classes("vmi-sidebar"):
+            ui.label("Workspace").classes("vmi-sidebar-title")
+            with ui.tabs().classes("vmi-sidebar-tabs") as tabs:
+                for group, names in SIDEBAR_GROUPS:
+                    ui.label(group).classes("vmi-sidebar-group")
+                    for name in names:
+                        ui.tab(name)
+            with ui.column().classes("vmi-sidebar-foot"):
+                ui.label("Local workspace").classes("vmi-sidebar-foot-label")
+                ui.label(f"{len(TABS)} tools").classes("vmi-sidebar-foot-note")
+
+        with ui.column().classes("vmi-workspace"):
+            with ui.row().classes("vmi-stat-strip w-full"):
+                running_value, running_note = stat_tile("Active jobs", "0", "idle")
+                queued_value, queued_note = stat_tile("Queued", "0", "none waiting")
+                limit_value, _ = stat_tile("Job limit", str(MANAGER.max_concurrent),
+                                           "concurrent")
+                keep_value, keep_note = stat_tile(
+                    "Server",
+                    "Keep-alive" if _keep_alive_enabled() else "Auto-stop",
+                    "after disconnect" if _keep_alive_enabled() else "after last client")
+
+            with ui.tab_panels(tabs, value=TABS[0][0]).classes(
+                    "vmi-tab-panels w-full bg-transparent"):
+                def export_calibration(extracted_path, image_path, manual_center, **settings):
+                    return use_calibration(extracted_path, image_path, manual_center, **settings)
+
+                with workflow.collect_fields(workflow_fields):
+                    for name, module in TABS:
+                        with ui.tab_panel(name):
+                            if module is circularize:
+                                use_calibration = module.build(MANAGER)
+                            elif module is calibration:
+                                module.build(MANAGER, use_calibration=export_calibration)
+                            else:
+                                module.build(MANAGER)
+
+    refresh_queue()
     ui.timer(1.0, refresh_queue)
-
-    with ui.column().classes("vmi-shell w-full gap-4"):
-        with ui.row().classes("vmi-nav w-full items-center justify-start gap-0 flex-nowrap"):
-            with ui.tabs().classes("min-w-0") as tabs:
-                for name, _ in PRIMARY_PANELS:
-                    ui.tab(name)
-            with ui.button("More...", icon="expand_more").props("flat no-caps") \
-                    .classes("vmi-more-panels") as more_button:
-                with ui.menu().props("anchor='bottom right' self='top right' role=menu"):
-                    more_items = {
-                        name: ui.menu_item(name, on_click=partial(tabs.set_value, name))
-                        .props("role=menuitemradio aria-checked=false")
-                        for name, _ in MORE_PANELS
-                    }
-
-            def update_panel_navigation(event):
-                active_class = "vmi-more-panels-active"
-                if event.value in more_items:
-                    more_button.classes(add=active_class)
-                else:
-                    more_button.classes(remove=active_class)
-                for name, item in more_items.items():
-                    selected = event.value == name
-                    item.props(f"aria-checked={str(selected).lower()}")
-                    if selected:
-                        item.classes(add=active_class)
-                    else:
-                        item.classes(remove=active_class)
-
-            tabs.on_value_change(update_panel_navigation)
-        with ui.tab_panels(tabs, value=PRIMARY_PANELS[0][0]).classes("w-full bg-transparent"):
-            def export_calibration(extracted_path, image_path, manual_center, **settings):
-                return use_calibration(extracted_path, image_path, manual_center, **settings)
-
-            with workflow.collect_fields(workflow_fields):
-                for name, module in TABS:
-                    with ui.tab_panel(name):
-                        if module is circularize:
-                            use_calibration = module.build(MANAGER)
-                        elif module is calibration:
-                            module.build(MANAGER, use_calibration=export_calibration)
-                        else:
-                            module.build(MANAGER)
 
     with ui.footer().classes("vmi-footer px-6 py-2 items-center justify-between"):
         ui.label("To stop the application, choose Stop server in Settings.") \
