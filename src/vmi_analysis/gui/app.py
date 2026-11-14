@@ -202,14 +202,17 @@ def index() -> None:
             ui.label("VMI Analysis").classes("vmi-title vmi-title-md vmi-title-bold")
             ui.label("photoelectron imaging toolbox").classes("vmi-subtitle")
         with ui.row().classes("items-center gap-3"):
-            ui.button("Settings", icon="settings",
-                      on_click=lambda: settings_dialog.open()).props("outline dense")
+            settings_button = ui.button(
+                "Settings", icon="settings",
+                on_click=lambda: settings_dialog.open()).props("outline dense")
+            settings_button.tooltip(
+                "Stop server, keep-alive, concurrency and workflow files")
 
-    def stat_tile(label, value, note):
-        with ui.column().classes("vmi-stat"):
-            ui.label(label).classes("vmi-stat-label")
-            value_label = ui.label(value).classes("vmi-stat-value")
-            note_label = ui.label(note).classes("vmi-stat-note")
+    def status_item(label, value, note):
+        with ui.row().classes("vmi-status-item items-baseline gap-1"):
+            ui.label(label).classes("vmi-status-label")
+            value_label = ui.label(value).classes("vmi-status-value")
+            note_label = ui.label(note).classes("vmi-status-note")
         return value_label, note_label
 
     def refresh_queue():
@@ -238,16 +241,6 @@ def index() -> None:
                 ui.label(f"{len(TABS)} tools").classes("vmi-sidebar-foot-note")
 
         with ui.column().classes("vmi-workspace"):
-            with ui.row().classes("vmi-stat-strip w-full"):
-                running_value, running_note = stat_tile("Active jobs", "0", "idle")
-                queued_value, queued_note = stat_tile("Queued", "0", "none waiting")
-                limit_value, _ = stat_tile("Job limit", str(MANAGER.max_concurrent),
-                                           "concurrent")
-                keep_value, keep_note = stat_tile(
-                    "Server",
-                    "Keep-alive" if _keep_alive_enabled() else "Auto-stop",
-                    "after disconnect" if _keep_alive_enabled() else "after last client")
-
             with ui.tab_panels(tabs, value=TABS[0][0]).classes(
                     "vmi-tab-panels w-full bg-transparent"):
                 def export_calibration(extracted_path, image_path, manual_center, **settings):
@@ -263,14 +256,24 @@ def index() -> None:
                             else:
                                 module.build(MANAGER)
 
+    with ui.footer().classes(
+            "vmi-footer vmi-status-footer px-6 py-2 items-center justify-between"):
+        with ui.row().classes("vmi-statusbar items-center no-wrap"):
+            running_value, running_note = status_item("Active jobs", "0", "idle")
+            queued_value, queued_note = status_item("Queued", "0", "none waiting")
+            limit_value, _ = status_item("Job limit", str(MANAGER.max_concurrent),
+                                         "concurrent")
+            keep_value, keep_note = status_item(
+                "Server",
+                "Keep-alive" if _keep_alive_enabled() else "Auto-stop",
+                "after disconnect" if _keep_alive_enabled() else "after last client")
+        with ui.row().classes("vmi-signature items-center"):
+            ui.link("Tao", "mailto:jakiesumrain@163.com") \
+                .classes("vmi-signature-link")
+            ui.label("(jakiesumrain@163.com)").classes("vmi-signature-email")
+
     refresh_queue()
     ui.timer(1.0, refresh_queue)
-
-    with ui.footer().classes("vmi-footer px-6 py-2 items-center justify-between"):
-        ui.label("To stop the application, choose Stop server in Settings.") \
-            .classes("vmi-subtitle")
-        ui.link("Tao (jakiesumrain@163.com)", "mailto:jakiesumrain@163.com") \
-            .classes("vmi-subtitle")
 
 
 def main(*, host: str = "0.0.0.0", launch_command: str = "uv run vmi-analysis") -> None:

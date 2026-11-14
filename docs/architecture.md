@@ -20,9 +20,9 @@ Keep experiment files and generated outputs outside version control.
 ## Panels and previews
 
 `gui/app.py` defines the workspace-rail groups, startup, and global settings.
-The workbench keeps a persistent left rail, a four-cell job/server status
-strip, and a labelled console dock in each panel; the rail becomes a
-horizontal scroller on narrow screens.
+The workbench keeps a persistent left rail, a compact footer job/server status
+bar, and a labelled console dock in each panel; the rail becomes a horizontal
+scroller on narrow screens.
 `gui/panels/` contains the forms and result views. Each panel starts with
 a title and a short summary. Binning, PES, and Pipeline are immature and
 need restructuring.

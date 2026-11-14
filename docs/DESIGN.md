@@ -309,11 +309,12 @@ white cards, muted `#e9eef6`, border `#dbeafe`, ink `#1e3a8a`, body
 Fira Code; body copy and controls use Fira Sans.
 
 The shell is a persistent workbench: a left rail groups tools into
-*Acquire*, *Analyze* and *Automate*; the main workspace opens with a
-four-cell status strip (active jobs, queued jobs, job limit, server mode);
-each panel ends in a labelled console dock that streams job output. The
-rail becomes a horizontally scrollable strip on narrow screens, and the
-status strip reflows to two columns.
+*Acquire*, *Analyze* and *Automate*; the main workspace opens directly on
+the active panel. A compact footer status bar carries active jobs, queued
+jobs, job limit and server mode, with the signature separated at its right
+edge. Each panel ends in a labelled console dock that streams job output.
+The rail becomes a horizontally scrollable strip on narrow screens; footer
+notes are hidden there so the status bar stays one line.
 
 Each panel begins with a heading and a short task summary. The Binning,
 PES, and Pipeline summaries identify their current development status.
