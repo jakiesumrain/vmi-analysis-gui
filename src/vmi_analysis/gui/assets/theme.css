@@ -1,146 +1,290 @@
-/* VMI Analysis GUI theme — mapped from DESIGN.md (Claude warm-canvas spec).
-   Tokens: canvas #faf9f5, ink #141413, primary coral #cc785c,
-   surface-card #efe9de, surface-dark #181715, hairline #e6dfd8. */
+/* VMI Analysis GUI — dark technical dashboard.
+   Design direction: Swiss-minimal dashboard, near-black canvas, hairline
+   surfaces, Geist typography, one blue data accent and amber warning accent.
+   Tokens here are the source of truth for the NiceGUI shell. */
 
 :root {
-  --vmi-canvas: #faf9f5;
-  --vmi-ink: #141413;
-  --vmi-body: #3d3d3a;
-  --vmi-muted: #6c6a64;
-  --vmi-muted-soft: #8e8b82;
-  --vmi-hairline: #e6dfd8;
-  --vmi-surface-card: #efe9de;
-  --vmi-surface-soft: #f5f0e8;
-  --vmi-surface-dark: #181715;
-  --vmi-on-dark: #faf9f5;
-  --vmi-primary: #cc785c;
-  --vmi-primary-active: #a9583e;
-  --vmi-success: #5db872;
-  --vmi-warning: #d4a017;
-  --vmi-error: #c64545;
-  --vmi-teal: #5db8a6;
-  --vmi-font-display: "Cormorant Garamond", "Tiempos Headline", Garamond, "Times New Roman", serif;
-  --vmi-font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --vmi-font-mono: "JetBrains Mono", ui-monospace, monospace;
+  color-scheme: dark;
+  --vmi-canvas: #000000;
+  --vmi-ink: #f5f5f5;
+  --vmi-body: #b3b3b3;
+  --vmi-muted: #8a8a8a;
+  --vmi-muted-soft: #6b6b6b;
+  --vmi-hairline: #262626;
+  --vmi-hairline-strong: #3a3a3a;
+  --vmi-surface-card: #0c0c0c;
+  --vmi-surface-soft: #111111;
+  --vmi-surface-elevated: #171717;
+  --vmi-on-dark: #f5f5f5;
+  --vmi-primary: #ededed;
+  --vmi-primary-active: #d4d4d4;
+  --vmi-success: #22c55e;
+  --vmi-warning: #f59e0b;
+  --vmi-error: #ef4444;
+  --vmi-info: #38bdf8;
+  --vmi-blue: #3b82f6;
+  --vmi-violet: #a78bfa;
+  --vmi-font-display: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --vmi-font-body: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --vmi-font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
 }
 
-body {
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
   background: var(--vmi-canvas);
   color: var(--vmi-body);
   font-family: var(--vmi-font-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
 }
 
-/* ---- display type: serif, weight 400, negative tracking ---- */
+::selection { background: var(--vmi-blue); color: #ffffff; }
+
+.q-layout, .q-page-container, .q-page, .nicegui-content {
+  background: var(--vmi-canvas) !important;
+  min-width: 0;
+}
+
+/* ---- shell ---- */
+.vmi-header {
+  background: var(--vmi-canvas) !important;
+  border-bottom: 1px solid var(--vmi-hairline);
+  color: var(--vmi-ink);
+  gap: 16px;
+}
+.vmi-footer {
+  background: var(--vmi-canvas) !important;
+  border-top: 1px solid var(--vmi-hairline);
+  color: var(--vmi-muted);
+}
+.vmi-footer a { color: var(--vmi-body) !important; }
+.vmi-footer a:hover { color: var(--vmi-ink) !important; }
+.vmi-nav {
+  width: 100%;
+  min-width: 0;
+  border-bottom: 1px solid var(--vmi-hairline);
+}
+.vmi-shell {
+  width: 100%;
+  max-width: 88rem;
+  min-width: 0;
+  margin-inline: auto;
+  padding: 1.25rem 1.5rem 2rem;
+}
+.vmi-shell > * { min-width: 0; max-width: 100%; }
+
+/* ---- type ---- */
 .vmi-title {
   font-family: var(--vmi-font-display);
-  font-weight: 400;
-  letter-spacing: -0.5px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
   color: var(--vmi-ink);
 }
-/* Opt-in bold wordmark for the app header; panel headings keep the weight-400
-   display rule from DESIGN.md. */
 .vmi-title-bold { font-weight: 700; }
-.vmi-title-lg { font-size: 36px; line-height: 1.15; }
-.vmi-title-md { font-size: 28px; line-height: 1.2; letter-spacing: -0.3px; }
-.vmi-title-sm { font-size: 22px; line-height: 1.3; letter-spacing: -0.2px; }
+.vmi-title-lg { font-size: 2rem; line-height: 1.12; }
+.vmi-title-md { font-size: 1.45rem; line-height: 1.2; }
+.vmi-title-sm { font-size: 1.2rem; line-height: 1.3; letter-spacing: -0.025em; }
 .vmi-subtitle {
   color: var(--vmi-muted);
-  font-size: 14px;
+  font-size: 0.84rem;
   line-height: 1.55;
 }
 .vmi-caption {
   color: var(--vmi-muted-soft);
-  font-size: 12px;
+  font-size: 0.72rem;
   font-weight: 500;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  text-transform: none;
 }
+.vmi-mono { font-family: var(--vmi-font-mono); font-variant-numeric: tabular-nums; }
+.vmi-numeric { font-variant-numeric: tabular-nums; }
 
-/* ---- panels: cream feature-card ---- */
+/* ---- panels ---- */
 .vmi-panel {
   background: var(--vmi-surface-card);
   border: 1px solid var(--vmi-hairline);
-  border-radius: 12px;
-  padding: 24px;
+  border-radius: 8px;
+  padding: 1.25rem;
+  box-shadow: none;
+  min-width: 0;
+  max-width: 100%;
 }
 .vmi-panel-soft {
   background: var(--vmi-surface-soft);
   border: 1px solid var(--vmi-hairline);
-  border-radius: 12px;
-  padding: 16px;
+  border-radius: 8px;
+  padding: 1rem;
 }
 
-/* ---- log console: dark code-window card ---- */
+/* ---- log console ---- */
 .vmi-log {
-  background: var(--vmi-surface-dark);
-  color: var(--vmi-on-dark);
-  border-radius: 12px;
+  background: #050505;
+  color: #d4d4d4;
+  border: 1px solid var(--vmi-hairline);
+  border-radius: 6px;
   font-family: var(--vmi-font-mono);
-  font-size: 13px;
-  line-height: 1.6;
-  padding: 16px;
+  font-size: 0.78rem;
+  line-height: 1.65;
+  padding: 0.9rem 1rem;
 }
 .vmi-log .q-field__native, .vmi-log textarea {
   color: var(--vmi-on-dark) !important;
   font-family: var(--vmi-font-mono) !important;
 }
 
-/* ---- Quasar component overrides ---- */
+/* ---- controls ---- */
 .q-btn {
-  border-radius: 8px;
+  border-radius: 6px;
   text-transform: none;
   font-weight: 500;
   letter-spacing: 0;
+  font-family: var(--vmi-font-body);
+  transition: background-color 160ms ease, border-color 160ms ease,
+              color 160ms ease, opacity 160ms ease;
+}
+.q-btn.bg-primary,
+.q-btn.bg-primary .q-btn__content,
+.q-btn.bg-primary .q-icon { color: #000000 !important; }
+.q-btn.text-primary { color: var(--vmi-ink) !important; }
+.q-btn--outline:before { border-color: var(--vmi-hairline-strong) !important; }
+.q-btn--flat:hover { background: var(--vmi-surface-elevated) !important; }
+.q-btn:focus-visible, .q-tab:focus-visible, .q-item:focus-visible {
+  outline: 2px solid var(--vmi-blue);
+  outline-offset: 2px;
 }
 .vmi-section-toggle {
   width: fit-content;
   min-height: 36px;
-  border-radius: 8px;
+  border-radius: 6px;
   font-weight: 500;
+  color: var(--vmi-body);
 }
 .vmi-section-toggle .q-item__section--avatar {
   min-width: 0;
-  padding-right: 12px;
+  padding-right: 10px;
 }
-.q-card {
-  border-radius: 12px;
+
+/* ---- tabs and menus ---- */
+.q-tabs {
+  color: var(--vmi-muted);
+  border-bottom: 1px solid var(--vmi-hairline) !important;
 }
-.q-tab, .vmi-more-panels {
+.q-tab {
   color: var(--vmi-muted);
   text-transform: none;
   font-weight: 500;
-  border-radius: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 0;
+  letter-spacing: 0;
 }
+.q-tab--active { color: var(--vmi-ink); background: transparent !important; }
+.q-tab__indicator { background: var(--vmi-ink) !important; height: 2px !important; }
+.q-tab:hover { color: var(--vmi-ink); }
 .vmi-more-panels {
+  color: var(--vmi-muted);
+  text-transform: none;
+  font-weight: 500;
+  border-radius: 0;
   min-height: 48px;
   flex-shrink: 0;
 }
-.q-tab--active, .vmi-more-panels-active {
-  color: var(--vmi-ink);
+.vmi-more-panels:hover { color: var(--vmi-ink); }
+.vmi-more-panels-active { color: var(--vmi-ink) !important; }
+.q-menu {
+  background: var(--vmi-surface-elevated);
+  border: 1px solid var(--vmi-hairline);
+  border-radius: 8px;
+  color: var(--vmi-body);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+.q-tooltip {
+  background: var(--vmi-surface-elevated) !important;
+  border: 1px solid var(--vmi-hairline-strong);
+  border-radius: 6px;
+  color: var(--vmi-ink) !important;
+  font-size: 0.76rem;
+  padding: 6px 8px;
+}
+.q-notification {
+  background: var(--vmi-surface-elevated) !important;
+  border: 1px solid var(--vmi-hairline-strong);
+  color: var(--vmi-ink) !important;
+  border-radius: 6px;
+}
+.q-item { color: var(--vmi-body); min-height: 40px; }
+.q-item:hover, .q-item--active { color: var(--vmi-ink); background: var(--vmi-surface-card); }
+
+/* ---- fields ---- */
+.q-field--outlined .q-field__control {
+  border-radius: 6px;
   background: var(--vmi-surface-card);
 }
-.q-field--outlined .q-field__control {
+.q-field--outlined .q-field__control:before {
+  border-color: var(--vmi-hairline-strong) !important;
+}
+.q-field--outlined.q-field--focused .q-field__control:after {
+  border-color: var(--vmi-blue) !important;
+}
+.q-field__label, .q-field__bottom, .q-field__messages { color: var(--vmi-muted) !important; }
+.q-field__native, .q-field__input, .q-field__marginal { color: var(--vmi-body); }
+.q-field--dark .q-field__native, .q-field--dark .q-field__input { color: var(--vmi-ink); }
+.q-select__dropdown-icon { color: var(--vmi-muted); }
+.q-checkbox__inner--truthy { color: var(--vmi-blue) !important; }
+.q-checkbox__inner--falsy { color: var(--vmi-hairline-strong) !important; }
+.q-toggle__inner--truthy { color: var(--vmi-blue) !important; }
+.q-separator { background: var(--vmi-hairline) !important; }
+
+/* ---- cards, dialogs, expansion ---- */
+.q-card {
   border-radius: 8px;
+  background: var(--vmi-surface-card);
+  color: var(--vmi-body);
+  box-shadow: none;
 }
+.q-dialog .q-card, .q-dialog .vmi-panel {
+  background: var(--vmi-surface-soft);
+  border: 1px solid var(--vmi-hairline);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.65);
+}
+.q-expansion-item { color: var(--vmi-body); }
+.q-expansion-item__content { border-top: 1px solid var(--vmi-hairline); }
+
+/* ---- tables ---- */
+.q-table { color: var(--vmi-body); background: transparent; }
+.q-table thead tr { background: var(--vmi-surface-soft); }
+.q-table th { color: var(--vmi-muted); font-weight: 500; font-size: 0.78rem; }
+.q-table td { color: var(--vmi-body); }
+.q-table tbody tr:hover { background: var(--vmi-surface-card); }
+
+/* ---- status badges ---- */
 .q-badge {
-  border-radius: 9999px;
+  border-radius: 4px;
   font-weight: 500;
-  letter-spacing: 0.5px;
+  font-size: 0.7rem;
+  letter-spacing: 0;
+  padding: 3px 7px;
+  font-family: var(--vmi-font-body);
 }
+.vmi-badge-queued    { background: #181818; color: #a3a3a3; border: 1px solid #333333; }
+.vmi-badge-running   { background: #0b1d33; color: #7dd3fc; border: 1px solid #164e63; }
+.vmi-badge-done      { background: #052e16; color: #4ade80; border: 1px solid #14532d; }
+.vmi-badge-failed    { background: #2a0b0b; color: #f87171; border: 1px solid #7f1d1d; }
+.vmi-badge-cancelled { background: #2a1a05; color: #fbbf24; border: 1px solid #78350f; }
+.vmi-badge-skipped   { background: #181818; color: #8a8a8a; border: 1px solid #333333; }
+.vmi-badge-idle      { background: #111111; color: #8a8a8a; border: 1px solid #262626; }
 
-/* status badge colors */
-.vmi-badge-queued    { background: var(--vmi-surface-card); color: var(--vmi-muted); }
-.vmi-badge-running   { background: var(--vmi-primary);      color: #ffffff; }
-.vmi-badge-done      { background: var(--vmi-success);      color: #ffffff; }
-.vmi-badge-failed    { background: var(--vmi-error);        color: #ffffff; }
-.vmi-badge-cancelled { background: var(--vmi-warning);      color: #ffffff; }
-.vmi-badge-skipped   { background: var(--vmi-muted-soft);   color: #ffffff; }
-.vmi-badge-idle      { background: var(--vmi-surface-soft); color: var(--vmi-muted); }
+/* ---- scrollbars ---- */
+* { scrollbar-width: thin; scrollbar-color: #333333 #000000; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: #000000; }
+*::-webkit-scrollbar-thumb { background: #333333; border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }
 
-/* thin scrollbars for consoles */
-.vmi-log::-webkit-scrollbar { width: 8px; }
-.vmi-log::-webkit-scrollbar-thumb { background: #3a3835; border-radius: 4px; }
-
+/* ---- polar guides over images ---- */
 .polar-guide-layer {
   position: absolute;
   inset: 1px;
@@ -159,8 +303,8 @@ body {
 .polar-guide-layer button::before {
   content: "";
   position: absolute;
-  background: white;
-  box-shadow: 0 0 0 1px #161514;
+  background: #ffffff;
+  box-shadow: 0 0 0 1px #000000;
 }
 .polar-guide-layer [data-polar-guide="x"] {
   inset: 0 auto 0 var(--polar-guide-x, 50%);
@@ -185,3 +329,35 @@ body {
   cursor: move;
 }
 .polar-guide-layer [data-polar-guide="xy"]::before { inset: 6px; border-radius: 50%; }
+
+@media (max-width: 900px) {
+  .vmi-header { flex-wrap: wrap; gap: 10px; }
+  .vmi-shell { padding: 1rem; }
+  .vmi-panel { padding: 1rem; }
+  .vmi-nav { overflow-x: auto; scrollbar-width: none; }
+  .vmi-nav::-webkit-scrollbar { display: none; }
+  .vmi-nav .q-tabs { flex: 0 0 auto; }
+  .vmi-more-panels {
+    position: sticky;
+    right: 0;
+    z-index: 2;
+    background: var(--vmi-canvas);
+    box-shadow: -12px 0 16px rgba(0, 0, 0, 0.65);
+  }
+  .q-tab { padding: 0 10px; font-size: 0.82rem; }
+}
+@media (max-width: 600px) {
+  .vmi-title-md { font-size: 1.2rem; }
+  .vmi-header .vmi-subtitle { display: none; }
+  .vmi-subtitle { font-size: 0.78rem; }
+  .vmi-header { padding-inline: 1rem !important; }
+  .vmi-header .q-btn { padding-inline: 0.6rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

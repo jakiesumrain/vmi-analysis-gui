@@ -82,36 +82,36 @@ _ZOOM_READY = False
 
 _OVERLAY_HTML = """
 <div id="vmi-zoom-overlay" style="display:none; position:fixed; inset:0;
-     z-index:9999; background:rgba(20,19,18,0.93); cursor:grab;
+     z-index:9999; background:rgba(0,0,0,0.96); cursor:grab;
      overflow:hidden; touch-action:none;">
   <img id="vmi-zoom-img" src="" alt="" style="position:absolute; left:50%;
        top:50%; max-width:none; user-select:none; -webkit-user-drag:none;"/>
   <div id="vmi-zoom-selection" style="display:none; position:absolute; pointer-events:none;
-       border:2px solid #cc785c; background:rgba(204,120,92,0.16); box-sizing:border-box;"></div>
+       border:2px solid #3b82f6; background:rgba(59,130,246,0.14); box-sizing:border-box;"></div>
   <div id="vmi-zoom-toolbar" role="toolbar" aria-label="Image inspection"
        style="position:absolute; top:14px; right:16px; display:flex; gap:8px; flex-wrap:wrap; max-width:95%;
-       font-family:monospace;">
+       font-family:'Geist Mono', ui-monospace, monospace;">
     <button id="vmi-zoom-pan" onclick="vmiZoomPan()" aria-pressed="true"
-      style="background:#cc785c; color:#141413; border:none; border-radius:6px;
-      padding:0 10px; height:30px; cursor:pointer;">Pan</button>
+      style="background:#ededed; color:#000000; border:1px solid #ededed; border-radius:6px;
+      padding:0 10px; height:30px; cursor:pointer; transition:background-color .16s ease, color .16s ease;">Pan</button>
     <button id="vmi-zoom-select" onclick="vmiZoomSelect()" aria-pressed="false"
-      style="background:#efe9de; color:#141413; border:none; border-radius:6px;
-      padding:0 10px; height:30px; cursor:pointer;">Crop area</button>
-    <button onclick="vmiZoomAt(null,1.25)" style="background:#cc785c;
-      color:#faf9f5; border:none; border-radius:6px; width:34px; height:30px;
+      style="background:#171717; color:#ededed; border:1px solid #333333; border-radius:6px;
+      padding:0 10px; height:30px; cursor:pointer; transition:background-color .16s ease, color .16s ease;">Crop area</button>
+    <button onclick="vmiZoomAt(null,1.25)" style="background:#171717;
+      color:#ededed; border:1px solid #333333; border-radius:6px; width:34px; height:30px;
       font-size:18px; cursor:pointer;">+</button>
-    <button onclick="vmiZoomAt(null,0.8)" style="background:#cc785c;
-      color:#faf9f5; border:none; border-radius:6px; width:34px; height:30px;
+    <button onclick="vmiZoomAt(null,0.8)" style="background:#171717;
+      color:#ededed; border:1px solid #333333; border-radius:6px; width:34px; height:30px;
       font-size:18px; cursor:pointer;">&minus;</button>
-    <button onclick="vmiZoomReset()" style="background:#efe9de; color:#141413;
-      border:none; border-radius:6px; padding:0 10px; height:30px;
+    <button onclick="vmiZoomReset()" style="background:#171717; color:#ededed;
+      border:1px solid #333333; border-radius:6px; padding:0 10px; height:30px;
       font-size:12px; cursor:pointer;">reset</button>
-    <button onclick="vmiZoomClose()" style="background:#efe9de; color:#141413;
-      border:none; border-radius:6px; width:34px; height:30px;
+    <button onclick="vmiZoomClose()" style="background:#171717; color:#ededed;
+      border:1px solid #333333; border-radius:6px; width:34px; height:30px;
       font-size:14px; cursor:pointer;">&#10005;</button>
   </div>
   <div id="vmi-zoom-hint" style="position:absolute; bottom:14px; left:16px;
-       color:#efe9de; font:12px sans-serif; pointer-events:none;">
+       color:#8a8a8a; font:12px 'Geist', sans-serif; pointer-events:none;">
     Drag to pan · Mouse wheel to zoom · Crop area to inspect only a region
   </div>
 </div>
@@ -311,7 +311,7 @@ class JobView:
             self.spinner = ui.spinner("dots", size="md", color="primary")
             self.spinner.visible = False
             self.progress = ui.linear_progress(value=0, show_value=False) \
-                .classes("grow").props("color=primary track-color=grey-4")
+                .classes("grow").props("color=primary track-color=grey-9")
             self.progress.visible = False
         self.log = None
         self.wait_label = ui.label("").classes("vmi-subtitle")

@@ -66,7 +66,7 @@ def polar_preview(prefix, key, label, guides, make_image, *, legacy_shared_limit
     color_min.value, color_max.value = (lower, upper) if 0 <= lower < upper <= 100 else (1, 99.5)
     status = ui.label("").classes("vmi-subtitle").set_visibility(False)
     with ui.element("div").classes("relative w-full"):
-        image = make_image().classes("w-full").style(f"height: {POLAR_HEIGHT}; border: 1px solid #e0ddd6")
+        image = make_image().classes("w-full").style(f"height: {POLAR_HEIGHT}; border: 1px solid #262626")
         with ui.element("div").classes("polar-guide-layer").bind_visibility_from(guides, "value"):
             handles = [("x", "vertical guide")]
             if not radius_only:

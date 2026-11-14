@@ -301,15 +301,21 @@ components:
 ## Current application
 
 `src/vmi_analysis/gui/theme.py` and `src/vmi_analysis/gui/assets/theme.css`
-define the theme that the application uses. The interface uses a cream
-background, coral actions, and dark log consoles. Panel headings use
-Cormorant Garamond. Controls use Inter. Logs use JetBrains Mono.
+define the theme that the application uses. The interface is a **dark
+technical dashboard**: a near-black canvas (`#000000`), quiet bordered
+surfaces (`#0c0c0c` to `#171717`), hairline dividers (`#262626`), light
+ink (`#f5f5f5`) and muted body copy (`#b3b3b3`). Actions use a white
+primary button with black text; blue (`#3b82f6`) is the data/focus accent
+and amber (`#f59e0b`) marks warnings and fit overlays. Headings, controls
+and body copy use Geist Sans; logs and identifiers use Geist Mono.
 
 Each panel begins with a heading and a short task summary. The Binning,
 PES, and Pipeline summaries identify their current development status.
 
-The tokens and examples below record the design reference. See the
-[architecture](architecture.md) for the implemented panels and previews.
+The Claude/Anthropic reference material below is retained as historical
+design context; the implementation tokens above and in `theme.css` are
+authoritative. See the [architecture](architecture.md) for the implemented
+panels and previews.
 
 ## Reference overview
 

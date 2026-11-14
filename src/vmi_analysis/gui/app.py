@@ -196,8 +196,7 @@ def index() -> None:
                       on_click=stop_dialog.open).props("flat color=negative")
             ui.button("Close", on_click=lambda: settings_dialog.close()).props("flat")
 
-    with ui.header().classes("items-center justify-between px-6 py-3") \
-            .style("background: #faf9f5; border-bottom: 1px solid #e6dfd8"):
+    with ui.header().classes("vmi-header items-center justify-between px-6 py-3"):
         with ui.row().classes("items-baseline gap-3"):
             ui.label("VMI Analysis").classes("vmi-title vmi-title-md vmi-title-bold")
             ui.label("photoelectron imaging toolbox").classes("vmi-subtitle")
@@ -215,8 +214,8 @@ def index() -> None:
 
     ui.timer(1.0, refresh_queue)
 
-    with ui.column().classes("w-full max-w-6xl mx-auto gap-4 p-6"):
-        with ui.row().classes("w-full items-center justify-center gap-0 flex-nowrap"):
+    with ui.column().classes("vmi-shell w-full gap-4"):
+        with ui.row().classes("vmi-nav w-full items-center justify-start gap-0 flex-nowrap"):
             with ui.tabs().classes("min-w-0") as tabs:
                 for name, _ in PRIMARY_PANELS:
                     ui.tab(name)
@@ -258,12 +257,11 @@ def index() -> None:
                         else:
                             module.build(MANAGER)
 
-    with ui.footer().classes("px-6 py-2 items-center justify-between") \
-            .style("background: #181715"):
+    with ui.footer().classes("vmi-footer px-6 py-2 items-center justify-between"):
         ui.label("To stop the application, choose Stop server in Settings.") \
-            .classes("vmi-subtitle").style("color: #a09d96")
+            .classes("vmi-subtitle")
         ui.link("Tao (jakiesumrain@163.com)", "mailto:jakiesumrain@163.com") \
-            .classes("vmi-subtitle").style("color: #cc785c")
+            .classes("vmi-subtitle")
 
 
 def main(*, host: str = "0.0.0.0", launch_command: str = "uv run vmi-analysis") -> None:
@@ -279,6 +277,7 @@ def main(*, host: str = "0.0.0.0", launch_command: str = "uv run vmi-analysis") 
            favicon=str(files("vmi_analysis.gui.assets") / "electron-spectrum-measured.svg"),
            host=host,
            port=port,
+           dark=True,
            reconnect_timeout=_env_float("VMI_GUI_RECONNECT_TIMEOUT",
                                         DEFAULT_RECONNECT_TIMEOUT, minimum=4.0),
            reload=False,

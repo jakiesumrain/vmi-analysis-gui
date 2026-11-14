@@ -20,6 +20,8 @@ RESULT_COLORMAP_DEFAULTS = {
 PLOT_CONFIG = {"scrollZoom": True, "displaylogo": False, "responsive": True,
                "doubleClick": "reset", "toImageButtonOptions": {"format": "png", "scale": 2}}
 
+SERIES_COLORS = ("#3b82f6", "#f59e0b", "#22c55e", "#ef4444", "#a78bfa", "#38bdf8")
+
 
 def _compact_values(values):
     """Smaller typed arrays only where every original value is preserved exactly."""
@@ -36,11 +38,25 @@ def _compact_values(values):
 
 
 def _style(fig, title):
-    fig.update_layout(title={"text": title, "font": {"size": 20}},
-                      template="plotly_white", height=PLOT_HEIGHT, showlegend=False,
-                      margin={"l": 65, "r": 70, "t": 90, "b": 55},
-                      font={"family": "Inter, Arial, sans-serif", "color": "#3d3d3a", "size": 14},
-                      paper_bgcolor="#faf9f5", dragmode="zoom", hovermode="closest")
+    fig.update_layout(
+        title={"text": title, "font": {"size": 18, "family": "Geist, Inter, sans-serif",
+                                       "color": "#f5f5f5"}},
+        template="plotly_dark", height=PLOT_HEIGHT, showlegend=False,
+        margin={"l": 65, "r": 70, "t": 90, "b": 55},
+        font={"family": "Geist, Inter, sans-serif", "color": "#b3b3b3", "size": 13},
+        paper_bgcolor="#000000", plot_bgcolor="#0a0a0a",
+        colorway=SERIES_COLORS, dragmode="zoom", hovermode="closest",
+        hoverlabel={"bgcolor": "#171717", "bordercolor": "#3a3a3a",
+                    "font": {"family": "Geist, Inter, sans-serif", "color": "#f5f5f5"}},
+        modebar={"bgcolor": "rgba(0,0,0,0)", "color": "#8a8a8a",
+                 "activecolor": "#f5f5f5"},
+    )
+    fig.update_xaxes(gridcolor="#1f1f1f", zerolinecolor="#333333",
+                     linecolor="#3a3a3a", tickfont={"color": "#8a8a8a"},
+                     title_font={"color": "#b3b3b3"})
+    fig.update_yaxes(gridcolor="#1f1f1f", zerolinecolor="#333333",
+                     linecolor="#3a3a3a", tickfont={"color": "#8a8a8a"},
+                     title_font={"color": "#b3b3b3"})
     return fig
 
 
@@ -89,7 +105,7 @@ def _histogram(fig, values, bins, title, row, col, color, reference=None):
                          hovertemplate="Bin: %{customdata[0]:.5g}–%{customdata[1]:.5g}<br>Count: %{y}<extra></extra>"),
                   row=row, col=col)
     if reference is not None:
-        fig.add_vline(x=reference, line_dash="dash", line_color="#c64545", row=row, col=col)
+        fig.add_vline(x=reference, line_dash="dash", line_color="#ef4444", row=row, col=col)
     fig.update_xaxes(title_text=title, row=row, col=col)
     fig.update_yaxes(title_text="Count", rangemode="tozero", row=row, col=col)
 
@@ -119,10 +135,11 @@ def tuning_figure(path):
     _image_axes(fig, frame, 1, 1, "x")
     photons, gradient = arrays["photons"], arrays["net_gradient"]
     precision = precision[np.isfinite(precision)]
-    _histogram(fig, photons, meta["bins_photons"], "Photons (integrated intensity)", 1, 2, "#cc785c",
-               np.median(photons) if photons.size else None)
-    _histogram(fig, gradient, meta["bins_net_gradient"], "Net gradient", 2, 1, "#5db872", meta["min_net_gradient"])
-    _histogram(fig, precision, meta["bins_precision"], "Precision (pixels)", 2, 2, "#e8a55a",
+    _histogram(fig, photons, meta["bins_photons"], "Photons (integrated intensity)", 1, 2,
+               SERIES_COLORS[0], np.median(photons) if photons.size else None)
+    _histogram(fig, gradient, meta["bins_net_gradient"], "Net gradient", 2, 1,
+               SERIES_COLORS[2], meta["min_net_gradient"])
+    _histogram(fig, precision, meta["bins_precision"], "Precision (pixels)", 2, 2, SERIES_COLORS[1],
                np.median(precision) if precision.size else None)
     return _style(fig, f"Tuning check · frame {meta['frame_index']} · {escape(meta['fitting_method'].upper())}")
 
@@ -148,7 +165,7 @@ def summary_figure(path):
     if energy.size and energy.shape == intensity.shape:
         positive = intensity > 0
         fig.add_trace(go.Scatter(x=energy[positive], y=intensity[positive], mode="lines",
-                                 line={"color": "#c64545", "width": 1},
+                                 line={"color": "#3b82f6", "width": 2},
                                  hovertemplate="X: %{x:.6g}<br>Intensity: %{y:.6g}<extra></extra>"), row=2, col=1)
         xlo, xhi = meta.get("x_min", -1), meta.get("x_max", -1)
         ylo, yhi = meta.get("y_min", -1), meta.get("y_max", -1)
