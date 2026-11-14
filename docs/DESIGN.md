@@ -301,13 +301,12 @@ components:
 ## Current application
 
 `src/vmi_analysis/gui/theme.py` and `src/vmi_analysis/gui/assets/theme.css`
-define the theme that the application uses. The interface is a **dark
-technical dashboard**: a near-black canvas (`#000000`), quiet bordered
-surfaces (`#0c0c0c` to `#171717`), hairline dividers (`#262626`), light
-ink (`#f5f5f5`) and muted body copy (`#b3b3b3`). Actions use a white
-primary button with black text; blue (`#3b82f6`) is the data/focus accent
-and amber (`#f59e0b`) marks warnings and fit overlays. Headings, controls
-and body copy use Geist Sans; logs and identifiers use Geist Mono.
+define the theme that the application uses. The interface is a **light
+Analytics Dashboard** from the `ui-ux-pro-max` palette: canvas `#f8fafc`,
+white cards, muted `#e9eef6`, border `#dbeafe`, ink `#1e3a8a`, body
+`#334155`, primary action `#1e40af`, secondary blue `#3b82f6`, and amber
+`#d97706` for warnings/fit overlays. Headings and data identifiers use
+Fira Code; body copy and controls use Fira Sans.
 
 The shell is a persistent workbench: a left rail groups tools into
 *Acquire*, *Analyze* and *Automate*; the main workspace opens with a

@@ -1,32 +1,31 @@
-/* VMI Analysis GUI — dark technical dashboard.
-   Design direction: Swiss-minimal dashboard, near-black canvas, hairline
-   surfaces, Geist typography, one blue data accent and amber warning accent.
-   Tokens here are the source of truth for the NiceGUI shell. */
+/* VMI Analysis GUI — light Analytics Dashboard theme.
+   Source: ui-ux-pro-max "Analytics Dashboard" palette + Minimalism &
+   Swiss Style, density 8, subtle motion. Tokens here are authoritative. */
 
 :root {
-  color-scheme: dark;
-  --vmi-canvas: #000000;
-  --vmi-ink: #f5f5f5;
-  --vmi-body: #b3b3b3;
-  --vmi-muted: #8a8a8a;
-  --vmi-muted-soft: #6b6b6b;
-  --vmi-hairline: #262626;
-  --vmi-hairline-strong: #3a3a3a;
-  --vmi-surface-card: #0c0c0c;
-  --vmi-surface-soft: #111111;
-  --vmi-surface-elevated: #171717;
-  --vmi-on-dark: #f5f5f5;
-  --vmi-primary: #ededed;
-  --vmi-primary-active: #d4d4d4;
-  --vmi-success: #22c55e;
-  --vmi-warning: #f59e0b;
-  --vmi-error: #ef4444;
-  --vmi-info: #38bdf8;
-  --vmi-blue: #3b82f6;
-  --vmi-violet: #a78bfa;
-  --vmi-font-display: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --vmi-font-body: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --vmi-font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+  color-scheme: light;
+  --vmi-canvas: #f8fafc;
+  --vmi-ink: #1e3a8a;
+  --vmi-body: #334155;
+  --vmi-muted: #475569;
+  --vmi-muted-soft: #64748b;
+  --vmi-hairline: #dbeafe;
+  --vmi-hairline-strong: #bfdbfe;
+  --vmi-surface-card: #ffffff;
+  --vmi-surface-soft: #f1f5f9;
+  --vmi-surface-elevated: #ffffff;
+  --vmi-on-dark: #ffffff;
+  --vmi-primary: #1e40af;
+  --vmi-primary-active: #1e3a8a;
+  --vmi-success: #15803d;
+  --vmi-warning: #d97706;
+  --vmi-error: #dc2626;
+  --vmi-info: #0284c7;
+  --vmi-blue: #2563eb;
+  --vmi-violet: #7c3aed;
+  --vmi-font-display: "Fira Code", "Fira Mono", ui-monospace, monospace;
+  --vmi-font-body: "Fira Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --vmi-font-mono: "Fira Code", "Fira Mono", ui-monospace, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -41,7 +40,7 @@ html, body {
   overflow-x: hidden;
 }
 
-::selection { background: var(--vmi-blue); color: #ffffff; }
+::selection { background: var(--vmi-primary); color: #ffffff; }
 
 .q-layout, .q-page-container, .q-page, .nicegui-content {
   background: var(--vmi-canvas) !important;
@@ -50,7 +49,7 @@ html, body {
 
 /* ---- shell ---- */
 .vmi-header {
-  background: var(--vmi-canvas) !important;
+  background: var(--vmi-surface-card) !important;
   border-bottom: 1px solid var(--vmi-hairline);
   color: var(--vmi-ink);
   gap: 16px;
@@ -61,7 +60,7 @@ html, body {
   color: var(--vmi-muted);
 }
 .vmi-footer a { color: var(--vmi-body) !important; }
-.vmi-footer a:hover { color: var(--vmi-ink) !important; }
+.vmi-footer a:hover { color: var(--vmi-primary) !important; }
 .vmi-workbench {
   display: flex;
   align-items: stretch;
@@ -81,21 +80,22 @@ html, body {
   top: 0;
   overflow-y: auto;
   padding: 1.1rem 0.65rem 1rem;
-  background: #050505;
+  background: var(--vmi-surface-soft);
   border-right: 1px solid var(--vmi-hairline);
 }
 .vmi-sidebar-title {
   padding: 0 0.6rem 0.9rem;
-  color: var(--vmi-muted);
-  font-size: 0.72rem;
+  color: var(--vmi-ink);
+  font-family: var(--vmi-font-display);
+  font-size: 0.74rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.01em;
 }
 .vmi-sidebar-group {
   padding: 0.9rem 0.6rem 0.3rem;
-  color: var(--vmi-muted-soft);
+  color: var(--vmi-muted);
   font-size: 0.65rem;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0.05em;
 }
 .vmi-sidebar-foot {
@@ -109,7 +109,7 @@ html, body {
   font-weight: 500;
 }
 .vmi-sidebar-foot-note {
-  color: var(--vmi-muted-soft);
+  color: var(--vmi-muted);
   font-size: 0.66rem;
 }
 .vmi-workspace {
@@ -142,7 +142,8 @@ html, body {
   font-weight: 500;
 }
 .vmi-stat-value {
-  color: var(--vmi-ink);
+  color: var(--vmi-primary);
+  font-family: var(--vmi-font-display);
   font-size: 1.15rem;
   font-weight: 600;
   line-height: 1.3;
@@ -162,13 +163,13 @@ html, body {
 .vmi-title {
   font-family: var(--vmi-font-display);
   font-weight: 600;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.02em;
   color: var(--vmi-ink);
 }
 .vmi-title-bold { font-weight: 700; }
-.vmi-title-lg { font-size: 2rem; line-height: 1.12; }
-.vmi-title-md { font-size: 1.45rem; line-height: 1.2; }
-.vmi-title-sm { font-size: 1.2rem; line-height: 1.3; letter-spacing: -0.025em; }
+.vmi-title-lg { font-size: 1.9rem; line-height: 1.15; }
+.vmi-title-md { font-size: 1.35rem; line-height: 1.2; }
+.vmi-title-sm { font-size: 1.15rem; line-height: 1.3; letter-spacing: -0.015em; }
 .vmi-subtitle {
   color: var(--vmi-muted);
   font-size: 0.84rem;
@@ -190,7 +191,7 @@ html, body {
   border: 1px solid var(--vmi-hairline);
   border-radius: 8px;
   padding: 1.25rem;
-  box-shadow: none;
+  box-shadow: 0 1px 2px rgba(30, 64, 175, 0.04);
   min-width: 0;
   max-width: 100%;
 }
@@ -208,12 +209,13 @@ html, body {
 }
 .vmi-console-title {
   color: var(--vmi-ink);
-  font-size: 0.72rem;
+  font-family: var(--vmi-font-display);
+  font-size: 0.74rem;
   font-weight: 600;
 }
 .vmi-log {
-  background: #050505;
-  color: #d4d4d4;
+  background: var(--vmi-canvas);
+  color: #1e293b;
   border: 1px solid var(--vmi-hairline);
   border-radius: 6px;
   font-family: var(--vmi-font-mono);
@@ -222,7 +224,7 @@ html, body {
   padding: 0.9rem 1rem;
 }
 .vmi-log .q-field__native, .vmi-log textarea {
-  color: var(--vmi-on-dark) !important;
+  color: #1e293b !important;
   font-family: var(--vmi-font-mono) !important;
 }
 
@@ -238,12 +240,12 @@ html, body {
 }
 .q-btn.bg-primary,
 .q-btn.bg-primary .q-btn__content,
-.q-btn.bg-primary .q-icon { color: #000000 !important; }
-.q-btn.text-primary { color: var(--vmi-ink) !important; }
+.q-btn.bg-primary .q-icon { color: #ffffff !important; }
+.q-btn.text-primary { color: var(--vmi-primary) !important; }
 .q-btn--outline:before { border-color: var(--vmi-hairline-strong) !important; }
-.q-btn--flat:hover { background: var(--vmi-surface-elevated) !important; }
+.q-btn--flat:hover { background: var(--vmi-surface-soft) !important; }
 .q-btn:focus-visible, .q-tab:focus-visible, .q-item:focus-visible {
-  outline: 2px solid var(--vmi-blue);
+  outline: 2px solid var(--vmi-primary);
   outline-offset: 2px;
 }
 .vmi-section-toggle {
@@ -273,8 +275,8 @@ html, body {
   letter-spacing: 0;
 }
 .q-tab--active { color: var(--vmi-ink); background: transparent !important; }
-.q-tab__indicator { background: var(--vmi-ink) !important; height: 2px !important; }
-.q-tab:hover { color: var(--vmi-ink); }
+.q-tab__indicator { background: var(--vmi-primary) !important; height: 2px !important; }
+.q-tab:hover { color: var(--vmi-primary); }
 
 /* ---- persistent workspace rail ---- */
 .vmi-sidebar .q-tabs {
@@ -307,10 +309,10 @@ html, body {
   font-size: 0.8rem;
   line-height: 1.2;
 }
-.vmi-sidebar .q-tab:hover { background: var(--vmi-surface-soft); }
+.vmi-sidebar .q-tab:hover { background: var(--vmi-surface-card); color: var(--vmi-primary); }
 .vmi-sidebar .q-tab--active {
-  background: var(--vmi-surface-elevated);
-  color: var(--vmi-ink);
+  background: var(--vmi-hairline);
+  color: var(--vmi-primary);
 }
 .vmi-sidebar .q-tab__indicator {
   top: 50% !important;
@@ -321,7 +323,7 @@ html, body {
   height: 14px !important;
   transform: translateY(-50%);
   border-radius: 2px;
-  background: var(--vmi-blue) !important;
+  background: var(--vmi-primary) !important;
 }
 .vmi-sidebar .q-tabs__arrow { display: none; }
 .q-menu {
@@ -329,13 +331,13 @@ html, body {
   border: 1px solid var(--vmi-hairline);
   border-radius: 8px;
   color: var(--vmi-body);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.14);
 }
 .q-tooltip {
-  background: var(--vmi-surface-elevated) !important;
-  border: 1px solid var(--vmi-hairline-strong);
+  background: #1e293b !important;
+  border: 1px solid #334155;
   border-radius: 6px;
-  color: var(--vmi-ink) !important;
+  color: #f8fafc !important;
   font-size: 0.76rem;
   padding: 6px 8px;
 }
@@ -344,9 +346,10 @@ html, body {
   border: 1px solid var(--vmi-hairline-strong);
   color: var(--vmi-ink) !important;
   border-radius: 6px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16);
 }
 .q-item { color: var(--vmi-body); min-height: 40px; }
-.q-item:hover, .q-item--active { color: var(--vmi-ink); background: var(--vmi-surface-card); }
+.q-item:hover, .q-item--active { color: var(--vmi-primary); background: var(--vmi-surface-soft); }
 
 /* ---- fields ---- */
 .q-field--outlined .q-field__control {
@@ -357,15 +360,14 @@ html, body {
   border-color: var(--vmi-hairline-strong) !important;
 }
 .q-field--outlined.q-field--focused .q-field__control:after {
-  border-color: var(--vmi-blue) !important;
+  border-color: var(--vmi-primary) !important;
 }
 .q-field__label, .q-field__bottom, .q-field__messages { color: var(--vmi-muted) !important; }
 .q-field__native, .q-field__input, .q-field__marginal { color: var(--vmi-body); }
-.q-field--dark .q-field__native, .q-field--dark .q-field__input { color: var(--vmi-ink); }
 .q-select__dropdown-icon { color: var(--vmi-muted); }
-.q-checkbox__inner--truthy { color: var(--vmi-blue) !important; }
+.q-checkbox__inner--truthy { color: var(--vmi-primary) !important; }
 .q-checkbox__inner--falsy { color: var(--vmi-hairline-strong) !important; }
-.q-toggle__inner--truthy { color: var(--vmi-blue) !important; }
+.q-toggle__inner--truthy { color: var(--vmi-primary) !important; }
 .q-separator { background: var(--vmi-hairline) !important; }
 
 /* ---- cards, dialogs, expansion ---- */
@@ -376,9 +378,9 @@ html, body {
   box-shadow: none;
 }
 .q-dialog .q-card, .q-dialog .vmi-panel {
-  background: var(--vmi-surface-soft);
+  background: var(--vmi-surface-card);
   border: 1px solid var(--vmi-hairline);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.65);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.18);
 }
 .q-expansion-item { color: var(--vmi-body); }
 .q-expansion-item__content { border-top: 1px solid var(--vmi-hairline); }
@@ -386,9 +388,9 @@ html, body {
 /* ---- tables ---- */
 .q-table { color: var(--vmi-body); background: transparent; }
 .q-table thead tr { background: var(--vmi-surface-soft); }
-.q-table th { color: var(--vmi-muted); font-weight: 500; font-size: 0.78rem; }
+.q-table th { color: var(--vmi-muted); font-weight: 600; font-size: 0.78rem; }
 .q-table td { color: var(--vmi-body); }
-.q-table tbody tr:hover { background: var(--vmi-surface-card); }
+.q-table tbody tr:hover { background: var(--vmi-canvas); }
 
 /* ---- status badges ---- */
 .q-badge {
@@ -399,20 +401,20 @@ html, body {
   padding: 3px 7px;
   font-family: var(--vmi-font-body);
 }
-.vmi-badge-queued    { background: #181818; color: #a3a3a3; border: 1px solid #333333; }
-.vmi-badge-running   { background: #0b1d33; color: #7dd3fc; border: 1px solid #164e63; }
-.vmi-badge-done      { background: #052e16; color: #4ade80; border: 1px solid #14532d; }
-.vmi-badge-failed    { background: #2a0b0b; color: #f87171; border: 1px solid #7f1d1d; }
-.vmi-badge-cancelled { background: #2a1a05; color: #fbbf24; border: 1px solid #78350f; }
-.vmi-badge-skipped   { background: #181818; color: #8a8a8a; border: 1px solid #333333; }
-.vmi-badge-idle      { background: #111111; color: #8a8a8a; border: 1px solid #262626; }
+.vmi-badge-queued    { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+.vmi-badge-running   { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; }
+.vmi-badge-done      { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+.vmi-badge-failed    { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+.vmi-badge-cancelled { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+.vmi-badge-skipped   { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+.vmi-badge-idle      { background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; }
 
 /* ---- scrollbars ---- */
-* { scrollbar-width: thin; scrollbar-color: #333333 #000000; }
+* { scrollbar-width: thin; scrollbar-color: #cbd5e1 #f8fafc; }
 *::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-track { background: #000000; }
-*::-webkit-scrollbar-thumb { background: #333333; border-radius: 4px; }
-*::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }
+*::-webkit-scrollbar-track { background: #f8fafc; }
+*::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
 /* ---- polar guides over images ---- */
 .polar-guide-layer {
@@ -434,7 +436,7 @@ html, body {
   content: "";
   position: absolute;
   background: #ffffff;
-  box-shadow: 0 0 0 1px #000000;
+  box-shadow: 0 0 0 1px #0f172a;
 }
 .polar-guide-layer [data-polar-guide="x"] {
   inset: 0 auto 0 var(--polar-guide-x, 50%);
@@ -465,8 +467,11 @@ html, body {
   to { opacity: 1; transform: translateY(0); }
 }
 .q-tab-panel { animation: vmi-panel-enter 180ms ease-out both; }
-.vmi-panel { transition: border-color 180ms ease; }
-.vmi-panel:hover { border-color: var(--vmi-hairline-strong); }
+.vmi-panel { transition: border-color 180ms ease, box-shadow 180ms ease; }
+.vmi-panel:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 2px 8px rgba(30, 64, 175, 0.06);
+}
 
 @media (max-width: 900px) {
   .vmi-header { flex-wrap: wrap; gap: 10px; }

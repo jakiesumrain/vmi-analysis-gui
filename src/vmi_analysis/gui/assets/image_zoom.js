@@ -30,10 +30,10 @@
     selecting = select;
     panButton.setAttribute('aria-pressed', String(!select));
     selectButton.setAttribute('aria-pressed', String(select));
-    panButton.style.background = select ? '#171717' : '#ededed';
-    panButton.style.color = select ? '#ededed' : '#000000';
-    selectButton.style.background = select ? '#ededed' : '#171717';
-    selectButton.style.color = select ? '#000000' : '#ededed';
+    panButton.style.background = select ? '#ffffff' : '#1e40af';
+    panButton.style.color = select ? '#1e40af' : '#ffffff';
+    selectButton.style.background = select ? '#1e40af' : '#ffffff';
+    selectButton.style.color = select ? '#ffffff' : '#1e40af';
     hint.textContent = select ? 'Drag a rectangle to crop the inspection view · Esc cancels selection'
                       : cropped ? `Cropped view (${img.naturalWidth} × ${img.naturalHeight} pixels) · Reset restores full image`
                                 : 'Drag to pan · Mouse wheel to zoom · Crop area to inspect only a region';

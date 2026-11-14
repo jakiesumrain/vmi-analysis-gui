@@ -286,7 +286,7 @@ def main(*, host: str = "0.0.0.0", launch_command: str = "uv run vmi-analysis") 
            favicon=str(files("vmi_analysis.gui.assets") / "electron-spectrum-measured.svg"),
            host=host,
            port=port,
-           dark=True,
+           dark=False,
            reconnect_timeout=_env_float("VMI_GUI_RECONNECT_TIMEOUT",
                                         DEFAULT_RECONNECT_TIMEOUT, minimum=4.0),
            reload=False,

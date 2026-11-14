@@ -82,36 +82,36 @@ _ZOOM_READY = False
 
 _OVERLAY_HTML = """
 <div id="vmi-zoom-overlay" style="display:none; position:fixed; inset:0;
-     z-index:9999; background:rgba(0,0,0,0.96); cursor:grab;
+     z-index:9999; background:rgba(248,250,252,0.97); cursor:grab;
      overflow:hidden; touch-action:none;">
   <img id="vmi-zoom-img" src="" alt="" style="position:absolute; left:50%;
        top:50%; max-width:none; user-select:none; -webkit-user-drag:none;"/>
   <div id="vmi-zoom-selection" style="display:none; position:absolute; pointer-events:none;
-       border:2px solid #3b82f6; background:rgba(59,130,246,0.14); box-sizing:border-box;"></div>
+       border:2px solid #1e40af; background:rgba(30,64,175,0.10); box-sizing:border-box;"></div>
   <div id="vmi-zoom-toolbar" role="toolbar" aria-label="Image inspection"
        style="position:absolute; top:14px; right:16px; display:flex; gap:8px; flex-wrap:wrap; max-width:95%;
-       font-family:'Geist Mono', ui-monospace, monospace;">
+       font-family:'Fira Code', ui-monospace, monospace;">
     <button id="vmi-zoom-pan" onclick="vmiZoomPan()" aria-pressed="true"
-      style="background:#ededed; color:#000000; border:1px solid #ededed; border-radius:6px;
+      style="background:#1e40af; color:#ffffff; border:1px solid #1e40af; border-radius:6px;
       padding:0 10px; height:30px; cursor:pointer; transition:background-color .16s ease, color .16s ease;">Pan</button>
     <button id="vmi-zoom-select" onclick="vmiZoomSelect()" aria-pressed="false"
-      style="background:#171717; color:#ededed; border:1px solid #333333; border-radius:6px;
+      style="background:#ffffff; color:#1e40af; border:1px solid #bfdbfe; border-radius:6px;
       padding:0 10px; height:30px; cursor:pointer; transition:background-color .16s ease, color .16s ease;">Crop area</button>
-    <button onclick="vmiZoomAt(null,1.25)" style="background:#171717;
-      color:#ededed; border:1px solid #333333; border-radius:6px; width:34px; height:30px;
+    <button onclick="vmiZoomAt(null,1.25)" style="background:#ffffff;
+      color:#1e40af; border:1px solid #bfdbfe; border-radius:6px; width:34px; height:30px;
       font-size:18px; cursor:pointer;">+</button>
-    <button onclick="vmiZoomAt(null,0.8)" style="background:#171717;
-      color:#ededed; border:1px solid #333333; border-radius:6px; width:34px; height:30px;
+    <button onclick="vmiZoomAt(null,0.8)" style="background:#ffffff;
+      color:#1e40af; border:1px solid #bfdbfe; border-radius:6px; width:34px; height:30px;
       font-size:18px; cursor:pointer;">&minus;</button>
-    <button onclick="vmiZoomReset()" style="background:#171717; color:#ededed;
-      border:1px solid #333333; border-radius:6px; padding:0 10px; height:30px;
+    <button onclick="vmiZoomReset()" style="background:#ffffff; color:#1e40af;
+      border:1px solid #bfdbfe; border-radius:6px; padding:0 10px; height:30px;
       font-size:12px; cursor:pointer;">reset</button>
-    <button onclick="vmiZoomClose()" style="background:#171717; color:#ededed;
-      border:1px solid #333333; border-radius:6px; width:34px; height:30px;
+    <button onclick="vmiZoomClose()" style="background:#ffffff; color:#1e40af;
+      border:1px solid #bfdbfe; border-radius:6px; width:34px; height:30px;
       font-size:14px; cursor:pointer;">&#10005;</button>
   </div>
   <div id="vmi-zoom-hint" style="position:absolute; bottom:14px; left:16px;
-       color:#8a8a8a; font:12px 'Geist', sans-serif; pointer-events:none;">
+       color:#475569; font:12px 'Fira Sans', sans-serif; pointer-events:none;">
     Drag to pan · Mouse wheel to zoom · Crop area to inspect only a region
   </div>
 </div>

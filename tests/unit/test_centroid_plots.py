@@ -66,7 +66,7 @@ class CentroidPlotTests(unittest.TestCase):
                                 self.assertEqual(plot.figure["data"][index]["colorscale"], expected)
                     # Localization markers, histogram colors and spectrum stay intact.
                     self.assertEqual(figure.data[1].marker.color if tuning else figure.data[-1].line.color,
-                                     "red" if tuning else "#3b82f6")
+                                     "red" if tuning else "#1e40af")
                 finally:
                     client.delete()
 

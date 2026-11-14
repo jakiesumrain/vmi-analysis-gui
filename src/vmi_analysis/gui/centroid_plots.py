@@ -20,7 +20,7 @@ RESULT_COLORMAP_DEFAULTS = {
 PLOT_CONFIG = {"scrollZoom": True, "displaylogo": False, "responsive": True,
                "doubleClick": "reset", "toImageButtonOptions": {"format": "png", "scale": 2}}
 
-SERIES_COLORS = ("#3b82f6", "#f59e0b", "#22c55e", "#ef4444", "#a78bfa", "#38bdf8")
+SERIES_COLORS = ("#1e40af", "#d97706", "#15803d", "#dc2626", "#7c3aed", "#0284c7")
 
 
 def _compact_values(values):
@@ -39,24 +39,24 @@ def _compact_values(values):
 
 def _style(fig, title):
     fig.update_layout(
-        title={"text": title, "font": {"size": 18, "family": "Geist, Inter, sans-serif",
-                                       "color": "#f5f5f5"}},
-        template="plotly_dark", height=PLOT_HEIGHT, showlegend=False,
+        title={"text": title, "font": {"size": 18, "family": "Fira Code, monospace",
+                                       "color": "#1e3a8a"}},
+        template="plotly_white", height=PLOT_HEIGHT, showlegend=False,
         margin={"l": 65, "r": 70, "t": 90, "b": 55},
-        font={"family": "Geist, Inter, sans-serif", "color": "#b3b3b3", "size": 13},
-        paper_bgcolor="#000000", plot_bgcolor="#0a0a0a",
+        font={"family": "Fira Sans, Inter, sans-serif", "color": "#475569", "size": 13},
+        paper_bgcolor="#f8fafc", plot_bgcolor="#ffffff",
         colorway=SERIES_COLORS, dragmode="zoom", hovermode="closest",
-        hoverlabel={"bgcolor": "#171717", "bordercolor": "#3a3a3a",
-                    "font": {"family": "Geist, Inter, sans-serif", "color": "#f5f5f5"}},
-        modebar={"bgcolor": "rgba(0,0,0,0)", "color": "#8a8a8a",
-                 "activecolor": "#f5f5f5"},
+        hoverlabel={"bgcolor": "#ffffff", "bordercolor": "#bfdbfe",
+                    "font": {"family": "Fira Sans, Inter, sans-serif", "color": "#1e293b"}},
+        modebar={"bgcolor": "rgba(0,0,0,0)", "color": "#64748b",
+                 "activecolor": "#1e40af"},
     )
-    fig.update_xaxes(gridcolor="#1f1f1f", zerolinecolor="#333333",
-                     linecolor="#3a3a3a", tickfont={"color": "#8a8a8a"},
-                     title_font={"color": "#b3b3b3"})
-    fig.update_yaxes(gridcolor="#1f1f1f", zerolinecolor="#333333",
-                     linecolor="#3a3a3a", tickfont={"color": "#8a8a8a"},
-                     title_font={"color": "#b3b3b3"})
+    fig.update_xaxes(gridcolor="#e2e8f0", zerolinecolor="#cbd5e1",
+                     linecolor="#dbeafe", tickfont={"color": "#64748b"},
+                     title_font={"color": "#475569"})
+    fig.update_yaxes(gridcolor="#e2e8f0", zerolinecolor="#cbd5e1",
+                     linecolor="#dbeafe", tickfont={"color": "#64748b"},
+                     title_font={"color": "#475569"})
     return fig
 
 
@@ -105,7 +105,7 @@ def _histogram(fig, values, bins, title, row, col, color, reference=None):
                          hovertemplate="Bin: %{customdata[0]:.5g}–%{customdata[1]:.5g}<br>Count: %{y}<extra></extra>"),
                   row=row, col=col)
     if reference is not None:
-        fig.add_vline(x=reference, line_dash="dash", line_color="#ef4444", row=row, col=col)
+        fig.add_vline(x=reference, line_dash="dash", line_color="#dc2626", row=row, col=col)
     fig.update_xaxes(title_text=title, row=row, col=col)
     fig.update_yaxes(title_text="Count", rangemode="tozero", row=row, col=col)
 
@@ -165,7 +165,7 @@ def summary_figure(path):
     if energy.size and energy.shape == intensity.shape:
         positive = intensity > 0
         fig.add_trace(go.Scatter(x=energy[positive], y=intensity[positive], mode="lines",
-                                 line={"color": "#3b82f6", "width": 2},
+                                 line={"color": "#1e40af", "width": 2},
                                  hovertemplate="X: %{x:.6g}<br>Intensity: %{y:.6g}<extra></extra>"), row=2, col=1)
         xlo, xhi = meta.get("x_min", -1), meta.get("x_max", -1)
         ylo, yhi = meta.get("y_min", -1), meta.get("y_max", -1)

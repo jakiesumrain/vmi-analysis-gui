@@ -1,4 +1,4 @@
-"""Theme helpers — applies the dark dashboard tokens in theme.css."""
+"""Theme helpers — applies the light Analytics Dashboard tokens in theme.css."""
 
 import os
 from nicegui import ui
@@ -11,8 +11,8 @@ _FONTS_LINK = (
     '<link rel="preconnect" href="https://fonts.googleapis.com">'
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
     '<link href="https://fonts.googleapis.com/css2?'
-    "family=Geist:wght@400;500;600;700"
-    "&family=Geist+Mono:wght@400;500"
+    "family=Fira+Code:wght@400;500;600;700"
+    "&family=Fira+Sans:wght@300;400;500;600;700"
     '&display=swap" rel="stylesheet">'
 )
 
@@ -20,15 +20,15 @@ _FONTS_LINK = (
 def apply_theme() -> None:
     """Quasar palette + fonts + token CSS. Call once at app startup."""
     ui.colors(
-        primary="#ededed",
-        secondary="#a3a3a3",
-        accent="#3b82f6",
-        dark="#000000",
-        dark_page="#000000",
-        positive="#22c55e",
-        negative="#ef4444",
-        info="#38bdf8",
-        warning="#f59e0b",
+        primary="#1e40af",
+        secondary="#3b82f6",
+        accent="#d97706",
+        dark="#1e293b",
+        dark_page="#f8fafc",
+        positive="#15803d",
+        negative="#dc2626",
+        info="#0284c7",
+        warning="#d97706",
     )
     if os.environ.get("VMI_GUI_OFFLINE") != "1":
         ui.add_head_html(_FONTS_LINK)

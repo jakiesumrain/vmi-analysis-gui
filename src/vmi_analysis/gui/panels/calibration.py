@@ -124,7 +124,7 @@ def _overlay_svg(state):
             x, y, w, h = box
             parts.append(
                 f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" '
-                f'fill="rgba(59,130,246,0.18)" stroke="#3b82f6" stroke-width="2" '
+                f'fill="rgba(37,99,235,0.12)" stroke="#2563eb" stroke-width="2" '
                 f'vector-effect="non-scaling-stroke"/>')
     for rect in state.get("masks", []):
         box = _clipped_rect(state, rect)
@@ -132,7 +132,7 @@ def _overlay_svg(state):
             x, y, w, h = box
             parts.append(
                 f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" '
-                f'fill="rgba(239,68,68,0.22)" stroke="#ef4444" stroke-width="2" '
+                f'fill="rgba(220,38,38,0.16)" stroke="#dc2626" stroke-width="2" '
                 f'vector-effect="non-scaling-stroke"/>')
     drag = state.get("drag_rect")
     if drag is not None:
@@ -141,7 +141,7 @@ def _overlay_svg(state):
             x, y, w, h = box
             parts.append(
                 f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" '
-                f'fill="rgba(245,158,11,0.16)" stroke="#f59e0b" '
+                f'fill="rgba(217,119,6,0.12)" stroke="#d97706" '
                 f'stroke-width="2" stroke-dasharray="6 4" vector-effect="non-scaling-stroke"/>')
     fit = state.get("last_fit")
     if fit is not None:
@@ -163,7 +163,7 @@ def _overlay_svg(state):
                 continue
             path = "M " + " L ".join(f"{x:.2f} {y:.2f}" for x, y in segment)
             parts.append(
-                f'<path d="{path}" fill="none" stroke="#f59e0b" stroke-width="2" '
+                f'<path d="{path}" fill="none" stroke="#d97706" stroke-width="2" '
                 f'vector-effect="non-scaling-stroke"/>')
     return "".join(parts)
 
@@ -196,7 +196,7 @@ def _fit_comparison_figure(polar, theta, r, fit):
         ), row=1, col=col)
     ridge = np.where(np.isfinite(data).any(axis=1), fit.ridge_centers(angles), np.nan)
     fig.add_trace(go.Scatter(x=ridge, y=degrees, mode="lines",
-                             line={"color": "#f59e0b", "width": 2},
+                             line={"color": "#d97706", "width": 2},
                              hoverinfo="skip"), row=1, col=1)
     half_r = (r[1] - r[0]) / 2
     half_angle = np.degrees(theta[1] - theta[0]) / 2
@@ -205,7 +205,7 @@ def _fit_comparison_figure(polar, theta, r, fit):
     fig.update_yaxes(range=[degrees[-1] + half_angle, degrees[0] - half_angle])
     fig.update_yaxes(title_text="Angle (degrees)", row=1, col=1)
     _style(fig, "Fit comparison")
-    fig.update_layout(height=675, plot_bgcolor="#0a0a0a",
+    fig.update_layout(height=675, plot_bgcolor="#ffffff",
                       coloraxis={"colorscale": "Viridis", "cmin": float(finite.min()),
                                  "cmax": float(finite.max()), "colorbar": {"title": "Intensity"}})
     return fig
@@ -482,7 +482,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 ui.label("Drag to mask. Adjust horizontal zoom to narrow the band.").classes("vmi-subtitle")
                 with ui.element("div").classes("w-full overflow-x-auto"):
                     inspection_image = _polar_image("inspection").classes("w-full").style(
-                        f"height: {POLAR_HEIGHT}; border: 1px solid #262626")
+                        f"height: {POLAR_HEIGHT}; border: 1px solid #dbeafe")
                 inspection_status = ui.label().classes("vmi-subtitle")
                 pointer_readouts["inspection"] = ui.label().classes(
                     "w-full text-right font-mono text-xs min-h-4")
