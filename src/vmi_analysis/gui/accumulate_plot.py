@@ -4,7 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from .centroid_plots import COLORMAPS, _heatmap, _image_axes, _style
+from .centroid_plots import COLORMAPS, SERIES_COLORS, _heatmap, _image_axes, _style
 
 ACCUMULATE_HEIGHT = 800
 FRAME_HISTOGRAM_HEIGHT = 380
@@ -69,7 +69,7 @@ def frame_histogram_figure(values, *, title="Raw frame histogram",
     fig = make_subplots(rows=1, cols=1)
     fig.add_trace(go.Bar(
         x=centers, y=counts, width=widths,
-        marker_color="#cc785c", marker_line_width=0,
+        marker_color=SERIES_COLORS[0], marker_line_width=0,
         customdata=np.column_stack([edges[:-1], edges[1:]]),
         hovertemplate="Pixel value %{customdata[0]:.4g}–%{customdata[1]:.4g}"
                       "<br>%{y} pixels<extra></extra>"), row=1, col=1)

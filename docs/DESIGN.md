@@ -301,15 +301,29 @@ components:
 ## Current application
 
 `src/vmi_analysis/gui/theme.py` and `src/vmi_analysis/gui/assets/theme.css`
-define the theme that the application uses. The interface uses a cream
-background, coral actions, and dark log consoles. Panel headings use
-Cormorant Garamond. Controls use Inter. Logs use JetBrains Mono.
+define the theme that the application uses. The interface is a **light
+Analytics Dashboard** from the `ui-ux-pro-max` palette: canvas `#f8fafc`,
+white cards, muted `#e9eef6`, border `#dbeafe`, ink `#1e3a8a`, body
+`#334155`, primary action `#1e40af`, secondary blue `#3b82f6`, and amber
+`#d97706` for warnings/fit overlays. Headings and data identifiers use
+Fira Code; body copy and controls use Fira Sans.
+
+The shell is a persistent workbench: a left rail groups tools into
+*Acquire*, *Analyze* and *Automate*; the main workspace opens directly on
+the active panel. A compact footer status bar carries active jobs, queued
+jobs, job limit and server mode. The author signature lives under
+*Settings → About* rather than in the application chrome. Each panel ends
+in a labelled console dock that streams job output.
+The rail becomes a horizontally scrollable strip on narrow screens; footer
+notes are hidden there so the status bar stays one line.
 
 Each panel begins with a heading and a short task summary. The Binning,
 PES, and Pipeline summaries identify their current development status.
 
-The tokens and examples below record the design reference. See the
-[architecture](architecture.md) for the implemented panels and previews.
+The Claude/Anthropic reference material below is retained as historical
+design context; the implementation tokens above and in `theme.css` are
+authoritative. See the [architecture](architecture.md) for the implemented
+panels and previews.
 
 ## Reference overview
 
