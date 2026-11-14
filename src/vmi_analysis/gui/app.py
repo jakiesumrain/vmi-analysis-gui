@@ -162,6 +162,21 @@ def index() -> None:
             ui.button("Cancel", on_click=stop_dialog.close).props("flat")
             ui.button("Stop server", on_click=_stop_server).props("color=negative unelevated")
 
+    with ui.dialog() as about_dialog, ui.card().classes("w-96 gap-3"):
+        ui.label("About VMI Analysis").classes("text-lg font-semibold")
+        ui.label("Photoelectron imaging analysis toolbox.").classes("vmi-subtitle")
+        ui.separator()
+        with ui.row().classes("w-full items-center justify-between"):
+            ui.label("Author").classes("vmi-caption")
+            ui.link("Tao · jakiesumrain@163.com", "mailto:jakiesumrain@163.com") \
+                .classes("vmi-subtitle")
+        with ui.row().classes("w-full justify-end"):
+            ui.button("Close", on_click=lambda: about_dialog.close()).props("flat")
+
+    def open_about():
+        settings_dialog.close()
+        about_dialog.open()
+
     with ui.dialog() as settings_dialog, ui.card().classes("w-96 gap-3"):
         ui.label("Settings").classes("text-lg font-semibold")
         ui.separator()
@@ -192,9 +207,12 @@ def index() -> None:
         with ui.row().classes("w-full gap-2"):
             ui.button("Save workflow", icon="save", on_click=save_workflow).props("flat")
             ui.button("Load workflow", icon="folder_open", on_click=load_workflow).props("flat")
-        with ui.row().classes("w-full justify-between"):
-            ui.button("Stop server", icon="power_settings_new",
-                      on_click=stop_dialog.open).props("flat color=negative")
+        with ui.row().classes("w-full justify-between items-center"):
+            with ui.row().classes("gap-1"):
+                ui.button("About", icon="info",
+                          on_click=open_about).props("flat")
+                ui.button("Stop server", icon="power_settings_new",
+                          on_click=stop_dialog.open).props("flat color=negative")
             ui.button("Close", on_click=lambda: settings_dialog.close()).props("flat")
 
     with ui.header().classes("vmi-header items-center justify-between px-6 py-3"):
@@ -267,11 +285,6 @@ def index() -> None:
                 "Server",
                 "Keep-alive" if _keep_alive_enabled() else "Auto-stop",
                 "after disconnect" if _keep_alive_enabled() else "after last client")
-        with ui.row().classes("vmi-signature items-center"):
-            ui.link("Tao", "mailto:jakiesumrain@163.com") \
-                .classes("vmi-signature-link")
-            ui.label("(jakiesumrain@163.com)").classes("vmi-signature-email")
-
     refresh_queue()
     ui.timer(1.0, refresh_queue)
 

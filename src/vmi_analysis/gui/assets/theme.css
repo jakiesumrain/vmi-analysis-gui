@@ -163,22 +163,7 @@ html, body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.vmi-signature {
-  flex: 0 0 auto;
-  gap: 0.25rem;
-  padding-left: 1rem;
-  border-left: 1px solid var(--vmi-hairline);
-}
-.vmi-signature-link {
-  color: var(--vmi-muted) !important;
-  font-size: 0.7rem;
-  text-decoration: none;
-}
-.vmi-signature-link:hover { color: var(--vmi-primary) !important; }
-.vmi-signature-email {
-  color: var(--vmi-muted-soft);
-  font-size: 0.68rem;
-}
+
 
 /* ---- type ---- */
 .vmi-title {
@@ -541,9 +526,6 @@ html, body {
   .vmi-statusbar { gap: 0.5rem; }
   .vmi-status-item + .vmi-status-item { padding-left: 0.5rem; }
   .vmi-status-note { display: none; }
-  .vmi-signature { border-left: 0; padding-left: 0; }
-  .vmi-signature-link { font-size: 0.65rem; }
-  .vmi-signature-email { display: none; }
   .vmi-panel { padding: 1rem; }
   .q-tab { padding: 0 10px; font-size: 0.82rem; }
 }

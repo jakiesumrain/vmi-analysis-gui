@@ -311,8 +311,9 @@ Fira Code; body copy and controls use Fira Sans.
 The shell is a persistent workbench: a left rail groups tools into
 *Acquire*, *Analyze* and *Automate*; the main workspace opens directly on
 the active panel. A compact footer status bar carries active jobs, queued
-jobs, job limit and server mode, with the signature separated at its right
-edge. Each panel ends in a labelled console dock that streams job output.
+jobs, job limit and server mode. The author signature lives under
+*Settings → About* rather than in the application chrome. Each panel ends
+in a labelled console dock that streams job output.
 The rail becomes a horizontally scrollable strip on narrow screens; footer
 notes are hidden there so the status bar stays one line.
 
