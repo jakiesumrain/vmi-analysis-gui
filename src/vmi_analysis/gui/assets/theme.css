@@ -502,13 +502,32 @@ html, body {
   font-size: 0.76rem;
   padding: 6px 8px;
 }
+/* Quasar paints the notification root with layered !important utilities
+   (.text-white / .bg-*), which outrank un-layered author !important rules.
+   The root therefore keeps only the frame (border, radius, shadow) while
+   the surface and text colors go on the inner wrapper, which carries no
+   Quasar utility classes; the root's horizontal padding moves to the
+   wrapper so the root color never peeks out at the sides. */
 .q-notification {
-  background: var(--vmi-surface-elevated) !important;
   border: 1px solid var(--vmi-hairline-strong);
-  color: var(--vmi-ink) !important;
   border-radius: var(--vmi-radius-md);
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16);
+  overflow: hidden;
+  padding: 0 !important;
 }
+.q-notification__wrapper {
+  background: var(--vmi-surface-elevated) !important;
+  color: var(--vmi-ink);
+  padding: 0 16px;
+}
+.q-notification.bg-positive { border-left: 3px solid var(--vmi-success); }
+.q-notification.bg-info { border-left: 3px solid var(--vmi-info); }
+.q-notification.bg-warning { border-left: 3px solid var(--vmi-warning); }
+.q-notification.bg-negative { border-left: 3px solid var(--vmi-error); }
+.q-notification.bg-positive .q-notification__wrapper { background: #ecfdf5 !important; }
+.q-notification.bg-info .q-notification__wrapper { background: #eff6ff !important; }
+.q-notification.bg-warning .q-notification__wrapper { background: #fffbeb !important; }
+.q-notification.bg-negative .q-notification__wrapper { background: #fef2f2 !important; }
 .q-item { color: var(--vmi-body); min-height: 40px; }
 .q-item:hover, .q-item--active { color: var(--vmi-primary); background: var(--vmi-surface-soft); }
 
