@@ -28,10 +28,13 @@ async page => {
     await page.getByRole('button', {name: 'Run', exact: true}).waitFor();
   };
   await page.setViewportSize({width: 1440, height: 1000});
+  const settings = page.getByRole('button', {name: 'Settings', exact: true});
   const limit = page.getByRole('combobox', {name: 'Maximum concurrent jobs'});
   const chooseLimit = async value => {
+    await settings.click();
     await limit.click();
     await page.getByRole('option', {name: String(value), exact: true}).click();
+    await page.getByRole('button', {name: 'Close', exact: true}).click();
   };
   await chooseLimit(3);
   await waitState(s => s.limit === 3);
@@ -41,8 +44,10 @@ async page => {
   await page.getByRole('button', {name: 'Cancel queued', exact: true}).waitFor();
   check(await page.getByText('Waiting for Dark frame:', {exact: false}).isVisible(), 'File conflict reason is visible');
   await page.reload();
+  await settings.click();
   await limit.waitFor();
   check(await limit.inputValue() === '3', 'Concurrency limit survives reload');
+  await page.getByRole('button', {name: 'Close', exact: true}).click();
   await stop('Movie', 'Frame Movie', 'Frame movie');
   let s = await state();
   check(status(s, 'Dark frame') === 'running' && status(s, 'Centroiding') === 'running', 'Other running panels survive Stop');

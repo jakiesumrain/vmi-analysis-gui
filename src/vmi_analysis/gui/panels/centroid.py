@@ -16,8 +16,9 @@ from .. import theme
 from ..centroid_plots import (COLORMAPS, PLOT_HEIGHT, RESULT_COLORMAP_DEFAULTS,
                               tuning_figure, summary_figure, plot_options)
 from ..settings import centroid_settings, storage_key, output_dir as _output_dir
-from .common import (JobView, REPO_ROOT, file_url, open_folder_button,
-                     path_input, persist, zoomable_image, delete_outputs)
+from .common import (JobView, REPO_ROOT, action_bar, field_grid, file_url,
+                     open_folder_button, path_input, persist, zoomable_image,
+                     delete_outputs)
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
 OUTPUT_NAMES = (TUNING_PNG, SUMMARY_PNG, TUNING_DATA, SUMMARY_DATA, RAW_IMAGE, ABEL_IMAGE, SPECTRUM_CSV)
@@ -78,19 +79,19 @@ ADVANCED_KEYS = {
 
 
 def build(jobs: JobManager) -> None:
-    theme.section_title(
-        "Picasso Centroiding",
-        "Locate electron spots and build a VMI image. Use a single frame to tune detection.")
-
     view = JobView(jobs, job_name='Centroiding', results_builder=_results)
+    theme.panel_header(
+        "Picasso Centroiding",
+        "Locate electron spots and build a VMI image. Use a single frame to tune detection.",
+        view=view)
 
     doc = centroid_settings()
     widgets = {}
 
     def render_fields(group, caption=None, *, advanced=False):
         if caption:
-            ui.label(caption).classes("vmi-caption")
-        with ui.grid(columns=2).classes("w-full gap-x-4"):
+            theme.form_section(caption)
+        with field_grid():
             for section, key, kind, label in FIELDS:
                 if section != group or (key in ADVANCED_KEYS) != advanced:
                     continue
@@ -140,18 +141,19 @@ def build(jobs: JobManager) -> None:
                                   extra={"output_dir": str(_output_dir(snapshot))}))
             view.attach(job)
 
-        with ui.row().classes("gap-2"):
-            view.run_button(on_click=run)
-            def show_saved():
-                if view.job is not None and view.job.status in ("running", "queued"):
-                    ui.notify("Wait for the current job to finish before loading saved results.", type="info")
-                    return
-                view.results.clear()
-                with view.results:
-                    _result_files(_output_dir(centroid_settings()))
-            ui.button("View saved results", icon="insights", on_click=show_saved).props("flat color=secondary")
+        def show_saved():
+            if view.job is not None and view.job.status in ("running", "queued"):
+                ui.notify("Wait for the current job to finish before loading saved results.", type="info")
+                return
+            view.results.clear()
+            with view.results:
+                _result_files(_output_dir(centroid_settings()))
+        with action_bar(view, on_click=run):
+            ui.button("View saved results", icon="insights",
+                      on_click=show_saved).props("flat color=secondary")
             ui.button("Clear outputs", icon="delete",
-                      on_click=lambda: _clear_outputs(view)).props("flat color=negative")
+                      on_click=lambda: _clear_outputs(view)) \
+                .props("flat color=negative").classes("vmi-action-danger")
 
     view.place_console()
 
@@ -265,7 +267,7 @@ def _clear_outputs(view: JobView) -> None:
         if failed is None:
             return
         dlg.close()
-        view.results.clear()
+        view.clear_results()
         if failed:
             ui.notify("Could not delete: " + "; ".join(failed),
                       type="negative")

@@ -18,7 +18,8 @@ async page => {
   await page.setViewportSize({width: 1440, height: 1000});
   await page.waitForFunction(() => typeof window.vmiZoomOpen === 'function');
   const tabNames = await page.getByRole('tab').allTextContents();
-  if (JSON.stringify(tabNames) !== JSON.stringify(names)) throw new Error('Incorrect workspace navigation');
+  if (tabNames.length !== names.length || !names.every((name, i) => tabNames[i].endsWith(name)))
+    throw new Error('Incorrect workspace navigation');
   for (const name of names) {
     await show(name);
     const panel = page.getByRole('tabpanel');

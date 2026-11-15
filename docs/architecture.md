@@ -21,12 +21,12 @@ Keep experiment files and generated outputs outside version control.
 
 `gui/app.py` defines the workspace-rail groups, startup, and global settings.
 The workbench keeps a persistent left rail, a compact footer job/server status
-bar, and a labelled console dock in each panel; the rail becomes a horizontal
-scroller on narrow screens. The author signature is available from
+bar, and a collapsible labelled console dock in each panel; the rail becomes a
+horizontal scroller on narrow screens. The author signature is available from
 *Settings → About*.
 `gui/panels/` contains the forms and result views. Each panel starts with
-a title and a short summary. Binning, PES, and Pipeline are immature and
-need restructuring.
+a title, an inline job status cluster, and a short summary. Binning, PES, and
+Pipeline are immature and need restructuring.
 
 - Trig Calibration remaps a NumPy detector image and fits selected rings in
   the web process. It can export a Gascooke-compatible calibration.
@@ -62,7 +62,8 @@ Relative paths resolve from the subprocess working directory.
 - The MATLAB CPBASEX backend uses an exclusive reservation for its shared
   working data. The backend uses `CPBASEX_DIR` when set. Otherwise it uses
   an existing legacy checkout or the bundled code. Supply the basis data separately.
-- `JobView` displays job status and logs. One button starts, stops, or cancels
+- `JobView` displays job status in the panel header and logs in a
+  collapsible console. One button starts, stops, or cancels
   the panel job. A browser reload can reattach to an active job by name.
 - Cancel and shutdown stop subprocess trees. On Windows the manager uses
   `taskkill /T /F`. On POSIX it signals the process group.

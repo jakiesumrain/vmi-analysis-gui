@@ -30,7 +30,8 @@ from .. import theme
 from ..centroid_plots import _style, plot_options
 from ..jobs import MANAGER
 from ..settings import centroid_settings, output_dir
-from .common import REPO_ROOT, confirm_clear_outputs, num_input, path_input, persist
+from .common import (REPO_ROOT, check_grid, confirm_clear_outputs, field_grid,
+                     num_input, path_input, persist)
 
 from .polar_preview import (POLAR_HEIGHT, bind_percentiles, polar_controls, polar_preview,
                             render_polar_image as _render_polar_image, set_polar_source, set_polar_view)
@@ -296,7 +297,7 @@ def _rebuild_changes(saved_rings, blocks):
 
 
 def build(jobs=None, *, use_calibration=None) -> None:
-    theme.section_title(
+    theme.panel_header(
         "Trig Calibration",
         "Fit ring shapes in a polar VMI image and export a calibration for Circularize.")
     ui.label(
@@ -333,18 +334,19 @@ def build(jobs=None, *, use_calibration=None) -> None:
 
     # ---------------------------------------------------------------- inputs
     with theme.panel_card():
-        with ui.row().classes("gap-4 flex-wrap items-end w-full"):
-            widgets["image"] = persist(path_input(
-                "VMI image (.npy)", str(output_dir(centroid_settings()) / "vmi_2d_raw.npy"),
-                browse="file", filters=[".npy"]), "calibration.image")
+        widgets["image"] = persist(path_input(
+            "VMI image (.npy)", str(output_dir(centroid_settings()) / "vmi_2d_raw.npy"),
+            browse="file", filters=[".npy"]), "calibration.image")
+        with check_grid():
             widgets["brightest_center"] = persist(
                 ui.checkbox("Use brightest pixel as center", value=True),
                 "calibration.brightest_center")
+        with field_grid():
             widgets["cx"] = persist(num_input("Centre X", 511.0, step="any"),
                                     "calibration.center_x")
             widgets["cy"] = persist(num_input("Centre Y", 511.0, step="any"),
                                     "calibration.center_y")
-        with ui.row().classes("gap-4 flex-wrap items-end w-full"):
+        with field_grid(3):
             widgets["radial_bin_size"] = persist(num_input("Radial bin size (px)", 1.0, step="any"),
                                                 "calibration.radial_bin_size")
             widgets["radial_bin_size"].tooltip("Spacing between samples in detector pixels.")
@@ -352,11 +354,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
                                          "calibration.n_theta")
             widgets["r_max"] = persist(num_input("Max radius (0 = auto)", 0.0,
                                                  step=1.0), "calibration.r_max")
-        with ui.row().classes("gap-4 flex-wrap items-center"):
+        with field_grid():
             widgets["remap_method"] = persist(ui.select(
                 {"interpolation": "Interpolation", "grid": "Grid resampling"},
-                value="interpolation", label="Polar remap").props("outlined dense")
-                .classes("w-48"), "calibration.remap_method")
+                value="interpolation", label="Polar remap").props("outlined dense"),
+                "calibration.remap_method")
             widgets["subpixels"] = persist(
                 num_input("Subpixels per side (n)", pf.DEFAULT_SUBPIXELS, step=1,
                           min=1, max=pf.MAX_SUBPIXELS), "calibration.subpixels")
@@ -367,7 +369,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
 
             widgets["remap_method"].on_value_change(update_subpixels)
             update_subpixels()
-        with ui.row().classes("gap-2 items-center"):
+        with ui.row().classes("vmi-action-bar w-full items-center gap-2"):
             load_button = ui.button("Load image & remap", icon="refresh")
             send_button = ui.button("Send to Circularize", icon="output").props("flat")
             remap_status = ui.label("").classes("vmi-caption")
@@ -384,8 +386,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
 
     # ------------------------------------------------------------ processing
     with theme.panel_card():
-        ui.label("Processing chain").classes("vmi-subtitle")
-        with ui.row().classes("gap-4 flex-wrap items-center"):
+        theme.form_section("Processing chain")
+        with field_grid(3):
             widgets["abel"] = persist(
                 ui.checkbox("Inverse Abel per θ", value=True), "calibration.abel")
             widgets["abel_method"] = persist(ui.select(
@@ -406,16 +408,16 @@ def build(jobs=None, *, use_calibration=None) -> None:
             widgets["abel"].on_value_change(_update_hold_order_visibility)
             widgets["abel_method"].on_value_change(_update_hold_order_visibility)
             _update_hold_order_visibility()
-        with ui.row().classes("gap-4 flex-wrap items-center"):
+        with field_grid():
             widgets["mode"] = persist(ui.select(
                 list(pf.ENHANCE_MODES), value="bandpass",
-                label="Enhancement").props("outlined dense").classes("w-44"),
+                label="Enhancement").props("outlined dense"),
                 "calibration.enhance_mode")
             widgets["placement"] = persist(ui.select(
                 {"raw": "Raw polar", "pre_abel": "Before Abel inversion",
                  "post_abel": "After Abel inversion", "off": "Off"},
                 value="post_abel", label="Filter placement")
-                .props("outlined dense").classes("w-56"), "calibration.placement")
+                .props("outlined dense"), "calibration.placement")
 
             def _update_filter_placement(preferred):
                 abel = widgets["abel"].value
@@ -428,11 +430,12 @@ def build(jobs=None, *, use_calibration=None) -> None:
 
             widgets["abel"].on_value_change(lambda _: _update_filter_placement(widgets["placement"].value))
             _update_filter_placement(widgets["placement"].value)
+        with ui.row().classes("vmi-action-bar w-full items-center gap-2"):
             apply_button = ui.button("Apply processing", icon="tune")
         with ui.expansion("Filter parameters", icon="tune").classes("w-full").props(
             'header-class="vmi-section-toggle text-primary" expand-icon-class="text-primary"'
         ):
-            with ui.row().classes("gap-3 flex-wrap"):
+            with field_grid(4):
                 for key, label, value, step in FILTER_FIELDS:
                     widgets[f"param.{key}"] = persist(
                         num_input(label, value, step=step),
@@ -489,10 +492,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 horizontal_zoom.on_value_change(lambda e: inspection_image.style(f"width: {e.value * 100}%"))
             inspection_dialog.on("before-hide", lambda: _close_inspection())
             with ui.column().classes("w-full gap-3"):
-                with ui.row().classes("gap-3 items-center flex-wrap"):
+                with field_grid(3):
                     widgets["n_terms"] = persist(
                         num_input("Trig terms N", 3, step=1),
                         "calibration.n_terms")
+                with ui.row().classes("vmi-action-bar w-full items-center gap-2 flex-wrap"):
                     widgets["beta"] = persist(
                         ui.checkbox("Fit beta", value=True), "calibration.beta")
                     widgets["iterative"] = persist(
@@ -514,63 +518,97 @@ def build(jobs=None, *, use_calibration=None) -> None:
 
     # ----------------------------------------------------- rings, file, session
     with theme.panel_card():
-        ui.label("Accepted rings").classes("vmi-subtitle")
+        theme.form_section("Accepted rings")
         rings_table = ui.table(
             columns=[{"name": "radius", "label": "r0 (px)", "field": "radius"},
                      {"name": "terms", "label": "N", "field": "terms"},
                      {"name": "rms", "label": "RMS", "field": "rms"}],
             rows=[], row_key="radius").classes("w-full")
-        with ui.row().classes("gap-4 flex-wrap items-end w-full"):
-            image_folder = _image_folder(widgets["image"].value)
-            widgets["output"] = persist(path_input(
-                "Extracted trig-fit file",
-                str((image_folder or CIRC_DIR) / "extracted.txt"),
-                browse="save", filters=[".txt"],
-                default_name="extracted.txt"), "calibration.output")
-            saved_output = widgets["output"].value
-            if ("calibration.image" in app.storage.general and image_folder is not None
-                    and (not saved_output or Path(saved_output).expanduser().parent != image_folder)):
-                widgets["output"].value = str(image_folder / "extracted.txt")
+        image_folder = _image_folder(widgets["image"].value)
+        widgets["output"] = persist(path_input(
+            "Extracted trig-fit file",
+            str((image_folder or CIRC_DIR) / "extracted.txt"),
+            browse="save", filters=[".txt"],
+            default_name="extracted.txt"), "calibration.output")
+        saved_output = widgets["output"].value
+        if ("calibration.image" in app.storage.general and image_folder is not None
+                and (not saved_output or Path(saved_output).expanduser().parent != image_folder)):
+            widgets["output"].value = str(image_folder / "extracted.txt")
 
-            def follow_image(event):
-                nonlocal image_folder
-                folder = _image_folder(event.value)
-                if folder is not None and folder != image_folder:
-                    image_folder = folder
-                    widgets["output"].value = str(folder / "extracted.txt")
+        def follow_image(event):
+            nonlocal image_folder
+            folder = _image_folder(event.value)
+            if folder is not None and folder != image_folder:
+                image_folder = folder
+                widgets["output"].value = str(folder / "extracted.txt")
 
-            widgets["image"].on_value_change(follow_image)
+        widgets["image"].on_value_change(follow_image)
+        with ui.row().classes("vmi-action-bar w-full items-center gap-2 flex-wrap"):
             widgets["provenance"] = persist(
                 ui.checkbox("Provenance comments", value=True),
                 "calibration.provenance")
             ui.button("Rebuild file from rings", on_click=lambda: _rebuild_file())
             refresh_rings_button = ui.button("Refresh rings from file", icon="refresh").props("flat")
-            clear_file_button = ui.button("Clear calibration file", icon="delete").props("flat color=negative")
-        with ui.row().classes("gap-4 items-end flex-wrap"):
+            clear_file_button = ui.button("Clear calibration file", icon="delete") \
+                .props("flat color=negative").classes("vmi-action-danger")
+        theme.form_section("Radial model")
+        with field_grid():
             radial_model = persist(ui.select({"interp": "Interp", "poly": "Poly"},
                                              label="Radial model", value="interp")
-                                   .props("outlined dense").classes("w-36"), "calibration.radial_model")
+                                   .props("outlined dense"), "calibration.radial_model")
             poly_order = persist(num_input("Poly order", 1, min=1, step=1),
                                  "calibration.slope_order")
+        with ui.row().classes("vmi-action-bar w-full items-center gap-2"):
             ui.button("Update radial model plots",
                       on_click=lambda: _update_reduction())
             send_model_button = ui.button("Send to Circularize", icon="output").props("flat")
         ui.label("Interp uses shape-preserving cubic interpolation (PCHIP).") \
             .classes("vmi-subtitle")
         model_plots = ui.column().classes("w-full")
-        with ui.row().classes("gap-4 items-end flex-wrap w-full"):
-            widgets["session"] = persist(path_input(
-                "Session file (.json)",
-                str(CIRC_DIR / "trig-calibration.session.json"),
-                browse="save", filters=[".json"],
-                default_name="trig-calibration.session.json"),
-                "calibration.session")
+        theme.form_section("Session")
+        widgets["session"] = persist(path_input(
+            "Session file (.json)",
+            str(CIRC_DIR / "trig-calibration.session.json"),
+            browse="save", filters=[".json"],
+            default_name="trig-calibration.session.json"),
+            "calibration.session")
+        with ui.row().classes("vmi-action-bar w-full items-center gap-2"):
             ui.button("Save session", on_click=lambda: _save_session())
             ui.button("Load session", on_click=lambda: _load_session())
             ui.button("Clear session file", icon="delete", on_click=lambda: _confirm_clear_session()) \
-                .props("flat color=negative")
+                .props("flat color=negative").classes("vmi-action-danger")
 
-    console = theme.log_console()
+    with ui.column().classes("vmi-console w-full gap-2"):
+        console_head = ui.row().classes(
+            "vmi-console-head w-full items-center gap-2 no-wrap")
+        console_head.props('role="button" tabindex="0" aria-expanded="true"')
+        with console_head:
+            console_chevron = ui.icon("chevron_right") \
+                .classes("vmi-console-chevron vmi-console-open")
+            ui.label("Console").classes("vmi-console-title")
+            ui.label("Fit and processing messages appear here.") \
+                .classes("vmi-caption vmi-console-hint")
+        console = theme.log_console()
+
+        console_state = {"open": True}
+
+        def _toggle_console():
+            console_state["open"] = not console_state["open"]
+            console.visible = console_state["open"]
+            expanded = "true" if console_state["open"] else "false"
+            console_head.props(f'aria-expanded="{expanded}"')
+            if console_state["open"]:
+                console_chevron.classes(add="vmi-console-open")
+            else:
+                console_chevron.classes(remove="vmi-console-open")
+
+        def _console_key(e):
+            key = e.args.get("key") if isinstance(e.args, dict) else None
+            if key in ("Enter", " ", "Spacebar"):
+                _toggle_console()
+
+        console_head.on("click", _toggle_console)
+        console_head.on("keydown", _console_key)
 
     # --------------------------------------------------------------- helpers
     def _options():

@@ -310,15 +310,38 @@ Fira Code; body copy and controls use Fira Sans.
 
 The shell is a persistent workbench: a left rail groups tools into
 *Acquire*, *Analyze* and *Automate*; the main workspace opens directly on
-the active panel. A compact footer status bar carries active jobs, queued
-jobs, job limit and server mode. The author signature lives under
-*Settings → About* rather than in the application chrome. Each panel ends
-in a labelled console dock that streams job output.
+the active panel. The header carries the electron-spectrum brand mark and
+*Settings*; rail tabs carry Material icons. A compact footer status bar
+carries active jobs, queued jobs, job limit and server mode. The author
+signature lives under *Settings → About* rather than in the application
+chrome.
 The rail becomes a horizontally scrollable strip on narrow screens; footer
 notes are hidden there so the status bar stays one line.
 
-Each panel begins with a heading and a short task summary. The Binning,
-PES, and Pipeline summaries identify their current development status.
+`theme.css` defines the token scales the components use: spacing
+(`--vmi-space-1…8`), radii (`--vmi-radius-sm…lg`), shadows, shell metrics,
+and motion (`--vmi-speed`, `--vmi-ease`). Component classes reference these
+tokens rather than raw values.
+
+Each panel follows one anatomy, built from helpers in `gui/theme.py` and
+`gui/panels/common.py`:
+
+- `panel_header(title, subtitle, view)` — heading plus a short task
+  summary; with a `JobView` the status cluster (badge, spinner, progress,
+  wait reason) sits inline in the heading row.
+- `form_section(caption)` — small-caps overline with a rule, grouping
+  related fields.
+- `field_grid(columns)` / `check_grid()` — responsive form grids.
+- `path_input()` — full-width input with an inline keyboard-focusable
+  browse icon in the append slot.
+- `action_bar(view, label)` — the single run/stop button row; destructive
+  actions use the flat `vmi-action-danger` style.
+- `place_console()` — a collapsible labelled console dock (collapsed at
+  rest, auto-opens while a job runs, keyboard-operable) with a results
+  area that shows an empty-state placeholder before the first result.
+
+Pipeline shows its stages as a numbered chip track. The Binning, PES, and
+Pipeline summaries identify their current development status.
 
 The Claude/Anthropic reference material below is retained as historical
 design context; the implementation tokens above and in `theme.css` are

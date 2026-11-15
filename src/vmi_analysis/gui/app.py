@@ -103,6 +103,18 @@ TABS = [
     ("PES", pes),
     ("Pipeline", pipeline),
 ]
+TAB_ICONS = {
+    "GMD Map": "link",
+    "Movie": "movie",
+    "Dark Frame": "dark_mode",
+    "Accumulate": "layers",
+    "Centroiding": "center_focus_strong",
+    "Binning": "bar_chart",
+    "Trig Calibration": "track_changes",
+    "Circularize": "donut_large",
+    "PES": "show_chart",
+    "Pipeline": "account_tree",
+}
 SIDEBAR_GROUPS = (
     ("Acquire", ("GMD Map", "Movie", "Dark Frame", "Accumulate")),
     ("Analyze", ("Centroiding", "Binning", "Trig Calibration", "Circularize", "PES")),
@@ -197,7 +209,7 @@ def index() -> None:
             ui.label("Maximum concurrent jobs").classes("vmi-subtitle")
             concurrency = ui.select(
                 limits, value=MANAGER.max_concurrent,
-            ).props("outlined dense aria-label=Maximum concurrent jobs") \
+            ).props('outlined dense aria-label="Maximum concurrent jobs"') \
                 .classes("w-24 vmi-setting-concurrency")
         concurrency.on_value_change(change_limit)
         concurrency.tooltip("Lowering the limit lets running jobs finish; "
@@ -216,9 +228,12 @@ def index() -> None:
             ui.button("Close", on_click=lambda: settings_dialog.close()).props("flat")
 
     with ui.header().classes("vmi-header items-center justify-between px-6 py-3"):
-        with ui.row().classes("items-baseline gap-3"):
-            ui.label("VMI Analysis").classes("vmi-title vmi-title-md vmi-title-bold")
-            ui.label("photoelectron imaging toolbox").classes("vmi-subtitle")
+        with ui.row().classes("items-center gap-3"):
+            ui.html('<img src="/brand/electron-spectrum-measured.svg" '
+                    'class="vmi-brand" alt="">')
+            with ui.row().classes("items-baseline gap-3"):
+                ui.label("VMI Analysis").classes("vmi-title vmi-title-md vmi-title-bold")
+                ui.label("photoelectron imaging toolbox").classes("vmi-subtitle")
         with ui.row().classes("items-center gap-3"):
             settings_button = ui.button(
                 "Settings", icon="settings",
@@ -242,18 +257,24 @@ def index() -> None:
         queued_value.text = str(n_queued)
         queued_note.text = "waiting for a slot" if n_queued else "none waiting"
         limit_value.text = str(MANAGER.max_concurrent)
-        keep_value.text = "Keep-alive" if _keep_alive_enabled() else "Auto-stop"
-        keep_note.text = ("after disconnect" if _keep_alive_enabled()
+        keep_alive = _keep_alive_enabled()
+        keep_value.text = "Keep-alive" if keep_alive else "Auto-stop"
+        keep_note.text = ("after disconnect" if keep_alive
                           else "after last client")
+        keep_dot.classes(remove="vmi-status-dot-keep vmi-status-dot-auto")
+        keep_dot.classes("vmi-status-dot-keep" if keep_alive
+                         else "vmi-status-dot-auto")
 
     with ui.row().classes("vmi-workbench w-full no-wrap"):
         with ui.column().classes("vmi-sidebar"):
             ui.label("Workspace").classes("vmi-sidebar-title")
-            with ui.tabs().classes("vmi-sidebar-tabs") as tabs:
-                for group, names in SIDEBAR_GROUPS:
-                    ui.label(group).classes("vmi-sidebar-group")
+            with ui.tabs().classes("vmi-sidebar-tabs").props("inline-label") as tabs:
+                for group_index, (group, names) in enumerate(SIDEBAR_GROUPS):
+                    ui.label(group).classes(
+                        "vmi-sidebar-group"
+                        + (" vmi-sidebar-group-first" if group_index == 0 else ""))
                     for name in names:
-                        ui.tab(name)
+                        ui.tab(name, icon=TAB_ICONS[name])
             with ui.column().classes("vmi-sidebar-foot"):
                 ui.label("Local workspace").classes("vmi-sidebar-foot-label")
                 ui.label(f"{len(TABS)} tools").classes("vmi-sidebar-foot-note")
@@ -281,10 +302,15 @@ def index() -> None:
             queued_value, queued_note = status_item("Queued", "0", "none waiting")
             limit_value, _ = status_item("Job limit", str(MANAGER.max_concurrent),
                                          "concurrent")
-            keep_value, keep_note = status_item(
-                "Server",
-                "Keep-alive" if _keep_alive_enabled() else "Auto-stop",
-                "after disconnect" if _keep_alive_enabled() else "after last client")
+            with ui.row().classes("vmi-status-item items-baseline gap-1"):
+                ui.label("Server").classes("vmi-status-label")
+                keep_dot = ui.element("span").classes("vmi-status-dot self-center")
+                keep_value = ui.label(
+                    "Keep-alive" if _keep_alive_enabled() else "Auto-stop",
+                ).classes("vmi-status-value")
+                keep_note = ui.label(
+                    "after disconnect" if _keep_alive_enabled() else "after last client",
+                ).classes("vmi-status-note")
     refresh_queue()
     ui.timer(1.0, refresh_queue)
 
@@ -298,6 +324,7 @@ def main(*, host: str = "0.0.0.0", launch_command: str = "uv run vmi-analysis") 
     except ValueError:
         MANAGER.set_max_concurrent(2)
     init_zoom_overlay()
+    app.add_static_files("/brand", str(files("vmi_analysis.gui.assets")))
     ui.run(title="VMI Analysis",
            favicon=str(files("vmi_analysis.gui.assets") / "electron-spectrum-measured.svg"),
            host=host,

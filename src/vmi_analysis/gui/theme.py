@@ -39,11 +39,21 @@ def apply_theme() -> None:
 # Component helpers (DESIGN.md component vocabulary)
 # --------------------------------------------------------------------------
 
-def section_title(text: str, subtitle: str | None = None) -> None:
-    """Compact sans panel heading."""
-    ui.label(text).classes("vmi-title vmi-title-sm")
+def panel_header(title: str, subtitle: str | None = None, view=None) -> None:
+    """Panel heading; with a JobView the badge/spinner/progress sit inline."""
+    with ui.row().classes("vmi-panel-head w-full items-center gap-3 no-wrap"):
+        ui.label(title).classes("vmi-title vmi-title-sm")
+        if view is not None:
+            view.place_status()
     if subtitle:
-        ui.label(subtitle).classes("vmi-subtitle")
+        ui.label(subtitle).classes("vmi-subtitle vmi-panel-subtitle")
+
+
+def form_section(caption: str) -> None:
+    """Overline section header with a hairline rule."""
+    with ui.row().classes("vmi-form-section w-full items-center gap-3 no-wrap"):
+        ui.label(caption).classes("vmi-overline")
+        ui.element("span").classes("vmi-form-section-rule")
 
 
 def panel_card() -> ui.card:
@@ -68,5 +78,5 @@ def set_badge(badge: ui.badge, status: str) -> None:
 
 
 def log_console() -> ui.log:
-    """Monospaced console on the near-black canvas."""
-    return ui.log(max_lines=2000).classes("vmi-log w-full").style("height: 340px")
+    """Monospaced console; height comes from --vmi-log-h in theme.css."""
+    return ui.log(max_lines=2000).classes("vmi-log w-full")

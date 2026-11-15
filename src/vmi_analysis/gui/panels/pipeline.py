@@ -9,7 +9,8 @@ from vmi_analysis.centroiding.options import centroid_cli_args
 from ..jobs import Job, JobManager, Stage
 from .. import theme
 from ..settings import centroid_settings, output_dir as centroid_output_dir, binning_cli_args
-from .common import JobView, REPO_ROOT, confirm_clear_outputs, num_input, path_input, persist
+from .common import (JobView, REPO_ROOT, action_bar, field_grid,
+                     confirm_clear_outputs, num_input, path_input, persist)
 from .pes import default_output_dir, _output_files as pes_outputs
 from .binning import _suffix, _output_files as binning_outputs
 from .centroid import OUTPUT_NAMES as CENTROID_OUTPUTS
@@ -19,23 +20,24 @@ CIRC_DIR = REPO_ROOT / "circularization"
 
 
 def build(jobs: JobManager) -> None:
-    theme.section_title(
+    view = JobView(jobs, job_name='Pipeline')
+    theme.panel_header(
         "Pipeline",
         "Run GMD mapping, Centroiding, Binning, and PES in sequence. "
-        "This panel is immature and needs restructuring.")
-
-    view = JobView(jobs, job_name='Pipeline')
+        "This panel is immature and needs restructuring.",
+        view=view)
 
     stage_badges: list[ui.badge] = []
-    with ui.row().classes("gap-2 items-center"):
-        ui.label("Stages:").classes("vmi-caption")
+    with ui.row().classes("vmi-stage-track w-full items-center gap-2 no-wrap"):
         stage_names = ("GMD map", "Centroiding", "Binning", "PES")
         for i, name in enumerate(stage_names):
-            b = theme.status_badge("idle")
-            stage_badges.append(b)
+            with ui.row().classes("vmi-stage-chip items-center gap-1 no-wrap"):
+                ui.label(str(i + 1)).classes("vmi-stage-index")
+                ui.label(name).classes("vmi-stage-name")
+                b = theme.status_badge("idle")
+                stage_badges.append(b)
             if i < len(stage_names) - 1:
-                ui.icon("arrow_forward").classes("text-grey-5") \
-                    .style("font-size: 14px")
+                ui.icon("chevron_right").classes("vmi-stage-sep")
     current_job: dict = {"job": None}
 
     def refresh_badges():
@@ -58,7 +60,7 @@ def build(jobs: JobManager) -> None:
             "GMD map output", str(REPO_ROOT / "gmd_map_all.txt"),
             browse="save", filters=[".txt"],
             default_name="gmd_map_all.txt"), "pipeline.map_out")
-        with ui.row().classes("gap-4 flex-wrap"):
+        with field_grid(3):
             weight_mode = persist(ui.select(
                 ["none", "gmd", "gmd_norm"], value="gmd_norm",
                 label="Weight mode").props("outlined dense"),
@@ -146,11 +148,11 @@ def build(jobs: JobManager) -> None:
                 ui.notify("Clear outputs after a Pipeline run finishes.", type="info")
                 return
             confirm_clear_outputs(_written_outputs(job), "Delete outputs written by this Pipeline run?",
-                                  on_cleared=view.results.clear)
+                                  on_cleared=view.clear_results)
 
-        with ui.row().classes("gap-2"):
-            view.run_button("Run pipeline", on_click=run)
-            ui.button("Clear outputs", icon="delete", on_click=clear).props("flat color=negative")
+        with action_bar(view, "Run pipeline", on_click=run):
+            ui.button("Clear outputs", icon="delete", on_click=clear) \
+                .props("flat color=negative").classes("vmi-action-danger")
         ui.label("Watch each stage's detailed parameters on its own tab; "
                  "this panel uses the same defaults.").classes("vmi-subtitle")
 

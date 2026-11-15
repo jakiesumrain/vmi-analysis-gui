@@ -21,16 +21,13 @@ from ..frame_preview import (average_raw_frames, list_raw_frames, load_raw_frame
                              pick_frame, subtract_dark)
 from ..jobs import Job, JobManager, ResourceBusyError
 from .. import theme
-from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     open_folder_button, path_input, persist,
-                     zoomable_image, confirm_clear_outputs)
+from .common import (GENERATED, JobView, REPO_ROOT, action_bar, check_grid,
+                     field_grid, file_url, num_input, open_folder_button,
+                     path_input, persist, zoomable_image,
+                     confirm_clear_outputs)
 
 
 def build(jobs: JobManager) -> None:
-    theme.section_title(
-        "Fast Accumulate",
-        "Sum camera frames into one image with optional thresholding, denoising, and GMD weighting.")
-
     with ui.column().classes("w-full") as live_area:
         live_img, live_colors = _interactive_plot()
     live_area.visible = False
@@ -63,6 +60,10 @@ def build(jobs: JobManager) -> None:
         _results(job)
 
     view = JobView(jobs, job_name='Accumulate', results_builder=finished, live_builder=_live)
+    theme.panel_header(
+        "Fast Accumulate",
+        "Sum camera frames into one image with optional thresholding, denoising, and GMD weighting.",
+        view=view)
 
     with theme.panel_card():
         h5_dir = persist(path_input(
@@ -73,13 +74,14 @@ def build(jobs: JobManager) -> None:
             "Output image (.txt)", "", browse="save", filters=[".txt"],
             default_name="accumulated_result.txt",
             placeholder="accumulated_result.txt"), "accumulate.output_path")
-        with ui.row().classes("gap-4 flex-wrap"):
+        with field_grid(3):
             im_threshold = persist(num_input("Threshold", 5, step=1),
                                    "accumulate.im_threshold")
             max_workers = persist(num_input("Workers", 6, step=1),
                                   "accumulate.max_workers")
             frame_limit = persist(num_input("Frame limit (0 = all)", 0, min=0, step=1),
                                   "accumulate.frame_limit")
+        with check_grid():
             do_denoise = persist(ui.checkbox("Denoise (2×2 opening)",
                                              value=True),
                                  "accumulate.do_denoise")
@@ -199,12 +201,13 @@ def build(jobs: JobManager) -> None:
 
         frame_button.on_click(partial(show_histogram, False))
         average_button.on_click(partial(show_histogram, True))
-        with ui.row().classes("gap-4 flex-wrap"):
+        with check_grid():
             enable_gmd = persist(ui.checkbox("GMD weighting", value=False),
                                  "accumulate.enable_gmd")
-            gmd_map_path = persist(path_input(
-                "GMD map file", str(REPO_ROOT / "gmd_map_all.txt"),
-                browse="file", filters=[".txt"]), "accumulate.gmd_map_path")
+        gmd_map_path = persist(path_input(
+            "GMD map file", str(REPO_ROOT / "gmd_map_all.txt"),
+            browse="file", filters=[".txt"]), "accumulate.gmd_map_path")
+        with field_grid():
             gmd_w_min = persist(num_input("Weight min", 0.0, step=0.5),
                                 "accumulate.gmd_w_min")
             gmd_w_max = persist(num_input("Weight max", 4.0, step=0.5),
@@ -244,19 +247,19 @@ def build(jobs: JobManager) -> None:
                                          "output_path": output_path.value}))
             view.attach(job)
 
-        with ui.row().classes("gap-2 items-center"):
-            view.run_button(on_click=run)
-            def show_saved():
-                if view.job and view.job.status in ("running", "queued"):
-                    ui.notify("Wait for the running job to finish.", type="warning")
-                    return
-                view.results.clear()
-                with view.results:
-                    _result_file(str(REPO_ROOT / output_path.value) if output_path.value else "")
-            ui.button("View saved result", icon="analytics", on_click=show_saved).props("flat")
+        def show_saved():
+            if view.job and view.job.status in ("running", "queued"):
+                ui.notify("Wait for the running job to finish.", type="warning")
+                return
+            view.results.clear()
+            with view.results:
+                _result_file(str(REPO_ROOT / output_path.value) if output_path.value else "")
+        with action_bar(view, on_click=run):
+            ui.button("View saved result", icon="analytics",
+                      on_click=show_saved).props("flat color=secondary")
             ui.button("Clear output", icon="delete",
                       on_click=lambda: _clear_output(output_path, view, (dark_path.value, gmd_map_path.value))) \
-                .props("flat color=negative")
+                .props("flat color=negative").classes("vmi-action-danger")
 
     view.place_console()
     live_area.move()
@@ -285,7 +288,7 @@ def _clear_output(output_path, view, inputs) -> None:
         if (job.name == "Accumulate" and job.extra.get("live_path")
                 and (Path(job.cwd or REPO_ROOT) / job.extra["output_path"]).resolve() == target.resolve()):
             targets.append(Path(job.extra["live_path"]))
-    confirm_clear_outputs(targets, "Delete accumulated outputs?", on_cleared=view.results.clear)
+    confirm_clear_outputs(targets, "Delete accumulated outputs?", on_cleared=view.clear_results)
 
 
 def _results(job: Job):

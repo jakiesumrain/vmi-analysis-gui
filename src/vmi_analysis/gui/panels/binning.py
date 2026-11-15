@@ -10,20 +10,21 @@ from ..jobs import Job, JobManager
 from .. import theme
 from ..settings import binning_inputs
 from ..resources import canonical_path
-from .common import (JobView, REPO_ROOT, file_url, num_input,
-                     open_folder_button, path_input, persist, zoomable_image, confirm_clear_outputs)
+from .common import (JobView, REPO_ROOT, action_bar, field_grid, file_url,
+                     num_input, open_folder_button, path_input, persist,
+                     zoomable_image, confirm_clear_outputs)
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
 BIN_LABEL_PATTERN = r"bin\d+_(?:minusinf|[+-]?\d\.\d{2}e[+-]\d+|[+-]?inf|nan)_(?:plusinf|[+-]?\d\.\d{2}e[+-]\d+|[+-]?inf|nan)"
 
 
 def build(jobs: JobManager) -> None:
-    theme.section_title(
+    view = JobView(jobs, job_name='GMD binning', results_builder=_results)
+    theme.panel_header(
         "GMD Binning",
         "Group centroided events by GMD pulse energy and build one image per bin. "
-        "This panel is immature and needs restructuring.")
-
-    view = JobView(jobs, job_name='GMD binning', results_builder=_results)
+        "This panel is immature and needs restructuring.",
+        view=view)
     settings = binning_inputs()
 
     with theme.panel_card():
@@ -40,7 +41,7 @@ def build(jobs: JobManager) -> None:
                                       value="3.75e-8,5.5e-8,7.25e-8")
                              .classes("w-full").props("outlined dense"),
                              "binning.thresholds")
-        with ui.row().classes("gap-4 flex-wrap"):
+        with field_grid(3):
             gmd_col = persist(ui.select([4, 5], value=4,
                                         label="GMD column (4=m1, 5=m2)")
                               .props("outlined dense"), "binning.gmd_col")
@@ -90,11 +91,11 @@ def build(jobs: JobManager) -> None:
                 return
             suffix = _suffix(weight_mode.value, float(weight_power.value))
             confirm_clear_outputs(_output_files(directory, suffix), "Delete Binning outputs?",
-                                  on_cleared=view.results.clear)
+                                  on_cleared=view.clear_results)
 
-        with ui.row().classes("gap-2"):
-            view.run_button(on_click=run)
-            ui.button("Clear outputs", icon="delete", on_click=clear).props("flat color=negative")
+        with action_bar(view, on_click=run):
+            ui.button("Clear outputs", icon="delete", on_click=clear) \
+                .props("flat color=negative").classes("vmi-action-danger")
 
     view.place_console()
 

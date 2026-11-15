@@ -14,9 +14,10 @@ from ..jobs import Job, JobManager
 from .. import theme
 from ..settings import centroid_settings, output_dir
 from ..resources import canonical_path
-from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     open_folder_button, path_input, persist,
-                     zoomable_image, confirm_clear_outputs)
+from .common import (GENERATED, JobView, REPO_ROOT, action_bar, check_grid,
+                     field_grid, file_url, num_input, open_folder_button,
+                     path_input, persist, zoomable_image,
+                     confirm_clear_outputs)
 from .polar_preview import (bind_percentiles, polar_controls, polar_preview,
                             set_polar_source, set_polar_view)
 
@@ -24,16 +25,16 @@ CIRC_DIR = REPO_ROOT / "circularization"
 
 
 def build(jobs: JobManager):
-    theme.section_title(
-        "Circularize",
-        "Correct radial distortion in one VMI image and compare the raw and corrected polar views.")
-
     def results(job):
         _results(job)
         if job.status == "done" and job.extra.get("polar_preview"):
             show_polar(job.extra["polar_preview"])
 
     view = JobView(jobs, job_name='Circularize', results_builder=results)
+    theme.panel_header(
+        "Circularize",
+        "Correct radial distortion in one VMI image and compare the raw and corrected polar views.",
+        view=view)
 
     with theme.panel_card():
         inp = persist(path_input("Input image (.npy or .txt)",
@@ -45,7 +46,7 @@ def build(jobs: JobManager):
                                  browse="save", filters=[".txt"],
                                  default_name="image_circularized.txt"),
                       "circularize.out")
-        with ui.row().classes("gap-4 flex-wrap"):
+        with field_grid():
             shape_y = persist(num_input("Shape NY", 1023, step=1),
                               "circularize.shape_y")
             shape_x = persist(num_input("Shape NX", 1023, step=1),
@@ -54,6 +55,7 @@ def build(jobs: JobManager):
                                "circularize.center_x")
             center_y = persist(num_input("Center Y", 511.0, step="any"),
                                "circularize.center_y")
+        with check_grid():
             brightest_center = persist(ui.checkbox("Use brightest pixel as center", value=True),
                                        "circularize.brightest_center")
         extracted = persist(path_input(
@@ -63,7 +65,7 @@ def build(jobs: JobManager):
         reassign = persist(path_input(
             "Reassignment file (optional)",
             browse="file", filters=[".txt"]), "circularize.reassign")
-        with ui.row().classes("gap-4 flex-wrap"):
+        with field_grid(3):
             radial_model = persist(ui.select(
                 ["interp", "poly"], value="interp",
                 label="Radial model").props("outlined dense"),
@@ -78,7 +80,7 @@ def build(jobs: JobManager):
                                  "circularize.max_trig_n")
             polar_dr = persist(num_input("Polar dr", 1.0, step=0.5),
                                "circularize.polar_dr")
-        with ui.row().classes("gap-4 flex-wrap"):
+        with check_grid():
             no_jacobian = persist(ui.checkbox("No Jacobian", value=True),
                                   "circularize.no_jacobian")
             no_plots = persist(ui.checkbox("No diagnostic plots", value=False),
@@ -178,15 +180,15 @@ def build(jobs: JobManager):
                     targets.append(job.extra["polar_preview"])
 
             def cleared():
-                view.results.clear()
+                view.clear_results()
                 polar_data.clear()
                 polar_card.set_visibility(False)
 
             confirm_clear_outputs(targets, "Delete Circularize outputs and diagnostic plots?", on_cleared=cleared)
 
-        with ui.row().classes("gap-2"):
-            view.run_button(on_click=run)
-            ui.button("Clear outputs", icon="delete", on_click=clear).props("flat color=negative")
+        with action_bar(view, on_click=run):
+            ui.button("Clear outputs", icon="delete", on_click=clear) \
+                .props("flat color=negative").classes("vmi-action-danger")
 
         polar_data, polar_widgets = {}, {}
         with ui.column().classes("w-full gap-2 border-t border-stone-200 pt-4 polar-guide-group") as polar_card:
