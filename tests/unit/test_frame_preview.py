@@ -7,7 +7,7 @@ import h5py
 import numpy as np
 
 from vmi_analysis.gui import frame_preview
-from vmi_analysis.gui.accumulate_plot import frame_histogram_figure
+from vmi_analysis.gui.accumulate_plot import MAX_FRAME_HISTOGRAM_BINS, frame_histogram_figure
 
 
 def write_h5(path, frames):
@@ -47,6 +47,11 @@ class FramePreviewTests(unittest.TestCase):
                                         x_tickformat=".1e")
         self.assertEqual(figure.layout.yaxis.type, "linear")
         self.assertEqual(figure.layout.xaxis.tickformat, ".1e")
+
+    def test_automatic_histogram_caps_bins_for_wide_range(self):
+        figure = frame_histogram_figure([1, 1.1, 1.2, 1.3], x_min=0, x_max=1e4, auto_bins=True)
+        self.assertEqual(len(figure.data[0].x), MAX_FRAME_HISTOGRAM_BINS)
+        self.assertEqual(sum(figure.data[0].y), 4)
 
     def test_pick_frame_index_random_and_range(self):
         refs = frame_preview.list_raw_frames(self.folder)

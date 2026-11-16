@@ -1,5 +1,6 @@
 """CLI precedence and GUI persistence without a required TOML file."""
 
+import asyncio
 import io
 import json
 import os
@@ -346,6 +347,18 @@ class GuiSubmissionTests(unittest.TestCase):
         config = parse_centroid_args(["--h5-dir", "data", "--no-median-subtraction"]).settings
         self.assertFalse(config["vmi_picasso"]["processing"]["enable_median_subtraction"])
 
+    def test_gmd_map_form_submits_hdf5_pattern(self):
+        from vmi_analysis.gui.panels import gmd_map
+        store = {MIGRATED_KEY: True,
+                 "gmd_map.h5_dir": "chosen data",
+                 "gmd_map.h5_pattern": "*RAW-*.h5",
+                 "gmd_map.gmd_path": "gmd.txt",
+                 "gmd_map.output_path": "map.txt",
+                 "gmd_map.n_files": 0}
+        job = self.submit_form(gmd_map, store)
+        self.assertEqual(job.cmd[job.cmd.index("--h5-dir") + 1], "chosen data")
+        self.assertEqual(job.cmd[job.cmd.index("--h5-pattern") + 1], "*RAW-*.h5")
+
     def test_pipeline_overrides_stale_dataset_map_and_tuning_mode(self):
         from vmi_analysis.gui.panels import pipeline
         store = {MIGRATED_KEY: True,
@@ -353,12 +366,17 @@ class GuiSubmissionTests(unittest.TestCase):
                  storage_key("vmi_picasso", "gmd_map_path"): "old map",
                  storage_key("processing", "tuning_only"): True,
                  storage_key("processing", "num_cores"): 3.0,
-                 "pipeline.h5_dir": "pipeline data", "pipeline.gmd_path": "gmd.txt",
+                 "pipeline.h5_dir": "pipeline data",
+                 "pipeline.h5_pattern": "*RAW-*.h5",
+                 "pipeline.gmd_path": "gmd.txt",
                  "pipeline.map_out": "new map.txt", "binning.thresholds": "1,2"}
         job = self.submit_form(pipeline, store, "Run pipeline")
         self.assertEqual([s.name for s in job.stages], ["GMD map", "Centroiding", "Binning", "PES"])
         cfg = parse_centroid_args(job.stages[1].cmd[3:]).settings["vmi_picasso"]
         self.assertEqual(cfg["h5_dir"], str(ROOT / "pipeline data"))
+        self.assertEqual(cfg["h5_pattern"], "*RAW-*.h5")
+        self.assertEqual(job.stages[0].cmd[job.stages[0].cmd.index("--h5-pattern") + 1],
+                         "*RAW-*.h5")
         self.assertEqual(cfg["gmd_map_path"], str(ROOT / "new map.txt"))
         self.assertFalse(cfg["processing"]["tuning_only"])
         self.assertEqual(cfg["processing"]["num_cores"], 3)
@@ -400,6 +418,42 @@ class GuiSubmissionTests(unittest.TestCase):
         job = self.submit_form(dark, store)
         self.assertNotIn("--config", job.cmd)
         self.assertEqual(job.cmd[job.cmd.index("--frames") + 1], "0")
+
+    def test_binning_weight_preview_honors_zero_and_keeps_plot_on_invalid_bins(self):
+        from nicegui import Client, app, ui
+        from vmi_analysis.gui.jobs import JobManager
+        from vmi_analysis.gui.panels import binning
+
+        async def check(source):
+            callbacks = {}
+            store = {MIGRATED_KEY: True, "binning.gmd_map": str(source), "binning.weight_power": 0}
+            client = Client(ui.page("/_test_binning_weight_preview"))
+            try:
+                with client, patch.object(app.storage, "_general", store), \
+                        patch.object(ui.button, "on_click", lambda button, handler:
+                                     callbacks.__setitem__(button.text, handler)), \
+                        patch.object(binning, "plot_options", wraps=binning.plot_options) as plot_options, \
+                        patch.object(ui, "notify") as notify:
+                    binning.build(JobManager())
+                    await callbacks["Histogram weights"]()
+                    plot, = (element for element in client.elements.values() if isinstance(element, ui.plotly))
+                    trace = plot_options.call_args.args[0].data[0]
+                    self.assertEqual(list(trace.x), [1.0])
+                    self.assertEqual(list(trace.y), [2])
+                    numbers = {element.label: element for element in client.elements.values()
+                               if isinstance(element, ui.number)}
+                    numbers["Weight bin min"].value = 4
+                    numbers["Weight bin max"].value = 1
+                    await callbacks["Histogram weights"]()
+                    self.assertIn("X min must be less", notify.call_args.args[0])
+                    self.assertIs(client.elements.get(plot.id), plot)
+            finally:
+                client.delete()
+
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "map.txt"
+            source.write_text("0 a.h5 0 0 1 2 0\n1 a.h5 1 1 3 4 0\n", encoding="utf-8")
+            asyncio.run(check(source))
 
 
 if __name__ == "__main__":

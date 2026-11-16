@@ -65,8 +65,17 @@ def frame_histogram_figure(values, *, title="Raw frame histogram",
         if np.any(np.diff(bins) <= 0):
             raise ValueError("Histogram bin width is too small for the selected X range.")
     elif auto_bins:
-        # No user-supplied size: let NumPy choose the bin edges.
-        bins = np.histogram_bin_edges(values, bins="auto", range=(lower, upper))
+        # Choose the narrower of the Sturges and Freedman–Diaconis widths.
+        # Bound the count before NumPy allocates the bin edges.
+        samples = values[(values >= lower) & (values <= upper)]
+        bins = 1
+        if samples.size > 1:
+            sturges_width = float(np.ptp(samples)) / (float(np.log2(samples.size)) + 1)
+            q1, q3 = np.percentile(samples, (25, 75))
+            fd_width = 2.0 * (float(q3 - q1) / float(np.cbrt(samples.size)))
+            width = min(sturges_width, fd_width) if fd_width > 0 else sturges_width
+            if width > 0:
+                bins = max(1, int(np.ceil(min(span / width, MAX_FRAME_HISTOGRAM_BINS))))
 
     counts, edges = np.histogram(values, bins=bins, range=(lower, upper))
     widths = np.diff(edges)

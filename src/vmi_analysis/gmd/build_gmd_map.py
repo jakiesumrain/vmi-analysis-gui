@@ -12,11 +12,13 @@ import argparse
 import h5py
 import numpy as np
 import glob
+import ntpath
 import os
 import time
 
 # --- default config (override via CLI) ---
-DEFAULT_H5_DIR = ""                  # required: folder of RAW-*.h5 files
+DEFAULT_H5_DIR = ""                  # required: folder of HDF5 files
+DEFAULT_H5_PATTERN = "RAW-*.h5"      # glob inside DEFAULT_H5_DIR
 DEFAULT_GMD_PATH = ""                # required: current-time-both.txt
 DEFAULT_OUTPUT_PATH = "gmd_map_all.txt"
 DEFAULT_N_FILES = 0  # 0 = all files
@@ -28,7 +30,10 @@ def parse_args():
         description="Build frame-to-GMD correspondence map via timestamp matching."
     )
     parser.add_argument("--h5-dir", default=DEFAULT_H5_DIR,
-                        help="Directory containing RAW-*.h5 files.")
+                        help="Directory containing the HDF5 files.")
+    parser.add_argument("--h5-pattern", default=DEFAULT_H5_PATTERN,
+                        help="Filename-only glob inside --h5-dir (default: RAW-*.h5). "
+                             "Use *RAW-*.h5 for files with a prefix before RAW-.")
     parser.add_argument("--gmd-path", default=DEFAULT_GMD_PATH,
                         help="GMD timestamp file (current-time-both.txt).")
     parser.add_argument("--output-path", default=DEFAULT_OUTPUT_PATH,
@@ -42,7 +47,11 @@ def parse_args():
     return args
 
 
-def main(h5_dir, gmd_path, output_path, n_files):
+def main(h5_dir, gmd_path, output_path, n_files, h5_pattern=DEFAULT_H5_PATTERN):
+    pattern = h5_pattern or DEFAULT_H5_PATTERN
+    if (pattern in (".", "..") or "/" in pattern or "\\" in pattern
+            or ntpath.splitdrive(pattern)[0]):
+        raise SystemExit(f"Invalid HDF5 pattern {pattern!r}. Use a filename pattern such as '*RAW-*.h5'.")
     t0 = time.time()
 
     # --- Load GMD data ---
@@ -55,10 +64,12 @@ def main(h5_dir, gmd_path, output_path, n_files):
     print(f"  Time range: {gmd_timestamps[0]:.4f} -> {gmd_timestamps[-1]:.4f}")
 
     # --- Scan H5 files ---
-    files = sorted(glob.glob(os.path.join(h5_dir, "RAW-*.h5")))
+    files = sorted(glob.glob(os.path.join(glob.escape(h5_dir), pattern)))
     if n_files > 0:
         files = files[:n_files]
-    print(f"\nScanning {len(files)} H5 files...")
+    print(f"\nScanning {len(files)} HDF5 files matching {pattern!r}...")
+    if not files:
+        raise SystemExit(f"No HDF5 files matching {pattern!r} in {h5_dir}")
 
     # Collect (global_frame_idx, h5_basename, frame_in_file, frame_timestamp)
     frame_list = []  # list of [global_idx, h5_name, in_file_idx, timestamp]
@@ -75,6 +86,8 @@ def main(h5_dir, gmd_path, output_path, n_files):
 
     n_frames = len(frame_list)
     print(f"  {n_frames} frames total")
+    if n_frames == 0:
+        raise SystemExit("No frames found in the matched HDF5 files")
 
     # --- Match each frame to nearest GMD ---
     print("\nMatching frames to GMD entries...")
@@ -145,4 +158,5 @@ def main(h5_dir, gmd_path, output_path, n_files):
 
 if __name__ == "__main__":
     args = parse_args()
-    main(args.h5_dir, args.gmd_path, args.output_path, args.n_files)
+    main(args.h5_dir, args.gmd_path, args.output_path, args.n_files,
+         args.h5_pattern)

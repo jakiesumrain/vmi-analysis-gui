@@ -76,8 +76,7 @@ def build(jobs: JobManager) -> None:
             'header-class="vmi-section-toggle text-primary" expand-icon-class="text-primary"'
         ):
             ui.label("Diagnostic distributions from the GMD map above. The GMD "
-                     "floor and weight min/max are not applied here; set the "
-                     "min, max and bin size for each histogram.") \
+                     "floor and weight min/max are omitted. Leave bin settings blank for automatic values.") \
                 .classes("vmi-subtitle")
 
             ui.label("GMD values histogram").classes("vmi-caption")
@@ -116,7 +115,7 @@ def build(jobs: JobManager) -> None:
             area.visible = False
 
         def histogram_limits(low, high, width):
-            """Blank fields are passed as None so NumPy chooses them."""
+            """Blank fields use automatic settings."""
             return dict(
                 x_min=None if low.value is None else float(low.value),
                 x_max=None if high.value is None else float(high.value),
@@ -143,11 +142,28 @@ def build(jobs: JobManager) -> None:
                                                 weight_hist_max, weight_hist_width))
                 column = int(gmd_col.value or 4)
                 mode = weight_mode.value or "gmd_norm"
-                power = float(weight_power.value or 1.0)
+                power = 1.0 if weight_power.value is None else float(weight_power.value)
                 view.log.push(f"[GMD histogram] Reading {map_path}…")
-                with jobs.preview_read_access([map_path]) as stopping:
+                with jobs.preview_read_access([map_path]):
                     gmd_values, weights, mean_gmd = await asyncio.to_thread(
                         gmd_histogram_samples, map_path, column, mode, power)
+                if kind == "gmd":
+                    caption = (f"{len(gmd_values):,} mapped frames · mean GMD "
+                               f"{mean_gmd:.3e} · map column {column}")
+                    values = gmd_values
+                    title = f"GMD value distribution · column {column}"
+                    x_label = f"GMD value (map column {column})"
+                else:
+                    finite = int(np.isfinite(weights).sum())
+                    caption = (f"{len(weights):,} mapped frames · mode {mode} · "
+                               f"{len(weights) - finite:,} non-finite values omitted")
+                    values = weights
+                    title = f"GMD weight distribution · {mode}"
+                    x_label = f"GMD weight ({mode})"
+                figure = await asyncio.to_thread(
+                    frame_histogram_figure, values, title=title, x_label=x_label,
+                    y_label="Frames", count_label="frames", auto_bins=True, log_y=False,
+                    x_tickformat=".1e" if kind == "gmd" else None, **limits)
             except (OSError, ValueError, KeyError, ResourceBusyError) as exc:
                 view.log.push(f"[GMD histogram] Error: {exc}")
                 ui.notify(str(exc), type="negative")
@@ -158,24 +174,6 @@ def build(jobs: JobManager) -> None:
 
             area.clear()
             with area:
-                if kind == "gmd":
-                    caption = (f"{len(gmd_values):,} mapped frames · mean GMD "
-                               f"{mean_gmd:.3e} · map column {column}")
-                    figure = frame_histogram_figure(
-                        gmd_values, title=f"GMD value distribution · column {column}",
-                        x_label=f"GMD value (map column {column})",
-                        y_label="Frames", count_label="frames",
-                        auto_bins=True, log_y=False, x_tickformat=".1e",
-                        **limits)
-                else:
-                    finite = int(np.isfinite(weights).sum())
-                    caption = (f"{len(weights):,} mapped frames · mode {mode} · "
-                               f"{len(weights) - finite:,} non-finite values omitted")
-                    figure = frame_histogram_figure(
-                        weights, title=f"GMD weight distribution · {mode}",
-                        x_label=f"GMD weight ({mode})",
-                        y_label="Frames", count_label="frames",
-                        auto_bins=True, log_y=False, **limits)
                 with ui.row().classes("w-full items-center justify-between"):
                     ui.label(caption).classes("vmi-caption")
                     ui.button("Hide", icon="visibility_off",
