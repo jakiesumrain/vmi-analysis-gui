@@ -8,30 +8,30 @@ from nicegui import ui
 
 from ..jobs import Job, JobManager
 from .. import theme
-from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     open_folder_button, path_input, persist, render_image,
-                     zoomable_image, confirm_clear_outputs)
+from .common import (GENERATED, JobView, REPO_ROOT, action_bar, field_grid,
+                     file_url, num_input, open_folder_button, path_input,
+                     persist, render_image, zoomable_image,
+                     confirm_clear_outputs)
 
 
 
 def build(jobs: JobManager) -> None:
-    theme.section_title(
-        "Dark Frame",
-        "Build a mean or median dark frame for background subtraction.")
-
     view = JobView(jobs, job_name='Dark frame', results_builder=_results)
+    theme.panel_header(
+        "Dark Frame",
+        "Build a mean or median dark frame for background subtraction.",
+        view=view)
 
     with theme.panel_card():
         dark_dir = persist(path_input(
             "Dark HDF5 directory", "", browse="dir",
             placeholder="folder containing dark RAW-*.h5 files"),
             "dark.dark_dir")
-        with ui.row().classes("gap-4 flex-wrap"):
+        with field_grid():
             pattern = persist(ui.input("HDF5 pattern", value="RAW-*.h5")
                               .props("outlined dense"), "dark.pattern")
             dataset = persist(ui.input("Frame dataset", value="raw/data")
                               .props("outlined dense"), "dark.dataset")
-        with ui.row().classes("gap-4 flex-wrap"):
             method = persist(ui.select(["median", "mean"], value="median",
                                        label="Method")
                              .props("outlined dense"), "dark.method")
@@ -57,11 +57,10 @@ def build(jobs: JobManager) -> None:
                                   extra={"dark_npy": npy, "info": info}))
             view.attach(job)
 
-        with ui.row().classes("gap-2"):
-            view.run_button(on_click=run)
+        with action_bar(view, on_click=run):
             ui.button("Clear output", icon="delete",
                       on_click=lambda: _clear_output(out_dir, method, view)) \
-                .props("flat color=negative")
+                .props("flat color=negative").classes("vmi-action-danger")
 
     view.place_console()
 
@@ -78,7 +77,7 @@ def _clear_output(out_dir, method, view) -> None:
         if (job.name == "Dark frame" and job.extra.get("dark_npy")
                 and (Path(job.cwd or REPO_ROOT) / job.extra["dark_npy"]).resolve() == targets[0].resolve()):
             targets.append(GENERATED / f"dark_frame_{job.id}.png")
-    confirm_clear_outputs(targets, "Delete dark frame outputs?", on_cleared=view.results.clear)
+    confirm_clear_outputs(targets, "Delete dark frame outputs?", on_cleared=view.clear_results)
 
 
 def _results(job: Job):

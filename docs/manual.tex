@@ -286,21 +286,23 @@ selected, the job checks for the declared output files before each stage.
 \section{The shared interface}
 \label{sec:shared}
 
-All panels follow the same pattern: a section heading with a one-line
-description, a cream feature card holding the parameter form, one
-Run/Stop control, a dark log console, and a results area below it. This
-section describes the parts that behave identically everywhere; the
-panel-specific fields are in Section~\ref{sec:panels}.
+Each panel has a heading, a short task description, and a card with its
+parameters and actions. Job panels show status beside the heading and have
+one Run/Stop control. See Section~\ref{sec:panels} for the panel-specific fields.
 
 \subsection{Window layout and tabs}
 \label{sec:tabs}
 
-Open \emph{Settings} to set the job limit or control shutdown after a
-disconnect. Use the same menu to save and load workflow files.
-The tab bar shows \emph{GMD Map}, \emph{Movie}, \emph{Dark Frame},
-\emph{Accumulate}, and \emph{Centroiding}. Open \emph{More...} to access
-\emph{Binning}, \emph{Trig Calibration}, \emph{Circularize}, \emph{PES},
-and \emph{Pipeline}.
+Use the left sidebar to select a panel. On narrow windows, scroll the tool
+bar above the panel. \emph{Acquire} groups \emph{GMD Map}, \emph{Movie},
+\emph{Dark Frame}, and \emph{Accumulate}. \emph{Analyze} groups
+\emph{Centroiding}, \emph{Binning}, \emph{Trig Calibration},
+\emph{Circularize}, and \emph{PES}. \emph{Automate} contains \emph{Pipeline}.
+
+The footer shows running and queued jobs, the job limit, and the server's
+disconnect mode. Open \emph{Settings} to change the limit or disconnect mode,
+save or load workflow files, or stop the server. Author details are under
+\emph{Settings} $\rightarrow$ \emph{About}.
 
 Every panel is built when the page loads and keeps its own run state,
 progress, log, and results. Switching tabs does not stop or restart work.
@@ -355,11 +357,11 @@ writing the same directory.
 \subsection{The log console and progress}
 \label{sec:log}
 
-Every panel has a dark console under the form. It shows the exact command
-that was launched, prefixed with \code{[gui] \$}, followed by the merged
-standard output and standard error of the program. Output is decoded as
-UTF-8 and streamed while the job runs; the console keeps the most recent
-2000 lines, and the panel refreshes it about every 0.7 seconds.
+Select \emph{Console} below the form to expand or collapse the log and results.
+In job panels, it opens automatically once per job. You can collapse it
+while the job runs. The log shows the command prefixed with \code{[gui] \$}
+and streams the program's standard output and errors as UTF-8. The panel
+refreshes the log about every 0.7 seconds and keeps the most recent 2000 lines.
 
 Lines in the standard tqdm form \code{NN\% |\ldots} drive the progress
 bar. Some stages (for example Circularize and PES) do not print that form,
@@ -382,7 +384,8 @@ When a job fails, read the console for error details. Results can include
   \item the exact output paths and a summary of what was written.
 \end{itemize}
 
-\emph{View saved result(s)} reopens existing results on panels that offer it.
+\emph{View saved result(s)} opens the console and displays existing results
+on panels that offer it.
 Use \emph{Clear output(s)} to delete the listed files after confirmation.
 Trig Calibration has separate clear buttons for the calibration and session
 files. Pipeline clears files written during the last selected run in this
@@ -392,9 +395,9 @@ prevent deletion while they run or wait in the queue.
 \subsection{The local file picker}
 \label{sec:picker}
 
-Every path field has a round folder button that opens a server-side file
-picker. The application and the data are on the same machine, so nothing is
-uploaded; the dialog browses the local disks directly.
+Select the \emph{Browse} folder button in the path field to open the file
+picker. You can also focus the button with Tab and press Enter or Space.
+The dialog browses the disks on the server.
 
 The dialog title matches the field: \emph{Select file}, \emph{Select
 folder}, or \emph{Save as}. It has an up-arrow button, the current path, and

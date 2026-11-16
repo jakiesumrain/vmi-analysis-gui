@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -82,36 +83,36 @@ _ZOOM_READY = False
 
 _OVERLAY_HTML = """
 <div id="vmi-zoom-overlay" style="display:none; position:fixed; inset:0;
-     z-index:9999; background:rgba(20,19,18,0.93); cursor:grab;
+     z-index:9999; background:rgba(248,250,252,0.97); cursor:grab;
      overflow:hidden; touch-action:none;">
   <img id="vmi-zoom-img" src="" alt="" style="position:absolute; left:50%;
        top:50%; max-width:none; user-select:none; -webkit-user-drag:none;"/>
   <div id="vmi-zoom-selection" style="display:none; position:absolute; pointer-events:none;
-       border:2px solid #cc785c; background:rgba(204,120,92,0.16); box-sizing:border-box;"></div>
+       border:2px solid #1e40af; background:rgba(30,64,175,0.10); box-sizing:border-box;"></div>
   <div id="vmi-zoom-toolbar" role="toolbar" aria-label="Image inspection"
        style="position:absolute; top:14px; right:16px; display:flex; gap:8px; flex-wrap:wrap; max-width:95%;
-       font-family:monospace;">
+       font-family:'Fira Code', ui-monospace, monospace;">
     <button id="vmi-zoom-pan" onclick="vmiZoomPan()" aria-pressed="true"
-      style="background:#cc785c; color:#141413; border:none; border-radius:6px;
-      padding:0 10px; height:30px; cursor:pointer;">Pan</button>
+      style="background:#1e40af; color:#ffffff; border:1px solid #1e40af; border-radius:6px;
+      padding:0 10px; height:30px; cursor:pointer; transition:background-color .16s ease, color .16s ease;">Pan</button>
     <button id="vmi-zoom-select" onclick="vmiZoomSelect()" aria-pressed="false"
-      style="background:#efe9de; color:#141413; border:none; border-radius:6px;
-      padding:0 10px; height:30px; cursor:pointer;">Crop area</button>
-    <button onclick="vmiZoomAt(null,1.25)" style="background:#cc785c;
-      color:#faf9f5; border:none; border-radius:6px; width:34px; height:30px;
+      style="background:#ffffff; color:#1e40af; border:1px solid #bfdbfe; border-radius:6px;
+      padding:0 10px; height:30px; cursor:pointer; transition:background-color .16s ease, color .16s ease;">Crop area</button>
+    <button onclick="vmiZoomAt(null,1.25)" style="background:#ffffff;
+      color:#1e40af; border:1px solid #bfdbfe; border-radius:6px; width:34px; height:30px;
       font-size:18px; cursor:pointer;">+</button>
-    <button onclick="vmiZoomAt(null,0.8)" style="background:#cc785c;
-      color:#faf9f5; border:none; border-radius:6px; width:34px; height:30px;
+    <button onclick="vmiZoomAt(null,0.8)" style="background:#ffffff;
+      color:#1e40af; border:1px solid #bfdbfe; border-radius:6px; width:34px; height:30px;
       font-size:18px; cursor:pointer;">&minus;</button>
-    <button onclick="vmiZoomReset()" style="background:#efe9de; color:#141413;
-      border:none; border-radius:6px; padding:0 10px; height:30px;
+    <button onclick="vmiZoomReset()" style="background:#ffffff; color:#1e40af;
+      border:1px solid #bfdbfe; border-radius:6px; padding:0 10px; height:30px;
       font-size:12px; cursor:pointer;">reset</button>
-    <button onclick="vmiZoomClose()" style="background:#efe9de; color:#141413;
-      border:none; border-radius:6px; width:34px; height:30px;
+    <button onclick="vmiZoomClose()" style="background:#ffffff; color:#1e40af;
+      border:1px solid #bfdbfe; border-radius:6px; width:34px; height:30px;
       font-size:14px; cursor:pointer;">&#10005;</button>
   </div>
   <div id="vmi-zoom-hint" style="position:absolute; bottom:14px; left:16px;
-       color:#efe9de; font:12px sans-serif; pointer-events:none;">
+       color:#475569; font:12px 'Fira Sans', sans-serif; pointer-events:none;">
     Drag to pan · Mouse wheel to zoom · Crop area to inspect only a region
   </div>
 </div>
@@ -175,23 +176,23 @@ def render_npy(npy_path, out_path: Path, **kw) -> Path:
 def path_input(label: str, value: str = "", browse: str | None = None,
                filters: list[str] | None = None, default_name: str = "",
                **kw) -> ui.input:
-    """Path text field; browse adds a folder button opening LocalFilePicker.
+    """Path text field; browse adds an in-field icon opening LocalFilePicker.
 
     browse: None | "dir" | "file" | "save".
     """
-    with ui.row().classes("w-full items-center no-wrap gap-1"):
-        inp = ui.input(label, value=value, **kw).classes("grow") \
-            .props("outlined dense")
-        if browse:
-            async def pick():
-                from .picker import LocalFilePicker
-                result = await LocalFilePicker(start=inp.value, mode=browse,
-                                               filters=filters,
-                                               default_name=default_name)
-                if result:
-                    inp.value = result
-            ui.button(icon="folder_open", on_click=pick) \
-                .props("flat dense round color=primary")
+    inp = ui.input(label, value=value, **kw).classes("w-full") \
+        .props("outlined dense")
+    if browse:
+        async def pick():
+            from .picker import LocalFilePicker
+            result = await LocalFilePicker(start=inp.value, mode=browse,
+                                           filters=filters,
+                                           default_name=default_name)
+            if result:
+                inp.value = result
+        with inp.add_slot("append"):
+            ui.button(icon="folder_open", on_click=pick).classes("vmi-browse-icon") \
+                .props('flat dense round aria-label="Browse"')
     return inp
 
 
@@ -282,6 +283,23 @@ def text_area(label: str, value: str = "") -> ui.input:
     return ui.input(label, value=value).classes("w-full").props("outlined dense")
 
 
+def field_grid(columns: int = 2) -> ui.grid:
+    """Form grid giving related inputs even columns and gutters."""
+    return ui.grid(columns=columns).classes("w-full gap-x-4 vmi-field-grid")
+
+
+def check_grid() -> ui.row:
+    """Wrapping row for checkbox/toggle groups with even column gaps."""
+    return ui.row().classes("vmi-check-grid w-full")
+
+
+@contextmanager
+def action_bar(view: "JobView", label: str = "Run", *, on_click):
+    """Run/Stop button row; add secondary buttons inside the with block."""
+    with ui.row().classes("vmi-action-bar w-full items-center gap-2"):
+        yield view.run_button(label, on_click=on_click)
+
+
 # --------------------------------------------------------------------------
 # JobView: status badge + progress + cancel + log console + results
 # --------------------------------------------------------------------------
@@ -305,19 +323,32 @@ class JobView:
         self._results_shown = False
         self._results_builder = results_builder
         self._live_builder = live_builder
-
-        with ui.row().classes("items-center gap-3 w-full"):
-            self.badge = theme.status_badge("idle")
-            self.spinner = ui.spinner("dots", size="md", color="primary")
-            self.spinner.visible = False
-            self.progress = ui.linear_progress(value=0, show_value=False) \
-                .classes("grow").props("color=primary track-color=grey-4")
-            self.progress.visible = False
+        # Status controls are created inline in the panel header by
+        # place_status() (theme.panel_header passes the view there).
+        self.badge = None
+        self.spinner = None
+        self.progress = None
+        self.wait_label = None
         self.log = None
-        self.wait_label = ui.label("").classes("vmi-subtitle")
-        self.wait_label.visible = False
+        self.console_hint = None
         self.results = None
+        self._chevron = None
+        self._console_head = None
+        self._console_open = False
+        self._console_opened_for_job = False
+        self._results_placeholder = None
         self._interval = interval
+
+    def place_status(self) -> None:
+        """Inline status cluster for the panel header (theme.panel_header)."""
+        self.badge = theme.status_badge("idle")
+        self.spinner = ui.spinner("dots", size="sm", color="primary")
+        self.spinner.visible = False
+        self.progress = ui.linear_progress(value=0, show_value=False) \
+            .classes("grow").props("color=primary track-color=grey-9")
+        self.progress.visible = False
+        self.wait_label = ui.label("").classes("vmi-caption")
+        self.wait_label.visible = False
 
     def run_button(self, label="Run", *, on_click):
         """One button: Run when idle, Stop/Cancel queued while work is active."""
@@ -348,18 +379,84 @@ class JobView:
         self.action_button.set_enabled(not stopping)
 
     def place_console(self) -> None:
-        """Create the log console and results area; call at panel bottom."""
-        self.log = theme.log_console()
-        self.results = ui.column().classes("w-full gap-4")
+        """Create the collapsible log console and results area; call at panel bottom."""
+        with ui.column().classes("vmi-console w-full gap-2"):
+            head = ui.row().classes(
+                "vmi-console-head w-full items-center gap-2 no-wrap")
+            head.props('role="button" tabindex="0" aria-expanded="false"')
+            self._console_head = head
+            with head:
+                self._chevron = ui.icon("chevron_right") \
+                    .classes("vmi-console-chevron")
+                ui.label("Console").classes("vmi-console-title")
+                self.console_hint = ui.label("Output appears here after a run.") \
+                    .classes("vmi-caption vmi-console-hint")
+            head.on("click", self.toggle_console)
+            head.on("keydown", self._on_console_key)
+            self.log = theme.log_console()
+            self.results = ui.column().classes("w-full gap-4 vmi-results")
+        self._reset_results()
+        self._sync_console()
         ui.timer(self._interval, self.refresh)
         self.refresh()
+
+    def toggle_console(self) -> None:
+        self._console_open = not self._console_open
+        self._sync_console()
+
+    def open_console(self) -> None:
+        if not self._console_open:
+            self._console_open = True
+            self._sync_console()
+
+    def _on_console_key(self, e) -> None:
+        key = e.args.get("key") if isinstance(e.args, dict) else None
+        if key in ("Enter", " ", "Spacebar"):
+            self.toggle_console()
+
+    def _sync_console(self) -> None:
+        if self.log is not None:
+            self.log.visible = self._console_open
+        if self.results is not None:
+            self.results.visible = self._console_open
+        if self._chevron is not None:
+            if self._console_open:
+                self._chevron.classes(add="vmi-console-open")
+            else:
+                self._chevron.classes(remove="vmi-console-open")
+        if self._console_head is not None:
+            expanded = "true" if self._console_open else "false"
+            self._console_head.props(f'aria-expanded="{expanded}"')
+
+    def _reset_results(self) -> None:
+        """Clear result content and show the empty-state placeholder."""
+        if self.results is None:
+            return
+        self.results.clear()
+        with self.results:
+            self._results_placeholder = ui.row().classes(
+                "vmi-results-empty w-full items-center justify-center gap-2")
+            with self._results_placeholder:
+                ui.icon("insights")
+                ui.label("No results yet — run this stage or open saved results.") \
+                    .classes("vmi-caption")
+
+    def clear_results(self) -> None:
+        """Public clear (e.g. after deleting outputs); restores the placeholder.
+
+        Leaves _results_shown untouched so the next refresh does not rebuild
+        results for a finished job whose outputs were just deleted.
+        """
+        self._reset_results()
 
     def attach(self, job: Job) -> None:
         self.job = job
         self._log_cursor = 0
         self._results_shown = False
-        self.log.clear()
-        self.results.clear()
+        self._console_opened_for_job = False
+        if self.log is not None:
+            self.log.clear()
+        self._reset_results()
         self.refresh()
 
     def cancel(self) -> None:
@@ -377,25 +474,44 @@ class JobView:
                 return
         j = self.job
         self._sync_button()
-        self.wait_label.visible = j is not None and j.status == "queued"
-        self.wait_label.text = j.wait_reason if j is not None else ""
+        if self.wait_label is not None:
+            self.wait_label.visible = j is not None and j.status == "queued"
+            self.wait_label.text = j.wait_reason if j is not None else ""
         if j is None:
-            theme.set_badge(self.badge, "idle")
+            if self.badge is not None:
+                theme.set_badge(self.badge, "idle")
+            if self.console_hint is not None:
+                self.console_hint.text = "Output appears here after a run."
             return
-        theme.set_badge(self.badge, j.status)
+        if self.badge is not None:
+            theme.set_badge(self.badge, j.status)
+        if self.console_hint is not None:
+            self.console_hint.text = {
+                "running": "Streaming output…",
+                "queued": "Queued — waiting for a slot",
+                "done": "Finished — results below",
+                "failed": "Failed — see log for details",
+                "cancelled": "Cancelled",
+            }.get(j.status, "Output appears here after a run.")
         running = j.status == "running"
-        self.spinner.visible = running
-        self.progress.visible = running
-        if running and j.progress is not None:
-            self.progress.value = j.progress
+        if not self._console_opened_for_job and (running or j.status in ("done", "failed", "cancelled")):
+            self._console_opened_for_job = True
+            self.open_console()
+        if self.spinner is not None:
+            self.spinner.visible = running
+        if self.progress is not None:
+            self.progress.visible = running
+            if running and j.progress is not None:
+                self.progress.value = j.progress
         # stream new log lines
-        n = len(j.log)
-        if self._log_cursor > n:  # ring buffer wrapped; rebuild
-            self.log.clear()
-            self._log_cursor = 0
-        while self._log_cursor < n:
-            self.log.push(j.log[self._log_cursor])
-            self._log_cursor += 1
+        if self.log is not None:
+            n = len(j.log)
+            if self._log_cursor > n:  # ring buffer wrapped; rebuild
+                self.log.clear()
+                self._log_cursor = 0
+            while self._log_cursor < n:
+                self.log.push(j.log[self._log_cursor])
+                self._log_cursor += 1
         if running and self._live_builder is not None:
             try:
                 self._live_builder(j)
@@ -403,6 +519,8 @@ class JobView:
                 pass
         if j.status in ("done", "failed", "cancelled") and not self._results_shown:
             self._results_shown = True
+            if self._results_placeholder is not None:
+                self._results_placeholder.visible = False
             if self._results_builder is not None:
                 try:
                     with self.results:

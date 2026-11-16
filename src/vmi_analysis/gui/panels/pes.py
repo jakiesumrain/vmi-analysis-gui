@@ -11,8 +11,9 @@ from .. import theme
 from ..settings import centroid_settings, output_dir as centroid_output_dir
 from ..resources import canonical_path
 from .binning import BIN_LABEL_PATTERN
-from .common import (JobView, REPO_ROOT, file_url, open_folder_button,
-                     path_input, persist, zoomable_image, confirm_clear_outputs)
+from .common import (JobView, REPO_ROOT, action_bar, field_grid, file_url,
+                     open_folder_button, path_input, persist, zoomable_image,
+                     confirm_clear_outputs)
 
 CIRC_DIR = REPO_ROOT / "circularization"
 CENTROID_DIR = REPO_ROOT / "centroiding"
@@ -55,18 +56,18 @@ def _default_bin_dir() -> str:
 
 
 def build(jobs: JobManager) -> None:
-    theme.section_title(
+    view = JobView(jobs, job_name='PES', results_builder=_results)
+    theme.panel_header(
         "PES / Abel Inversion",
         "Apply Abel inversion to GMD-binned images to extract energy spectra and anisotropy parameters. "
-        "This panel is immature and needs restructuring.")
+        "This panel is immature and needs restructuring.",
+        view=view)
 
     missing = [f for f in CALIBRATION_FILES if not (CIRC_DIR / f).exists()]
     if missing:
         ui.label("⚠ Calibration files missing in circularization/: "
                  + ", ".join(missing)
                  + " — supply them before running.").classes("text-negative")
-
-    view = JobView(jobs, job_name='PES', results_builder=_results)
 
     with theme.panel_card():
         weight_suffix = persist(ui.input(
@@ -79,7 +80,7 @@ def build(jobs: JobManager) -> None:
         output_dir = persist(path_input(
             "Output directory (empty = automatic from suffix/backend)", "",
             browse="dir"), "pes.output_dir")
-        with ui.row().classes("gap-4 flex-wrap"):
+        with field_grid(3):
             backend = persist(ui.select(
                 ["pyabel", "matlab"], value="pyabel",
                 label="Inversion backend").props("outlined dense"),
@@ -122,12 +123,12 @@ def build(jobs: JobManager) -> None:
             return (canonical_path(output_dir.value, CIRC_DIR) if output_dir.value
                     else default_output_dir(weight_suffix.value or "", backend.value, method.value))
 
-        with ui.row().classes("gap-2"):
-            view.run_button(on_click=run)
+        with action_bar(view, on_click=run):
             ui.button("Clear outputs", icon="delete", on_click=lambda: confirm_clear_outputs(
                 _output_files(result_directory(), weight_suffix.value or "", canonical_path(bin_dir.value, CIRC_DIR)),
                 "Delete PES outputs?",
-                on_cleared=view.results.clear)).props("flat color=negative")
+                on_cleared=view.clear_results)) \
+                .props("flat color=negative").classes("vmi-action-danger")
 
     view.place_console()
 

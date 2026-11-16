@@ -47,7 +47,8 @@ and [GUI design](docs/DESIGN.md) for implementation context.
 ## Git workflow
 
 Branch from `main` using `feature/<name>` or `fix/<name>`. The owner has
-authorized agents to commit, push the branch, open a PR, squash-merge after
-local checks, and fast-forward local `main`. All changes reach `main` through
-PRs. Run CI only when requested. Preserve unrelated edits and dataset settings.
+authorized agents to commit, push the branch, and open a PR. Do not merge the
+PR or fast-forward local `main`; after opening a PR, wait for the owner to
+review and merge. All changes reach `main` through PRs. Run CI only when
+requested. Preserve unrelated edits and dataset settings.
 If direct GitHub access fails, use `HTTPS_PROXY=http://127.0.0.1:7890`.

@@ -12,9 +12,9 @@ from nicegui import app, ui
 from ..jobs import Job, JobManager, MANAGER, TERMINAL
 from ..resources import canonical_path
 from .. import theme
-from .common import (GENERATED, JobView, REPO_ROOT, file_url, num_input,
-                     open_folder_button, path_input, persist,
-                     zoomable_image, delete_outputs)
+from .common import (GENERATED, JobView, REPO_ROOT, action_bar, check_grid,
+                     field_grid, file_url, num_input, open_folder_button,
+                     path_input, persist, zoomable_image, delete_outputs)
 
 # Fetch the newest frame without storing image payloads in the UI event history.
 _PLAYER_JS = """
@@ -127,11 +127,11 @@ def _consume_preview_frame(job: Job, line: str) -> bool:
 
 
 def build(jobs: JobManager) -> None:
-    theme.section_title(
-        "Frame Movie",
-        "Preview camera frames in order or save them as a movie.")
-
     view = JobView(jobs, job_name='Frame movie', results_builder=_results)
+    theme.panel_header(
+        "Frame Movie",
+        "Preview camera frames in order or save them as a movie.",
+        view=view)
     ui.add_body_html(_PLAYER_JS, shared=True)
 
     with theme.panel_card():
@@ -143,28 +143,32 @@ def build(jobs: JobManager) -> None:
         dark_path = persist(path_input("Dark frame .npy (optional)", "",
                                        browse="file", filters=[".npy"]),
                             "movie.dark_path")
-        with ui.row().classes("gap-4 flex-wrap"):
+        theme.form_section("Playback")
+        with field_grid(3):
             n_frames = persist(num_input("Frames", 20, step=1),
                                "movie.n_frames")
             interval_ms = persist(num_input("Interval (ms)", 500, step=50),
                                   "movie.interval_ms")
             scale_frames = persist(num_input("Scale frames", 10, step=1),
                                    "movie.scale_frames")
-        with ui.row().classes("gap-4 flex-wrap"):
+        with field_grid(3):
             cmap = persist(ui.input("Colormap", value="gray")
                            .props("outlined dense"), "movie.cmap")
-            log_scale = persist(ui.checkbox("Log scale", value=False),
-                                "movie.log_scale")
             vmin_frac = persist(num_input("vmin fraction", 0.5, step=0.1),
                                 "movie.vmin_frac")
             vmax_pct = persist(num_input("vmax percentile", 99.9, step=0.1),
                                "movie.vmax_pct")
-        with ui.row().classes("gap-4 flex-wrap items-center"):
+        with check_grid():
+            log_scale = persist(ui.checkbox("Log scale", value=False),
+                                "movie.log_scale")
+        theme.form_section("Save movie")
+        with check_grid():
             save_movie = persist(ui.checkbox("Save movie file", value=True),
                                  "movie.save_movie")
-            movie_dir = persist(path_input("Movie output folder",
-                                           str(REPO_ROOT / "movies"),
-                                           browse="dir"), "movie.movie_dir")
+        movie_dir = persist(path_input("Movie output folder",
+                                       str(REPO_ROOT / "movies"),
+                                       browse="dir"), "movie.movie_dir")
+        with field_grid():
             movie_ext = persist(ui.select([".mp4", ".gif"], value=".mp4",
                                           label="Format")
                                 .props("outlined dense"), "movie.movie_ext")
@@ -220,11 +224,10 @@ def build(jobs: JobManager) -> None:
                     f"vmiMovieStart({json.dumps(f'movie-preview/{job.id}')})")
             view.attach(job)
 
-        with ui.row().classes("gap-2"):
-            view.run_button(on_click=run)
+        with action_bar(view, on_click=run):
             ui.button("Clear outputs", icon="delete",
                       on_click=lambda: _clear_outputs(movie_dir, h5_dir, view, clear_preview)) \
-                .props("flat color=negative")
+                .props("flat color=negative").classes("vmi-action-danger")
         ui.label("Turn off Save movie file to preview frames without saving files.").classes("vmi-subtitle")
 
         live_label = ui.label("Live playback").classes("vmi-caption")
@@ -341,7 +344,7 @@ def _clear_outputs(movie_dir, h5_dir, view: JobView, clear_preview) -> None:
             ui.notify("Could not delete: " + "; ".join(failed),
                       type="negative")
         else:
-            view.results.clear()
+            view.clear_results()
             clear_preview()
             ui.notify("Saved movie outputs cleared.", type="positive")
 
