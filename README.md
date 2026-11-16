@@ -4,7 +4,7 @@ Analyze velocity-map imaging data from HDF5 camera frames. Use the panels
 to locate electron spots, fit ring distortions, correct images, and calculate
 energy spectra.
 
-**Panel status.** Binning, PES, and Pipeline are immature and need restructuring.
+**Panel status.** Binning and Pipeline are immature and need restructuring.
 
 ## Get started
 

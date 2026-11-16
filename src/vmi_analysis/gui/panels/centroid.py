@@ -14,10 +14,10 @@ from vmi_analysis.centroiding.plot_data import (ABEL_IMAGE, RAW_IMAGE, SPECTRUM_
 from ..jobs import Job, JobManager
 from .. import theme
 from ..centroid_plots import (COLORMAPS, PLOT_HEIGHT, RESULT_COLORMAP_DEFAULTS,
-                              tuning_figure, summary_figure, plot_options)
+                              linear_axis_limits, tuning_figure, summary_figure, plot_options)
 from ..settings import centroid_settings, storage_key, output_dir as _output_dir
 from .common import (JobView, REPO_ROOT, action_bar, field_grid, file_url,
-                     open_folder_button, path_input, persist, zoomable_image,
+                     num_input, open_folder_button, path_input, persist, zoomable_image,
                      delete_outputs)
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
@@ -63,10 +63,6 @@ FIELDS = [
     ("energy_calibration", "fit_xe_4d", "bool", "Fit Xe 4d doublet → hν and α in console"),
     ("energy_calibration", "fit_min_px2", "float", "Xe fit min (pixel²; empty = auto)"),
     ("energy_calibration", "fit_max_px2", "float", "Xe fit max (pixel²; empty = auto)"),
-    ("spectrum_plot", "x_min", "float", "Spectrum x min (-1 = auto)"),
-    ("spectrum_plot", "x_max", "float", "Spectrum x max (-1 = auto)"),
-    ("spectrum_plot", "y_min", "float", "Spectrum y min (-1 = auto)"),
-    ("spectrum_plot", "y_max", "float", "Spectrum y max (-1 = auto)"),
     ("gmd", "enable_gmd_weighting", "bool", "GMD weighting"),
     ("gmd", "gmd_weight_min", "float", "GMD weight min"),
     ("gmd", "gmd_weight_max", "float", "GMD weight max"),
@@ -117,14 +113,13 @@ def build(jobs: JobManager) -> None:
             render_fields("vmi_picasso", advanced=True)
         render_fields("processing", "Processing")
         render_fields("histogram", "Histogram")
-        with ui.expansion("Energy Calibration and Spectrum Plot", icon="show_chart") \
+        with ui.expansion("Energy Calibration", icon="show_chart") \
                 .classes("w-full").props(section_toggle_props):
             ui.label("E = α × r². Intensity is unchanged. Leave α empty for pixel². Xe fitting reports "
                      "a suggested α without changing your input. Fit limits "
-                     "always use pixel². Spectrum axis limits use the displayed units.") \
+                     "always use pixel².") \
                 .classes("vmi-subtitle")
             render_fields("energy_calibration", "Energy calibration / Xe 4d fit")
-            render_fields("spectrum_plot", "Summary spectrum plot axes")
         render_fields("gmd", "GMD normalization")
 
         def run():
@@ -188,9 +183,8 @@ def _save(widgets) -> bool:
         elif kind in ("int", "float"):
             if key == "frame_limit":
                 sec[key] = v or 0
-            elif (v is None or v == "") and section in ("spectrum_plot", "energy_calibration"):
-                # Empty optional values are omitted so the script uses defaults.
-                sec[key] = None if section == "energy_calibration" else -1.0
+            elif (v is None or v == "") and section == "energy_calibration":
+                sec[key] = None
             elif (v is None or v == "") and key in ("tuning_frame_index", "mask_center_x",
                                                    "mask_center_y", "mask_radius"):
                 sec[key] = None
@@ -298,6 +292,44 @@ def _interactive_plot(figure, *, tuning=False):
                              key)
             trace.colorscale = get_colorscale(colors.value)
             controls.append((index, colors))
+
+    if not tuning and any(trace.xaxis == "x3" for trace in figure.data):
+        axes = _section(centroid_settings(), "spectrum_plot")
+        with ui.expansion("Summary spectrum plot axes", icon="show_chart").classes("w-full"):
+            with field_grid():
+                limits = {
+                    (axis, bound): persist(
+                        num_input(f"Spectrum {axis} {bound} (-1 = auto)", axes[f"{axis}_{bound}"], step="any"),
+                        storage_key("spectrum_plot", f"{axis}_{bound}"),
+                    )
+                    for axis in ("x", "y") for bound in ("min", "max")
+                }
+            ui.button("Apply spectrum axes", on_click=lambda: apply_limits()).props("flat")
+
+        def axis_layout():
+            return {
+                f"{axis}axis3": linear_axis_limits(*(
+                    None if limits[axis, bound].value == -1 else limits[axis, bound].value
+                    for bound in ("min", "max")
+                ))
+                for axis in ("x", "y")
+            }
+
+        def apply_limits():
+            try:
+                settings = axis_layout()
+            except ValueError as exc:
+                ui.notify(str(exc), type="warning")
+                return
+            plot.run_plot_method("relayout", {f"{axis}.{key}": value
+                                            for axis, options in settings.items() for key, value in options.items()})
+
+        try:
+            for axis, options in axis_layout().items():
+                figure.layout[axis].update(options)
+        except ValueError as exc:
+            ui.notify(str(exc), type="warning")
+
     plot = ui.plotly(plot_options(figure)).classes("w-full").style(f"height: {PLOT_HEIGHT}px")
 
     def recolor(index, event):

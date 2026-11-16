@@ -21,6 +21,7 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
             "calibration.abel": False,
             "calibration.placement": "raw",
             "centroid.raw_colormap": "Magma",
+            "centroid.spectrum_plot.x_max": 90,
             gui.KEEP_ALIVE_KEY: True,
         }
         callbacks = {}
@@ -54,6 +55,7 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(values["circularize.circularized_color_max_pct"], 99.5)
                     self.assertEqual(values["centroid.raw_colormap"], "Magma")
                     self.assertEqual(values["centroid.tuning_colormap"], "Gray")
+                    self.assertEqual(values["centroid.spectrum_plot.x_max"], 90)
                     self.assertNotIn(gui.KEEP_ALIVE_KEY, values)
 
                     store.update({"pipeline.h5_dir": "dataset-b", "calibration.abel": True,
@@ -67,6 +69,7 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
 
                     values["accumulate.max_workers"] = 6
                     values["calibration.hold_order"] = 0
+                    values["centroid.spectrum_plot.x_max"] = 120
                     values["calibration.color_min_pct"] = 10
                     del values["calibration.raw_color_min_pct"]
                     values["calibration.processed_color_min_pct"] = 25
@@ -76,6 +79,7 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(store["pipeline.h5_dir"], "dataset-a")
                     self.assertEqual(store["calibration.placement"], "raw")
                     self.assertEqual(store["calibration.hold_order"], 0)
+                    self.assertEqual(store["centroid.spectrum_plot.x_max"], 120)
                     self.assertEqual(store["calibration.raw_color_min_pct"], 10)
                     self.assertEqual(store["calibration.processed_color_min_pct"], 25)
                     self.assertFalse(store[gui.KEEP_ALIVE_KEY])

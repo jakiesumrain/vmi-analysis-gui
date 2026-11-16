@@ -191,3 +191,14 @@ def summary_figure(path):
 
 def plot_options(figure):
     return {**figure.to_plotly_json(), "config": PLOT_CONFIG.copy()}
+
+
+def linear_axis_limits(low, high):
+    if ((low is not None and not np.isfinite(low)) or (high is not None and not np.isfinite(high))
+            or (low is not None and high is not None and low >= high)):
+        raise ValueError("Axis minima must be below maxima.")
+    if low is not None and high is not None:
+        return {"range": [low, high], "autorange": False, "autorangeoptions": {}}
+    # Explicit endpoints survive updates when only the opposite end is automatic.
+    limits = {key: value for key, value in (("minallowed", low), ("maxallowed", high)) if value is not None}
+    return {"range": None, "autorange": True, "autorangeoptions": limits}

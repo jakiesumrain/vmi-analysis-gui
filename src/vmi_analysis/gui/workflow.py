@@ -12,6 +12,7 @@ from typing import Callable
 from nicegui import ui
 
 from .centroid_plots import COLORMAPS, RESULT_COLORMAP_DEFAULTS
+from .settings import storage_key
 
 SCHEMA = "vmi-workflow/1"
 Value = str | bool | int | float | None
@@ -36,9 +37,23 @@ def collect_fields(fields):
 
 
 def result_fields(store):
-    """Include colormap settings whose controls are built only with results."""
-    return {key: Field(lambda key=key, default=default: store.get(key, default), COLORMAPS.__contains__)
-            for key, default in RESULT_COLORMAP_DEFAULTS.items()}
+    """Include settings whose controls are built only with results."""
+    fields = {key: Field(lambda key=key, default=default: store.get(key, default), COLORMAPS.__contains__)
+              for key, default in RESULT_COLORMAP_DEFAULTS.items()}
+    for prefix in ("pes.", "pes.beta_"):
+        for bound in ("xmin", "xmax", "ymin", "ymax"):
+            key = prefix + bound
+            fields[key] = Field(lambda key=key: store.get(key),
+                                lambda value: value is None or _accepts_number(value))
+    for bound in ("x_min", "x_max", "y_min", "y_max"):
+        key = storage_key("spectrum_plot", bound)
+        fields[key] = Field(lambda key=key: store.get(key, -1.0),
+                            lambda value: value is None or _accepts_number(value))
+    return fields
+
+
+def _accepts_number(value):
+    return (type(value) is int and abs(value) < 2**53) or (type(value) is float and isfinite(value))
 
 
 def register_field(key, widget):
@@ -54,8 +69,7 @@ def register_field(key, widget):
     elif isinstance(widget, (ui.number, ui.slider)):
         accepts = lambda value: (
             (value is None and isinstance(widget, ui.number))
-            or (type(value) is int and abs(value) < 2**53)
-            or (type(value) is float and isfinite(value))
+            or _accepts_number(value)
         )
     else:
         accepts = lambda value: isinstance(value, str)
