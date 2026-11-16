@@ -132,7 +132,7 @@ angular anisotropy parameters ($\beta$). The repository provides:
 \end{itemize}
 
 Supply your experiment data through the interface or on the command line.
-The Binning, PES, and Pipeline panels are immature and need restructuring.
+The Binning and Pipeline panels are immature and need restructuring.
 Their sections document the current behavior.
 
 \subsection{The analysis chain}
@@ -154,15 +154,15 @@ Their sections document the current behavior.
                     localisation of electron spots, 2D VMI histogram};
   \node[box, below=of cen] (bin) {\textbf{3.\ GMD binning} — split events
                     into pulse-energy bins, one 2D histogram per bin};
-  \node[box, below=of bin] (pes) {\textbf{4.\ PES processing} — circularisation,
-                    Abel inversion, energy spectrum and $\beta$ parameters};
+  \node[box, below=of bin] (pes) {\textbf{4.\ PES} — Abel inversion,
+                    photoelectron energy spectra and peak fitting};
   \draw[arr] (raw) -- (gmd);
   \draw[arr] (gmd) -- (cen);
   \draw[arr] (cen) -- (bin);
   \draw[arr] (bin) -- (pes);
 \end{tikzpicture}
-\caption{The four-stage analysis pipeline. Stages 1--4 are available as
-individual panels and as a single Pipeline run.}
+\caption{An analysis sequence using individual panels. PES can also start
+from a single Centroiding or Circularize image.}
 \label{fig:chain}
 \end{figure}
 
@@ -255,13 +255,13 @@ The following sequence uses the current Binning and PES panels.
   \item \textbf{Binning.} Choose the checkpoint, the GMD map, the output
         directory, the threshold values, and the weighting mode. Run to
         produce one 2D histogram per GMD bin.
-  \item \textbf{PES.} Put the two circularisation calibration files in
-        \code{circularization/\allowbreak{}}, keep the PyAbel backend, and Run. The
-        results are energy spectra, anisotropy parameters, and an archive of
-        all arrays.
+  \item \textbf{PES.} Add one or more images. Set the center and rotation.
+        Enter an energy calibration if available. Click \emph{Generate
+        spectra}. Select a region of the spectrum and enter peak estimates
+        to fit the peaks (Section~\ref{sec:pes}).
 \end{enumerate}
 
-To run the same stages in one job, open \emph{Pipeline}. Set the dataset,
+To run the existing batch workflow, open \emph{Pipeline}. Set the dataset,
 GMD timestamp file, and map output. Click \emph{Run pipeline}. The job
 runs stages 1--4 in order. With \emph{Skip stages whose outputs exist}
 selected, the job checks for the declared output files before each stage.
@@ -278,9 +278,9 @@ selected, the job checks for the declared output files before each stage.
   \item Binning produced the expected number of \code{.\allowbreak{}npy} files
         (thresholds plus one) with the expected suffix for the chosen weight
         mode.
-  \item PES produced three overview figures and a \code{.\allowbreak{}npz} archive.
-        PES plots use energy channels with the current fixed alpha of 1.
-        Centroiding has its own alpha field (Section~\ref{sec:calibration}).
+  \item PES shows one trace per successful input. Check the console for
+        skipped images. Check the center, rotation, and energy calibration
+        if a reference peak appears at an unexpected position.
 \end{itemize}
 
 \section{The shared interface}
@@ -437,8 +437,7 @@ a job does not change that job or where its results appear.
 
 Saved keys follow the pattern \code{<panel>.\allowbreak{}<field>} and are listed in the
 field tables of Section~\ref{sec:panels}. Some panels derive initial values
-from another panel's saved settings (for example PES suggests the saved
-Centroiding output directory). Legacy \code{centroiding/\allowbreak{}config.\allowbreak{}toml}
+from another panel's saved settings. Legacy \code{centroiding/\allowbreak{}config.\allowbreak{}toml}
 values are migrated once, read-only, for Centroiding and Binning; no GUI job
 passes a configuration file to a script.
 
@@ -578,7 +577,7 @@ In Centroiding, select the precomputed dark array and enable dark subtraction.
 \subsection{Circularization calibration files}
 \label{sec:calibfiles}
 
-The PES stage requires two per-experiment text files in
+The batch PES stage in Pipeline requires two per-experiment text files in
 \code{circularization/\allowbreak{}}:
 
 \begin{description}
@@ -595,7 +594,7 @@ The PES stage requires two per-experiment text files in
 Trig Calibration can create the extracted fit file. Supply the radial
 reassignment map separately if your experiment requires one.
 Circularize accepts the two paths as fields and uses an identity map when
-the reassignment field is blank. PES and the PES stage in Pipeline require
+the reassignment field is blank. The PES stage in Pipeline requires
 both files under the exact names shown above.
 
 \subsection{Workspace and output folders}
@@ -612,7 +611,7 @@ following locations are conventional:
 Path & Created by & Purpose \\
 \midrule
 \emph{centroiding/\allowbreak{}} & user / GUI & Centroiding working data and default outputs \\
-\emph{circularization/\allowbreak{}} & user / GUI & Calibration files and PES results \\
+\emph{circularization/\allowbreak{}} & user / GUI & Calibration files and batch PES results \\
 \emph{.cache/\allowbreak{}vmi-\allowbreak{}analysis/\allowbreak{}} & the GUI & Disposable previews, frame dumps, screenshots \\
 \emph{.nicegui/\allowbreak{}} & the GUI & Saved form settings \\
 \emph{vendor/\allowbreak{}pbasex-\allowbreak{}matlab/\allowbreak{}} & repository & Bundled MATLAB CPBASEX code \\
@@ -1039,8 +1038,10 @@ the form.
 
 The form shows \emph{Paths and detection}, \emph{Processing},
 \emph{Histogram}, and \emph{GMD normalization}. Expand \emph{Advanced Options}
-for camera and fitting settings. Expand \emph{Energy Calibration and Spectrum Plot}
-for Xe fitting and spectrum axes. Both sections start collapsed.
+for camera and fitting settings. Expand \emph{Energy Calibration} for Xe
+fitting. In the results, expand \emph{Summary spectrum plot axes} above the
+interactive summary and click \emph{Apply spectrum axes} to change the
+spectrum bounds. The fields use the units shown on the plot.
 The saved keys below use the prefix \code{centroid.}.
 
 \subsubsection*{Paths, detection and fitting}
@@ -1522,7 +1523,7 @@ constant-angle line. The remap preserves detector intensity units without a
 $1/r$ correction.
 The fitter uses the processed polar data to estimate a Gaussian ridge whose centre varies as
 $r_g(\theta)=r_0+\sum_n[A_n\sin(n\theta)+B_n\cos(n\theta)]$. Accepted rings are
-appended to a trig-fit file in the format consumed by the Circularize and PES
+appended to a trig-fit file in the format consumed by the Circularize
 panels. This tab is an interactive tool: it submits no job and launches no
 external program. Selection is manual by design; there is no automatic ridge
 finder.
@@ -1708,7 +1709,6 @@ asks you to refit the band.
 \textbf{Pitfalls.} Enhancement can move the fitted ridge. The panel accepts
 rings from different images or processing settings. Check that the rings
 describe the same detector geometry before using them together.
-PES rotates and centers each bin before applying its calibration.
 Both polar remap methods start at $r=0$, as Hansen--Law requires.
 
 The session file stores the processing settings and masks. The extracted
@@ -1725,7 +1725,7 @@ Circularize sorts the saved rings by radius before it builds the radial model.
 of angle. Use a Gascooke trig-fit calibration. The panel launches
 \code{vmi\_\allowbreak{}analysis.circularization.circularization} with working
 directory \code{circularization/\allowbreak{}}. It is a standalone tool for inspecting
-the calibration. The PES panel applies its correction to each GMD bin.
+the calibration. Add the corrected image to PES to generate its spectrum.
 
 For a raw detector-grid calibration, open the same \code{vmi\_2d\_raw.npy}
 in Trig Calibration and Circularize. Use the same origin in both panels.
@@ -1841,95 +1841,86 @@ grid before resampling. \emph{Clear outputs} lists the selected corrected image,
 the diagnostic plots in the plot output directory, and any matching polar
 preview cache from this server session. The script does not print percentages.
 
-\subsection{PES / Abel inversion}
+\subsection{PES}
 \label{sec:pes}
 
-\textbf{Status.} This panel is immature and needs restructuring.
+\textbf{Purpose.} Generate and compare photoelectron spectra from 2D VMI
+images. Fit one or more peaks in a selected interval.
 
-\textbf{Purpose.} Process every GMD-binned image through hole patching,
-rotation, centring, circularisation, apodisation and Abel inversion, and
-produce the photoelectron energy spectrum and angular-anisotropy parameters
-for each bin. The panel launches
-\code{vmi\_\allowbreak{}analysis.circularization.process\_\allowbreak{}gmd\_\allowbreak{}bins} with working
-directory \code{circularization/\allowbreak{}}.
+\begin{enumerate}
+  \item Click \emph{Add image}, or paste one image path per line. Use
+        \code{vmi\_2d\_raw.npy} from Centroiding,
+        \code{image\_circularized.txt} from Circularize, or the NumPy images
+        from Binning. For text input, use a whitespace-separated matrix.
+  \item Set \emph{Center X} and \emph{Center Y} to the zero-based column and
+        row of the detector origin, or enable \emph{Use brightest pixel as
+        center}. When you use a corrected image, use its Circularize
+        origin. The brightest-pixel method estimates each image's center
+        separately.
+  \item Enter \emph{Rotation before Abel inversion} to align the polarization
+        axis vertically. Positive angles rotate counterclockwise. The default
+        is zero. Set the image resolution factor to the number of image
+        pixels per detector pixel. Use 1 for the original detector grid.
+        These defaults apply to all images. Use \emph{Image geometry
+        overrides} to set a different center, rotation, or resolution
+        factor for an individual image.
+  \item Enter $\alpha$ in eV per squared detector pixel if you have an
+        energy calibration. The horizontal coordinate is $E=\alpha r^2$.
+        With $\alpha$ blank, the plot uses detector pixel squared.
+        The same $\alpha$ applies to all images and scales the horizontal
+        coordinate only.
+  \item Choose an \emph{Abel method}. Hansen--Law is the default.
+        Select a \emph{Maximum $\beta$ order} to extract even Legendre
+        coefficients through $L=10$. The default is \emph{Off}.
+  \item Click \emph{Generate spectra}. The panel centers and rotates each
+        image, applies the selected inverse Abel method, and integrates the
+        signal within the radial coverage of that image. Each successful
+        image gives one trace. Check the console for
+        any skipped input. In the results, expand \emph{Spectrum axes} and
+        click \emph{Apply axes} after entering limits. Blank limits use
+        automatic scaling. The plot updates immediately.
+\end{enumerate}
 
-\begin{center}
-\footnotesize
-\begin{longtable}{@{}L{3.4cm}L{2.3cm}L{2.5cm}L{2.8cm}L{4.9cm}@{}}
-\toprule
-Field & Type and default & Saved key & CLI flag & Meaning \\
-\midrule
-\endhead
-\bottomrule
-\endfoot
-\emph{Weight suffix} & text, \code{\_\allowbreak{}w-\allowbreak{}gmd\_\allowbreak{}norm} & \code{pes.\allowbreak{}weight\_\allowbreak{}suffix} &
-\emph{-\allowbreak{}-\allowbreak{}weight-\allowbreak{}suffix} & Selects which bin files to process: files whose
-name ends with this suffix. Empty means unweighted bins. \\
-\addlinespace
-\emph{Bin image directory} & folder, saved Centroiding output directory &
-\code{pes.bin\_\allowbreak{}dir} & \code{-\allowbreak{}-\allowbreak{}bin-\allowbreak{}dir} & Directory holding the
-\code{vmi\_\allowbreak{}2d\_\allowbreak{}gmd\_\allowbreak{}bin*.npy} files from Binning. \\
-\addlinespace
-\emph{Output directory (empty = automatic from suffix/\allowbreak{}backend)} & folder,
-empty & \code{pes.\allowbreak{}output\_\allowbreak{}dir} & \code{-\allowbreak{}-\allowbreak{}output-\allowbreak{}dir} & Where results are
-written. Empty means
-\code{circularization/\allowbreak{}gmd\_\allowbreak{}bins\_\allowbreak{}results<suffix>}, plus \code{\_\allowbreak{}pyabel\_\allowbreak{}<method>}
-for the PyAbel backend. \\
-\addlinespace
-\emph{Inversion backend} & select, \code{pyabel} & \code{pes.\allowbreak{}backend} &
-\emph{-\allowbreak{}-\allowbreak{}inversion-\allowbreak{}backend} & \code{pyabel} is pure Python;
-\code{matlab} uses the bundled CPBASEX code and requires MATLAB plus a
-generated basis file. \\
-\addlinespace
-\emph{PyAbel method} & select, \code{daun} & \code{pes.\allowbreak{}method} &
-\emph{-\allowbreak{}-\allowbreak{}pyabel-\allowbreak{}method} & Inversion algorithm. Options: \code{daun},
-\code{hansenlaw}, \code{three\_\allowbreak{}point}, \code{two\_\allowbreak{}point}, \code{basex},
-\code{rbasex}, \code{linbasex}, \code{onion\_\allowbreak{}bordas}, \code{direct}. \\
-\addlinespace
-\emph{Use cached inversions} & checkbox, off & \code{pes.\allowbreak{}use\_\allowbreak{}cache} &
-\emph{-\allowbreak{}-\allowbreak{}use-\allowbreak{}cache} & Reuse a bin when its four cached files exist: energy,
-intensity, beta and cleaned-image text files. Partial caches mix reused and
-recomputed bins. \\
-\end{longtable}
-\end{center}
+\textbf{Angular anisotropy.} When enabled, the $\beta$ plot appears directly
+below the spectrum. Use \emph{$\beta$ spectrum} to select an image and
+\emph{$\beta$ plot axes} to set its limits independently. The plot shows
+$\beta_L(E)=I_L(E)/I_0(E)$, where
+$I_L$ is the Legendre component of the measured angular distribution.
+The coefficients assume cylindrical symmetry about the vertical axis
+and use even orders. The plot omits bins with nonpositive isotropic
+intensity. Higher orders and weak-signal regions can be noisy.
 
-\textbf{Per-bin chain.} For each selected bin the program repairs the
-detector hole with a feathered patch, rotates by 90 degrees, centres the
-image (cropping 1024$\times$1024 to 1023$\times$1023), runs the
-circularisation subprocess, centres again and applies a cosine-squared edge
-apodisation, then inverts the image. The PyAbel path uses the selected
-method and extracts the energy axis, the intensity and $\beta_2$ to
-$\beta_{10}$. The MATLAB path writes the cleaned image to the CPBASEX
-shared input, runs the MATLAB script, and immediately copies its outputs out
-before the next bin; this is why bins always run sequentially. Several
-values are fixed in the script and not exposed by the panel: the old and new
-centres, the hole radius and donor offsets, the apodisation cutoff and taper,
-the trigonometric order, the interpolation order, and the alpha used for the
-energy axis.
+\textbf{Fit peaks.} Choose \emph{Select fit range} and drag horizontally over
+the interval on the spectrum, or enter the two limits. Use \emph{Clear fit range}
+to remove the selection. Leave the peak
+estimates blank to detect up to six prominent peaks in each spectrum.
+The first row selects the profile for automatic fitting. To provide
+estimates, enter a center and Gaussian full width at half maximum (FWHM)
+in the plotted units for each peak. For a Voigt profile, you can also enter
+a Lorentzian FWHM estimate.
 
-\textbf{Outputs.} Per bin, text files for the energy axis, intensity
-spectrum, beta parameters and the cleaned image, all named
-\code{<name>\_\allowbreak{}GMD\_\allowbreak{}<label>.txt}. After all bins, three overview figures
-(\code{gmd\_\allowbreak{}bins-\allowbreak{}energy-\allowbreak{}spectrum.\allowbreak{}png},
-\code{gmd\_\allowbreak{}bins-\allowbreak{}energy-\allowbreak{}spectrum-\allowbreak{}normalized.png},
-\code{gmd\_\allowbreak{}bins-\allowbreak{}betas.png}) and \code{gmd\_\allowbreak{}bins\_\allowbreak{}results.\allowbreak{}npz} containing the
-bin labels and the arrays. The results area shows the three overview figures
-in that order, with a button to open the results folder.
+Choose \emph{None} for a baseline fixed at zero, \emph{Constant} for a
+flat offset, or \emph{Linear} for an offset and slope. Select the spectra to fit and click
+\emph{Fit peaks}. The panel fits each spectrum independently by unweighted
+least squares. It uses the same interval and any user-entered estimates for
+all selected spectra. Inspect the fitted curve,
+the component curves, the residuals, and the table of centers, widths, and
+areas. The reported area is the integral of the fitted component. Check
+the residuals when a parameter reaches a fit bound. After a change to the
+energy calibration, enter fit limits and peak estimates in the new units.
 
-\textbf{Calibration and backend requirements.} Both calibration files
-(Section~\ref{sec:calibfiles}) must exist in \code{circularization/\allowbreak{}};
-otherwise the job fails before processing. The MATLAB backend additionally
-needs the basis file \code{G\_\allowbreak{}r512\_\allowbreak{}k512\_\allowbreak{}l10.\allowbreak{}h5}, generated once with
-\code{save\_\allowbreak{}gData.m} in MATLAB (time-consuming). The panel warns when the
-calibration files are missing and when the MATLAB basis is absent. The
-default PyAbel backend needs neither MATLAB nor the basis file.
+With anisotropy enabled, the peak table also shows
+$\int I_L(E)\,dE/\int I_0(E)\,dE$ over each fitted FWHM. This summarizes
+the measured signal in that window. Overlapping peaks and background
+contribute to the result. Blank cells indicate insufficient data for
+the full interval or nonpositive integrated isotropic intensity.
 
-\textbf{Pitfalls.} \emph{Clear outputs} lists the overview plots, results archive,
-and per-bin files for the selected weight suffix. The progress bar stays empty because the script
-does not print percentages. Individual bin failures are reported and
-processing continues; if no bin succeeds the job fails. Weighted and
-unweighted runs write to different automatic output directories so their
-caches cannot collide.
+\textbf{Outputs.} Download the spectra, anisotropy curves, and fitted peak
+table as CSV files.
+The server keeps a spectrum bundle for each run in its generated cache.
+\emph{View latest spectra} reopens the latest successful bundle in the
+current server session. \emph{Clear outputs} deletes the PES bundles from
+that session. Export the peak table before closing the page.
 
 \subsection{Pipeline}
 \label{sec:pipeline}
@@ -2265,14 +2256,14 @@ backend, for example \code{Agg}. \\
   \item[GMD weighting has no effect.] The map may be missing, partial, or all
     weights are 1.0. A map built with \emph{First N files} only covers those
     files; frames outside it silently keep weight 1.0.
-  \item[MATLAB/PES fails.] The MATLAB backend needs MATLAB and the basis file
+  \item[Legacy MATLAB backend fails.] The MATLAB backend needs MATLAB and the basis file
     \code{G\_\allowbreak{}r512\_\allowbreak{}k512\_\allowbreak{}l10.\allowbreak{}h5}. Generate it once with
     \code{save\_\allowbreak{}gData.\allowbreak{}m}; expect tens of minutes. Use the PyAbel backend to
     avoid MATLAB entirely. MATLAB bins are processed sequentially by design.
-  \item[PES reports missing calibration.] Both files in
+  \item[Pipeline reports missing circularization calibration.] Both files in
     \code{circularization/\allowbreak{}} are required. Create the extracted
     fit file in Trig Calibration or supply a compatible export. Supply the
-    radial reassignment file before starting PES.
+    radial reassignment file before starting Pipeline.
   \item[The frame histogram or movie disagrees with another tool.] Frame
     enumeration differs between tools: GMD Map and Dark Frame use the HDF5
     pattern (\code{RAW-\allowbreak{}*.\allowbreak{}h5} by default, adjustable for prefixed names), while

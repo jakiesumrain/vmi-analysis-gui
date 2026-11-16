@@ -25,7 +25,7 @@ bar, and a collapsible labelled console dock in each panel; the rail becomes a
 horizontal scroller on narrow screens. The author signature is available from
 *Settings → About*.
 `gui/panels/` contains the forms and result views. Each panel starts with
-a title, an inline job status cluster, and a short summary. Binning, PES, and
+a title, an inline job status cluster, and a short summary. Binning and
 Pipeline are immature and need restructuring.
 
 - Trig Calibration remaps a NumPy detector image and fits selected rings in
@@ -40,6 +40,9 @@ Pipeline are immature and need restructuring.
   reassignment map when applicable.
 - Centroiding and Accumulate also use Plotly. Static image inspection uses
   `gui/assets/image_zoom.js`.
+- PES generates spectra in a subprocess from NumPy images or text matrices.
+  It overlays the spectra in Plotly and fits peaks to the selected interval
+  in the web process. It reserves each input and its generated spectrum bundle.
 
 The [design reference](DESIGN.md) describes the visual tokens.
 `gui/theme.py` loads the palette and `gui/assets/theme.css`.

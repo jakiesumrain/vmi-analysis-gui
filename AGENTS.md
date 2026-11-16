@@ -41,8 +41,10 @@ and [GUI design](docs/DESIGN.md) for implementation context.
 - Use the shared `image_zoom.js` overlay. Pan, zoom, and cropping affect the
   preview only. Reset restores the original image. Browser regression checks
   are in `tests/browser/`.
-- Keep panel summaries short. Describe the task without naming the Python
-  module. Binning, PES, and Pipeline are immature and need restructuring.
+- Follow the workbench patterns in [GUI design](docs/DESIGN.md) and use the
+  UI/UX Pro Max skill for UI design. Keep panel summaries short. Describe
+  the task without naming the Python module. Binning and Pipeline are
+  immature and need restructuring.
 
 ## Git workflow
 

@@ -5,8 +5,8 @@ async page => {
   const names = ['GMD Map', 'Movie', 'Dark Frame', 'Accumulate', 'Centroiding',
                  'Binning', 'Trig Calibration', 'Circularize', 'PES', 'Pipeline'];
   const titles = {'Movie': 'Frame Movie', 'Accumulate': 'Fast Accumulate',
-                  'Centroiding': 'Picasso Centroiding', 'Binning': 'GMD Binning', 'PES': 'PES / Abel Inversion'};
-  const runLabels = {'Pipeline': 'Run pipeline', 'Trig Calibration': 'Load image & remap'};
+                  'Centroiding': 'Picasso Centroiding', 'Binning': 'GMD Binning'};
+  const runLabels = {'Pipeline': 'Run pipeline', 'Trig Calibration': 'Load image & remap', 'PES': 'Generate spectra'};
   const show = async name => {
     await page.getByRole('tab', {name, exact: true}).click();
     await page.waitForFunction(title => {

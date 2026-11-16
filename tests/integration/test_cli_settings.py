@@ -207,8 +207,7 @@ class GuiSubmissionTests(unittest.TestCase):
                 (calibration, "Clear calibration file", {"rings.txt": "# empty calibration"}),
                 (calibration, "Clear session file", {"session.json": json.dumps({"schema": SESSION_SCHEMA})}),
                 (circularize, "Clear outputs", dict.fromkeys(("corrected.txt", "trig_order_1.png", "reassignment_map.png"), "plot")),
-                (pes, "Clear outputs", dict.fromkeys((*pes.PES_PLOTS, "gmd_bins_results.npz",
-                                                      "energy_l10_GMD_bin0_minusinf_1.00e-08_w-gmd_norm.txt"), "PES")),
+                (pes, "Clear outputs", {"pes-spectra-test.npz": "PES"}),
                 (pipeline, "Clear outputs", {"pipeline-map.txt": "map", "vmi_2d_gmd_all.npy": "sum",
                                              "vmi_gmd_bins.png": "plot", "gmd_bins_results.npz": "PES"}),
             )
@@ -225,6 +224,7 @@ class GuiSubmissionTests(unittest.TestCase):
                         Job("Pipeline", stages=[stage, skipped, bins, spectra], status="done", started=0, finished=1e12,
                             extra={"output_dir": folder, "suffix": ""}),
                         Job("Accumulate", extra={"output_path": str(root / "sum.txt"), "live_path": str(partial)}, status="done"),
+                        Job("PES", extra={"pes_spectra": str(root / "pes-spectra-test.npz")}, status="done"),
                         Job("Circularize", extra={"output": str(root / "corrected.txt"), "polar_preview": str(preview)}, status="done"),
                     ]
                     callbacks = {}
@@ -291,6 +291,20 @@ class GuiSubmissionTests(unittest.TestCase):
         self.assertIsNone(cfg["vmi_picasso"]["tuning_frame_index"])
         self.assertEqual(cfg["vmi_picasso"]["spectrum_plot"]["x_max"], -1)
         self.assertEqual(Path(job.extra["output_dir"]), ROOT / "centroiding/vmi_output")
+
+    def test_pes_submits_selected_method_order_and_image_override(self):
+        from vmi_analysis.gui.panels import pes
+        from vmi_analysis.gui.resources import canonical_path
+
+        source = str(canonical_path("chosen image.npy", pes.REPO_ROOT))
+        store = {MIGRATED_KEY: True, "pes.images": source, "pes.brightest_center": False,
+                 "pes.abel_method": "three_point", "pes.beta_order": 6,
+                 "pes.image_geometry": json.dumps({source: {"center": [23, 25], "angle": 90, "resolution": 2}})}
+        job = self.submit_form(pes, store, label="Generate spectra")
+        self.assertEqual(job.cmd[3:13], ["--abel-method", "three_point", "--beta-order", "6",
+                                         "--image", source, "23", "25", "90", "2"])
+        self.assertEqual(job.reads, [source])
+        self.assertEqual(job.writes, [job.extra["pes_spectra"]])
 
     def test_centroid_frame_limit_sanitizes_on_blur(self):
         from nicegui import Client, app, ui
