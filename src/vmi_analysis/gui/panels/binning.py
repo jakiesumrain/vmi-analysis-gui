@@ -41,9 +41,12 @@ def build(jobs: JobManager) -> None:
                              .classes("w-full").props("outlined dense"),
                              "binning.thresholds")
         with ui.row().classes("gap-4 flex-wrap"):
-            gmd_col = persist(ui.select([4, 5], value=4,
-                                        label="GMD column (4=m1, 5=m2)")
-                              .props("outlined dense"), "binning.gmd_col")
+            gmd_col = persist(ui.select(
+                {4: "GMD value 1 (method 1)", 5: "GMD value 2 (method 2)"},
+                value=4, label="GMD column",
+            ).props("outlined dense").classes("w-64"), "binning.gmd_col")
+            gmd_col.tooltip("Which GMD value from the map drives binning and "
+                            "weights: 4 = gmd_val1, 5 = gmd_val2.")
             weight_mode = persist(ui.select(["none", "gmd", "gmd_norm"],
                                             value="gmd_norm",
                                             label="Weight mode")

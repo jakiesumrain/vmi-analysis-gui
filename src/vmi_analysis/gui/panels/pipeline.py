@@ -51,6 +51,12 @@ def build(jobs: JobManager) -> None:
         h5_dir = persist(path_input(
             "HDF5 directory (dataset)", "", browse="dir",
             placeholder="folder containing RAW-*.h5 files"), "pipeline.h5_dir")
+        with ui.row().classes("gap-4 flex-wrap"):
+            pattern = persist(ui.input("HDF5 pattern", value="RAW-*.h5")
+                              .props("outlined dense"), "pipeline.h5_pattern")
+            pattern.tooltip("Glob inside the dataset folder, used by both the "
+                            "GMD map and Centroiding stages. Use *RAW-*.h5 when "
+                            "the filenames have a prefix before RAW-.")
         gmd_path = persist(path_input(
             "GMD timestamp file", "", browse="file", filters=[".txt"],
             placeholder="current-time-both.txt"), "pipeline.gmd_path")
@@ -79,7 +85,11 @@ def build(jobs: JobManager) -> None:
                 # when the Centroiding tab was last used for another dataset.
                 if not h5_dir.value:
                     raise ValueError("Choose an HDF5 dataset directory")
+                h5_pattern = (pattern.value or "RAW-*.h5").strip()
+                if not h5_pattern:
+                    raise ValueError("Choose an HDF5 file pattern")
                 vmi["h5_dir"] = str(Path(h5_dir.value).resolve())
+                vmi["h5_pattern"] = h5_pattern
                 vmi["gmd_map_path"] = str(Path(map_out.value).resolve())
                 vmi["processing"]["tuning_only"] = False
                 out_dir = centroid_output_dir(cfg)
@@ -97,6 +107,7 @@ def build(jobs: JobManager) -> None:
                     name="GMD map",
                     cmd=[py, "-m", "vmi_analysis.gmd.build_gmd_map",
                          "--h5-dir", h5_dir.value,
+                         "--h5-pattern", h5_pattern,
                          "--gmd-path", gmd_path.value,
                          "--output-path", map_out.value],
                     cwd=str(REPO_ROOT),
