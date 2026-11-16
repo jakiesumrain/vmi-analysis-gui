@@ -15,7 +15,7 @@ class GmdMapPatternTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.h5_dir = self.root / "h5"
+        self.h5_dir = self.root / "h5[run]"
         self.h5_dir.mkdir()
         for name in ("ODL-150.000-RAW-R0144-150Xe-S00000.h5",
                      "ODL-150.000-RAW-R0144-150Xe-S00001.h5"):
@@ -53,6 +53,13 @@ class GmdMapPatternTests(unittest.TestCase):
                                str(self.output), 0)
         self.assertIn("No frames found", str(raised.exception))
         self.assertFalse(self.output.exists())
+
+    def test_rejects_path_patterns_before_reading_or_writing(self):
+        self.output.write_text("existing map", encoding="utf-8")
+        for pattern in ("../*.h5", r"..\*.h5", "sub/*.h5", "/tmp/*.h5", r"C:\data\*.h5", "C:*.h5", ".."):
+            with self.subTest(pattern=pattern), self.assertRaisesRegex(SystemExit, "Invalid HDF5 pattern"):
+                build_gmd_map.main(str(self.h5_dir), "unused.txt", str(self.output), 0, pattern)
+        self.assertEqual(self.output.read_text(encoding="utf-8"), "existing map")
 
 
 if __name__ == "__main__":

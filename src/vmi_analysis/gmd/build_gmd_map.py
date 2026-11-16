@@ -12,6 +12,7 @@ import argparse
 import h5py
 import numpy as np
 import glob
+import ntpath
 import os
 import time
 
@@ -31,7 +32,7 @@ def parse_args():
     parser.add_argument("--h5-dir", default=DEFAULT_H5_DIR,
                         help="Directory containing the HDF5 files.")
     parser.add_argument("--h5-pattern", default=DEFAULT_H5_PATTERN,
-                        help="Glob used inside --h5-dir (default: RAW-*.h5). "
+                        help="Filename-only glob inside --h5-dir (default: RAW-*.h5). "
                              "Use *RAW-*.h5 for files with a prefix before RAW-.")
     parser.add_argument("--gmd-path", default=DEFAULT_GMD_PATH,
                         help="GMD timestamp file (current-time-both.txt).")
@@ -47,6 +48,10 @@ def parse_args():
 
 
 def main(h5_dir, gmd_path, output_path, n_files, h5_pattern=DEFAULT_H5_PATTERN):
+    pattern = h5_pattern or DEFAULT_H5_PATTERN
+    if (pattern in (".", "..") or "/" in pattern or "\\" in pattern
+            or ntpath.splitdrive(pattern)[0]):
+        raise SystemExit(f"Invalid HDF5 pattern {pattern!r}. Use a filename pattern such as '*RAW-*.h5'.")
     t0 = time.time()
 
     # --- Load GMD data ---
@@ -59,8 +64,7 @@ def main(h5_dir, gmd_path, output_path, n_files, h5_pattern=DEFAULT_H5_PATTERN):
     print(f"  Time range: {gmd_timestamps[0]:.4f} -> {gmd_timestamps[-1]:.4f}")
 
     # --- Scan H5 files ---
-    pattern = h5_pattern or DEFAULT_H5_PATTERN
-    files = sorted(glob.glob(os.path.join(h5_dir, pattern)))
+    files = sorted(glob.glob(os.path.join(glob.escape(h5_dir), pattern)))
     if n_files > 0:
         files = files[:n_files]
     print(f"\nScanning {len(files)} HDF5 files matching {pattern!r}...")
