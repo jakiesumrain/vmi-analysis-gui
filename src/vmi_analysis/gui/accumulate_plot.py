@@ -33,8 +33,10 @@ def accumulation_figure(values, *, title="Accumulated image", revision=None, col
 
 def frame_histogram_figure(values, *, title="Raw frame histogram",
                            bins=160, log_y=True, x_min=None, x_max=None,
-                           bin_width=None, x_label="Raw pixel value (counts)"):
-    """Plot the distribution of pixel values in an image."""
+                           bin_width=None, x_label="Raw pixel value (counts)",
+                           y_label="Pixels", count_label="pixels",
+                           auto_bins=False, x_tickformat=None):
+    """Plot a one-dimensional distribution (pixels or per-frame samples)."""
     values = np.asarray(values, dtype=float).ravel()
     values = values[np.isfinite(values)]
     if values.size == 0:
@@ -62,6 +64,18 @@ def frame_histogram_figure(values, *, title="Raw frame histogram",
         bins = np.append(left_edges[left_edges < upper], upper)
         if np.any(np.diff(bins) <= 0):
             raise ValueError("Histogram bin width is too small for the selected X range.")
+    elif auto_bins:
+        # Choose the narrower of the Sturges and Freedman–Diaconis widths.
+        # Bound the count before NumPy allocates the bin edges.
+        samples = values[(values >= lower) & (values <= upper)]
+        bins = 1
+        if samples.size > 1:
+            sturges_width = float(np.ptp(samples)) / (float(np.log2(samples.size)) + 1)
+            q1, q3 = np.percentile(samples, (25, 75))
+            fd_width = 2.0 * (float(q3 - q1) / float(np.cbrt(samples.size)))
+            width = min(sturges_width, fd_width) if fd_width > 0 else sturges_width
+            if width > 0:
+                bins = max(1, int(np.ceil(min(span / width, MAX_FRAME_HISTOGRAM_BINS))))
 
     counts, edges = np.histogram(values, bins=bins, range=(lower, upper))
     widths = np.diff(edges)
@@ -71,13 +85,14 @@ def frame_histogram_figure(values, *, title="Raw frame histogram",
         x=centers, y=counts, width=widths,
         marker_color="#cc785c", marker_line_width=0,
         customdata=np.column_stack([edges[:-1], edges[1:]]),
-        hovertemplate="Pixel value %{customdata[0]:.4g}–%{customdata[1]:.4g}"
-                      "<br>%{y} pixels<extra></extra>"), row=1, col=1)
-    fig.update_xaxes(title_text=x_label, showgrid=False,
-                     zeroline=False)
+        hovertemplate="Bin %{customdata[0]:.4g}–%{customdata[1]:.4g}"
+                      f"<br>%{{y}} {count_label}<extra></extra>"), row=1, col=1)
+    fig.update_xaxes(title_text=x_label, showgrid=False, zeroline=False)
+    if x_tickformat is not None:
+        fig.update_xaxes(tickformat=x_tickformat)
     if x_min is not None or x_max is not None:
         fig.update_xaxes(range=[lower, upper])
-    fig.update_yaxes(title_text="Pixels", type="log" if log_y else "linear")
+    fig.update_yaxes(title_text=y_label, type="log" if log_y else "linear")
     _style(fig, title)
     fig.update_layout(height=FRAME_HISTOGRAM_HEIGHT,
                       margin={"l": 70, "r": 30, "t": 60, "b": 50})

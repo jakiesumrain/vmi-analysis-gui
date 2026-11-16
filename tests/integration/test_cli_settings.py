@@ -1,5 +1,6 @@
 """CLI precedence and GUI persistence without a required TOML file."""
 
+import asyncio
 import io
 import json
 import os
@@ -386,6 +387,25 @@ class GuiSubmissionTests(unittest.TestCase):
         for stage in job.stages:
             self.assertNotIn("--config", stage.cmd)
 
+    def test_binning_histogram_bins_start_blank_for_auto_binning(self):
+        from nicegui import Client, app, ui
+        from vmi_analysis.gui.panels import binning
+        manager = Mock()
+        manager.jobs.return_value = []
+        client = Client(ui.page("/_test_binning_bins"))
+        labels = {"GMD bin min", "GMD bin max", "GMD bin size",
+                  "Weight bin min", "Weight bin max", "Weight bin size"}
+        try:
+            with client, patch.object(app.storage, "_general", {MIGRATED_KEY: True}):
+                binning.build(manager)
+            fields = {element.label: element.value
+                      for element in client.elements.values()
+                      if getattr(element, "label", None) in labels}
+            self.assertEqual(set(fields), labels)
+            self.assertTrue(all(value is None for value in fields.values()))
+        finally:
+            client.delete()
+
     def test_binning_uses_explicit_paths_and_dark_preserves_zero_frames(self):
         from vmi_analysis.gui.panels import binning, dark
         store = {MIGRATED_KEY: True, "binning.checkpoint": "chosen.h5",
@@ -398,6 +418,42 @@ class GuiSubmissionTests(unittest.TestCase):
         job = self.submit_form(dark, store)
         self.assertNotIn("--config", job.cmd)
         self.assertEqual(job.cmd[job.cmd.index("--frames") + 1], "0")
+
+    def test_binning_weight_preview_honors_zero_and_keeps_plot_on_invalid_bins(self):
+        from nicegui import Client, app, ui
+        from vmi_analysis.gui.jobs import JobManager
+        from vmi_analysis.gui.panels import binning
+
+        async def check(source):
+            callbacks = {}
+            store = {MIGRATED_KEY: True, "binning.gmd_map": str(source), "binning.weight_power": 0}
+            client = Client(ui.page("/_test_binning_weight_preview"))
+            try:
+                with client, patch.object(app.storage, "_general", store), \
+                        patch.object(ui.button, "on_click", lambda button, handler:
+                                     callbacks.__setitem__(button.text, handler)), \
+                        patch.object(binning, "plot_options", wraps=binning.plot_options) as plot_options, \
+                        patch.object(ui, "notify") as notify:
+                    binning.build(JobManager())
+                    await callbacks["Histogram weights"]()
+                    plot, = (element for element in client.elements.values() if isinstance(element, ui.plotly))
+                    trace = plot_options.call_args.args[0].data[0]
+                    self.assertEqual(list(trace.x), [1.0])
+                    self.assertEqual(list(trace.y), [2])
+                    numbers = {element.label: element for element in client.elements.values()
+                               if isinstance(element, ui.number)}
+                    numbers["Weight bin min"].value = 4
+                    numbers["Weight bin max"].value = 1
+                    await callbacks["Histogram weights"]()
+                    self.assertIn("X min must be less", notify.call_args.args[0])
+                    self.assertIs(client.elements.get(plot.id), plot)
+            finally:
+                client.delete()
+
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "map.txt"
+            source.write_text("0 a.h5 0 0 1 2 0\n1 a.h5 1 1 3 4 0\n", encoding="utf-8")
+            asyncio.run(check(source))
 
 
 if __name__ == "__main__":

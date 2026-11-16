@@ -7,7 +7,7 @@ import h5py
 import numpy as np
 
 from vmi_analysis.gui import frame_preview
-from vmi_analysis.gui.accumulate_plot import frame_histogram_figure
+from vmi_analysis.gui.accumulate_plot import MAX_FRAME_HISTOGRAM_BINS, frame_histogram_figure
 
 
 def write_h5(path, frames):
@@ -36,6 +36,22 @@ class FramePreviewTests(unittest.TestCase):
         self.assertEqual([r.frame_index for r in refs], [0, 1, 0, 1])
         expected = np.arange(2 * 8 * 8, dtype=np.uint16).reshape(2, 8, 8)[0] + 1000
         np.testing.assert_array_equal(frame_preview.load_raw_frame(refs[2]), expected)
+
+    def test_histogram_uses_auto_bins_when_limits_are_blank(self):
+        figure = frame_histogram_figure(np.arange(100.0), auto_bins=True)
+        self.assertEqual(len(figure.data), 1)
+        self.assertGreater(len(figure.data[0].x), 1)
+
+    def test_histogram_linear_y_and_explicit_x_format(self):
+        figure = frame_histogram_figure(np.arange(100.0), log_y=False,
+                                        x_tickformat=".1e")
+        self.assertEqual(figure.layout.yaxis.type, "linear")
+        self.assertEqual(figure.layout.xaxis.tickformat, ".1e")
+
+    def test_automatic_histogram_caps_bins_for_wide_range(self):
+        figure = frame_histogram_figure([1, 1.1, 1.2, 1.3], x_min=0, x_max=1e4, auto_bins=True)
+        self.assertEqual(len(figure.data[0].x), MAX_FRAME_HISTOGRAM_BINS)
+        self.assertEqual(sum(figure.data[0].y), 4)
 
     def test_pick_frame_index_random_and_range(self):
         refs = frame_preview.list_raw_frames(self.folder)
