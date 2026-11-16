@@ -9,7 +9,7 @@ from vmi_analysis.paths import validate_distinct_output
 
 from ..jobs import Job, JobManager
 from .. import theme
-from .common import (JobView, REPO_ROOT, action_bar, num_input,
+from .common import (JobView, REPO_ROOT, action_bar, field_grid, num_input,
                      open_folder_button, path_input, persist,
                      confirm_clear_outputs)
 
@@ -33,10 +33,15 @@ def build(jobs: JobManager) -> None:
             "Output map file", str(REPO_ROOT / "gmd_map_all.txt"),
             browse="save", filters=[".txt"],
             default_name="gmd_map_all.txt"), "gmd_map.output_path")
-        n_files = persist(num_input("First N files (0 = all)", 0, step=1)
-                          .classes("w-40"), "gmd_map.n_files")
+        with field_grid(2):
+            pattern = persist(ui.input("HDF5 pattern", value="RAW-*.h5")
+                              .props("outlined dense"), "gmd_map.h5_pattern")
+            pattern.tooltip("Glob inside the HDF5 directory. Use *RAW-*.h5 "
+                            "when the filenames have a prefix before RAW-.")
+            n_files = persist(num_input("First N files (0 = all)", 0, step=1),
+                              "gmd_map.n_files")
         with action_bar(view, on_click=lambda: _run(jobs, view, h5_dir, gmd_path,
-                                                    output_path, n_files)):
+                                                    output_path, n_files, pattern)):
             ui.button("Clear output", icon="delete",
                       on_click=lambda: _clear_output(output_path, h5_dir, gmd_path, view)) \
                 .props("flat color=negative").classes("vmi-action-danger")
@@ -44,9 +49,10 @@ def build(jobs: JobManager) -> None:
     view.place_console()
 
 
-def _run(jobs, view, h5_dir, gmd_path, output_path, n_files):
+def _run(jobs, view, h5_dir, gmd_path, output_path, n_files, pattern):
     cmd = [sys.executable, "-m", "vmi_analysis.gmd.build_gmd_map",
            "--h5-dir", h5_dir.value,
+           "--h5-pattern", (pattern.value or "RAW-*.h5").strip(),
            "--gmd-path", gmd_path.value,
            "--output-path", output_path.value,
            "--n-files", str(int(n_files.value or 0))]

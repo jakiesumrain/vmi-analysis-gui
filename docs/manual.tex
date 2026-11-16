@@ -241,9 +241,11 @@ Send the calibration to Circularize. Compare the two polar views after the run.
 The following sequence uses the current Binning and PES panels.
 
 \begin{enumerate}
-  \item \textbf{GMD Map.} Choose the folder of \code{RAW-\allowbreak{}*.\allowbreak{}h5} files and the
-        GMD timestamp file, choose an output map path, and Run. The result is
-        a frame-to-GMD map.
+  \item \textbf{GMD Map.} Choose the folder of HDF5 files, its HDF5
+        pattern (\code{RAW-\allowbreak{}*.\allowbreak{}h5} by default, or
+        \code{*RAW-\allowbreak{}*.\allowbreak{}h5} when names have a prefix before
+        \code{RAW-}), and the GMD timestamp file; choose an output map path,
+        and Run. The result is a frame-to-GMD map.
   \item \textbf{Centroiding.} Choose the same HDF5 folder and an output
         directory. First tick \emph{Tuning mode only}, enter a tuning frame
         index or leave it blank for a random frame, and run to inspect
@@ -284,21 +286,23 @@ selected, the job checks for the declared output files before each stage.
 \section{The shared interface}
 \label{sec:shared}
 
-All panels follow the same pattern: a section heading with a one-line
-description, a cream feature card holding the parameter form, one
-Run/Stop control, a dark log console, and a results area below it. This
-section describes the parts that behave identically everywhere; the
-panel-specific fields are in Section~\ref{sec:panels}.
+Each panel has a heading, a short task description, and a card with its
+parameters and actions. Job panels show status beside the heading and have
+one Run/Stop control. See Section~\ref{sec:panels} for the panel-specific fields.
 
 \subsection{Window layout and tabs}
 \label{sec:tabs}
 
-Open \emph{Settings} to set the job limit or control shutdown after a
-disconnect. Use the same menu to save and load workflow files.
-The tab bar shows \emph{GMD Map}, \emph{Movie}, \emph{Dark Frame},
-\emph{Accumulate}, and \emph{Centroiding}. Open \emph{More...} to access
-\emph{Binning}, \emph{Trig Calibration}, \emph{Circularize}, \emph{PES},
-and \emph{Pipeline}.
+Use the left sidebar to select a panel. On narrow windows, scroll the tool
+bar above the panel. \emph{Acquire} groups \emph{GMD Map}, \emph{Movie},
+\emph{Dark Frame}, and \emph{Accumulate}. \emph{Analyze} groups
+\emph{Centroiding}, \emph{Binning}, \emph{Trig Calibration},
+\emph{Circularize}, and \emph{PES}. \emph{Automate} contains \emph{Pipeline}.
+
+The footer shows running and queued jobs, the job limit, and the server's
+disconnect mode. Open \emph{Settings} to change the limit or disconnect mode,
+save or load workflow files, or stop the server. Author details are under
+\emph{Settings} $\rightarrow$ \emph{About}.
 
 Every panel is built when the page loads and keeps its own run state,
 progress, log, and results. Switching tabs does not stop or restart work.
@@ -353,11 +357,11 @@ writing the same directory.
 \subsection{The log console and progress}
 \label{sec:log}
 
-Every panel has a dark console under the form. It shows the exact command
-that was launched, prefixed with \code{[gui] \$}, followed by the merged
-standard output and standard error of the program. Output is decoded as
-UTF-8 and streamed while the job runs; the console keeps the most recent
-2000 lines, and the panel refreshes it about every 0.7 seconds.
+Select \emph{Console} below the form to expand or collapse the log and results.
+In job panels, it opens automatically once per job. You can collapse it
+while the job runs. The log shows the command prefixed with \code{[gui] \$}
+and streams the program's standard output and errors as UTF-8. The panel
+refreshes the log about every 0.7 seconds and keeps the most recent 2000 lines.
 
 Lines in the standard tqdm form \code{NN\% |\ldots} drive the progress
 bar. Some stages (for example Circularize and PES) do not print that form,
@@ -380,7 +384,8 @@ When a job fails, read the console for error details. Results can include
   \item the exact output paths and a summary of what was written.
 \end{itemize}
 
-\emph{View saved result(s)} reopens existing results on panels that offer it.
+\emph{View saved result(s)} opens the console and displays existing results
+on panels that offer it.
 Use \emph{Clear output(s)} to delete the listed files after confirmation.
 Trig Calibration has separate clear buttons for the calibration and session
 files. Pipeline clears files written during the last selected run in this
@@ -390,9 +395,9 @@ prevent deletion while they run or wait in the queue.
 \subsection{The local file picker}
 \label{sec:picker}
 
-Every path field has a round folder button that opens a server-side file
-picker. The application and the data are on the same machine, so nothing is
-uploaded; the dialog browses the local disks directly.
+Select the \emph{Browse} folder button in the path field to open the file
+picker. You can also focus the button with Tab and press Enter or Space.
+The dialog browses the disks on the server.
 
 The dialog title matches the field: \emph{Select file}, \emph{Select
 folder}, or \emph{Save as}. It has an up-arrow button, the current path, and
@@ -524,6 +529,9 @@ This section describes the files the pipeline expects.
 \label{sec:rawdata}
 
 A dataset is a folder of HDF5 files, usually named \code{RAW-\allowbreak{}*.\allowbreak{}h5}.
+Tools that scan a pattern default to \code{RAW-\allowbreak{}*.\allowbreak{}h5}; if the
+acquisition adds a prefix before \code{RAW-}, set the panel's
+\emph{HDF5 pattern} to \code{*RAW-\allowbreak{}*.\allowbreak{}h5}.
 Each file holds two datasets:
 
 \begin{center}
@@ -649,7 +657,13 @@ Field & Type and default & Saved key & CLI flag & Meaning \\
 \bottomrule
 \endfoot
 \emph{HDF5 directory} & folder, empty & \code{gmd\_\allowbreak{}map.\allowbreak{}h5\_\allowbreak{}dir} &
-\emph{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir} & Folder scanned for \code{RAW-\allowbreak{}*.\allowbreak{}h5} files, sorted by name. Required. \\
+\emph{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir} & Folder scanned for the pattern below. Required. \\
+\addlinespace
+\emph{HDF5 pattern} & text, \code{RAW-\allowbreak{}*.\allowbreak{}h5} &
+\code{gmd\_\allowbreak{}map.\allowbreak{}h5\_\allowbreak{}pattern} &
+\code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}pattern} & Glob inside the HDF5 directory; files are
+sorted by name. Use \code{*RAW-\allowbreak{}*.\allowbreak{}h5} when filenames have a prefix before
+\code{RAW-}. \\
 \addlinespace
 \code{GMD timestamp file (current-\allowbreak{}time-\allowbreak{}both.txt)} & file, empty &
 \code{gmd\_\allowbreak{}map.gmd\_\allowbreak{}path} & \code{-\allowbreak{}-\allowbreak{}gmd-\allowbreak{}path} & The GMD table
@@ -666,7 +680,7 @@ A map built for a subset is valid only for that subset. \\
 \end{longtable}
 \end{center}
 
-\textbf{Buttons.} \emph{Run}/\emph{Stop} submits the four values as job
+\textbf{Buttons.} \emph{Run}/\emph{Stop} submits the five values as job
 \code{GMD map}. \emph{Clear output} asks for confirmation and deletes the
 output file so the next run rewrites it. \emph{open containing folder}
 appears in the results and opens the output's folder in the file manager.
@@ -1451,6 +1465,23 @@ mean. \\
 \end{longtable}
 \end{center}
 
+\textbf{GMD histograms.} The \emph{GMD histograms} expansion has two
+diagnostic plots, each with an optional bin range and size:
+\emph{GMD bin min}, \emph{max}, \emph{size} for the selected GMD values, and
+\emph{Weight bin min}, \emph{max}, \emph{size} for the resulting weights
+(saved under \code{binning.gmd\_\allowbreak{}hist\_\allowbreak{}*} and
+\code{binning.weight\_\allowbreak{}hist\_\allowbreak{}*}). Leave min or max
+blank to use the data range. Leave size blank to select a bin size automatically,
+with at most 65,536 bins. Supplying fields sets the range or fixes
+the bin size. The GMD plot uses the raw
+values of the selected GMD column and the weight plot uses the current
+\emph{Weight mode} and \emph{Weight power}; both ignore the GMD floor and
+the GMD weight min/max, so the histograms show the unfiltered distributions.
+The GMD values histogram helps choose the thresholds; the weight histogram shows
+how much each frame contributes. These previews only read the map file and
+do not change the submitted Binning job, which still applies the floor and
+weight limits.
+
 \textbf{Bin and weight semantics.} A frame's bin index is the number of
 thresholds below its GMD value, so the first bin has no lower bound and the
 last has no upper bound. Events from frames beyond the end of the map are
@@ -1922,6 +1953,11 @@ Field & Type and default & Saved key & CLI flag & Meaning \\
 stage 1 \code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir} & Dataset for the whole pipeline; also forced into
 the Centroiding snapshot as an absolute path. Required. \\
 \addlinespace
+\emph{HDF5 pattern} & text, \code{RAW-\allowbreak{}*.\allowbreak{}h5} &
+\code{pipeline.\allowbreak{}h5\_\allowbreak{}pattern} & stage 1
+\code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}pattern} & Glob for the GMD map and Centroiding stages; also
+written into the Centroiding snapshot. Use \code{*RAW-\allowbreak{}*.\allowbreak{}h5} for prefixed names. \\
+\addlinespace
 \emph{GMD timestamp file} & file, empty & \code{pipeline.\allowbreak{}gmd\_\allowbreak{}path} &
 stage 1 \code{-\allowbreak{}-\allowbreak{}gmd-\allowbreak{}path} & GMD table for stage 1. Required. \\
 \addlinespace
@@ -1973,9 +2009,9 @@ PyAbel backend & \code{circularization/\allowbreak{}} &
 
 \textbf{Borrowed and forced settings.} The pipeline takes every Centroiding
 setting from the saved form, but overrides exactly three values in its own
-snapshot: the HDF5 directory, the GMD map path, and \emph{Tuning mode only}
-(forced off, so a pipeline run is always a full batch and never produces a
-tuning check). Thresholds, GMD column and GMD floor are taken from the
+snapshot: the HDF5 directory, the HDF5 pattern, the GMD map path, and
+\emph{Tuning mode only} (forced off, so a pipeline run is always a full batch
+and never produces a tuning check). Thresholds, GMD column and GMD floor are taken from the
 Binning tab's saved settings; the Pipeline fields supply the weight mode and
 power. The pipeline has no output-directory field: the Centroiding output
 directory is used. The PES stage always uses the PyAbel backend with the
@@ -2136,7 +2172,9 @@ Module & Purpose and main inputs \\
 \endhead
 \bottomrule
 \code{vmi\_\allowbreak{}analysis.gmd.build\_\allowbreak{}gmd\_\allowbreak{}map} & Build the frame-to-GMD map;
-\code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir}, \code{-\allowbreak{}-\allowbreak{}gmd-\allowbreak{}path}, \code{-\allowbreak{}-\allowbreak{}output-\allowbreak{}path}, \code{-\allowbreak{}-\allowbreak{}n-\allowbreak{}files}. \\
+\code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir}, \code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}pattern},
+\code{-\allowbreak{}-\allowbreak{}gmd-\allowbreak{}path}, \code{-\allowbreak{}-\allowbreak{}output-\allowbreak{}path},
+\code{-\allowbreak{}-\allowbreak{}n-\allowbreak{}files}. \\
 \addlinespace
 \code{vmi\_\allowbreak{}analysis.imaging.h5\_\allowbreak{}play\_\allowbreak{}frames\_\allowbreak{}movie} & Render or stream a
 movie; \code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir}, \code{-\allowbreak{}-\allowbreak{}n-\allowbreak{}frames}, \code{-\allowbreak{}-\allowbreak{}cmap}, \code{-\allowbreak{}-\allowbreak{}log-\allowbreak{}scale},
@@ -2236,9 +2274,15 @@ backend, for example \code{Agg}. \\
     fit file in Trig Calibration or supply a compatible export. Supply the
     radial reassignment file before starting PES.
   \item[The frame histogram or movie disagrees with another tool.] Frame
-    enumeration differs between tools: GMD Map and Dark Frame use
-    \code{RAW-\allowbreak{}*.\allowbreak{}h5}, while Movie, Accumulate and the frame histogram use all
-    \code{*.\allowbreak{}h5} files sorted by name. Extra HDF5 files change indices.
+    enumeration differs between tools: GMD Map and Dark Frame use the HDF5
+    pattern (\code{RAW-\allowbreak{}*.\allowbreak{}h5} by default, adjustable for prefixed names), while
+    Movie, Accumulate and the frame histogram use all \code{*.\allowbreak{}h5} files sorted
+    by name. Extra HDF5 files change indices.
+  \item[GMD Map fails immediately with ``No HDF5 files matching''.] The
+    selected directory contains no file whose name matches the panel's
+    \emph{HDF5 pattern}. For names such as
+    \code{ODL-150-\allowbreak{}RAW-\allowbreak{}S00000.\allowbreak{}h5}, set the pattern to
+    \code{*RAW-\allowbreak{}*.\allowbreak{}h5}; the job now stops before writing an empty map.
   \item[Out-of-memory during dark computation.] The median method holds the
     selected dark frames in memory. Reduce \emph{Dark frame count} or use the
     mean method.

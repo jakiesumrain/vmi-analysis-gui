@@ -254,6 +254,7 @@ def build(jobs: JobManager) -> None:
             view.results.clear()
             with view.results:
                 _result_file(str(REPO_ROOT / output_path.value) if output_path.value else "")
+            view.open_console()
         with action_bar(view, on_click=run):
             ui.button("View saved result", icon="analytics",
                       on_click=show_saved).props("flat color=secondary")

@@ -111,12 +111,6 @@ html, body {
   background: var(--vmi-surface-soft);
   border-right: 1px solid var(--vmi-hairline);
 }
-.vmi-brand {
-  width: 30px;
-  height: 30px;
-  border-radius: var(--vmi-radius-md);
-  box-shadow: var(--vmi-shadow-1);
-}
 .vmi-sidebar-title {
   padding: 0 var(--vmi-space-3) var(--vmi-space-3);
   color: var(--vmi-ink);

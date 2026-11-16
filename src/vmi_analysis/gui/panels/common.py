@@ -191,9 +191,8 @@ def path_input(label: str, value: str = "", browse: str | None = None,
             if result:
                 inp.value = result
         with inp.add_slot("append"):
-            ui.icon("folder_open").classes("vmi-browse-icon") \
-                .props('role="button" aria-label="Browse" tabindex="0"') \
-                .on("click", pick)
+            ui.button(icon="folder_open", on_click=pick).classes("vmi-browse-icon") \
+                .props('flat dense round aria-label="Browse"')
     return inp
 
 
@@ -336,6 +335,7 @@ class JobView:
         self._chevron = None
         self._console_head = None
         self._console_open = False
+        self._console_opened_for_job = False
         self._results_placeholder = None
         self._interval = interval
 
@@ -404,6 +404,11 @@ class JobView:
         self._console_open = not self._console_open
         self._sync_console()
 
+    def open_console(self) -> None:
+        if not self._console_open:
+            self._console_open = True
+            self._sync_console()
+
     def _on_console_key(self, e) -> None:
         key = e.args.get("key") if isinstance(e.args, dict) else None
         if key in ("Enter", " ", "Spacebar"):
@@ -448,6 +453,7 @@ class JobView:
         self.job = job
         self._log_cursor = 0
         self._results_shown = False
+        self._console_opened_for_job = False
         if self.log is not None:
             self.log.clear()
         self._reset_results()
@@ -488,9 +494,9 @@ class JobView:
                 "cancelled": "Cancelled",
             }.get(j.status, "Output appears here after a run.")
         running = j.status == "running"
-        if running and not self._console_open:
-            self._console_open = True
-            self._sync_console()
+        if not self._console_opened_for_job and (running or j.status in ("done", "failed", "cancelled")):
+            self._console_opened_for_job = True
+            self.open_console()
         if self.spinner is not None:
             self.spinner.visible = running
         if self.progress is not None:
@@ -515,9 +521,6 @@ class JobView:
             self._results_shown = True
             if self._results_placeholder is not None:
                 self._results_placeholder.visible = False
-            if not self._console_open:
-                self._console_open = True
-                self._sync_console()
             if self._results_builder is not None:
                 try:
                     with self.results:

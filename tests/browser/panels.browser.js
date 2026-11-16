@@ -29,9 +29,30 @@ async page => {
     }
     if (await panel.getByText('Internal Server Error', {exact: true}).count()) throw new Error(`${name}: failed to render`);
   }
+  await show('GMD Map');
+  const mapPanel = page.getByRole('tabpanel');
+  if (!await mapPanel.getByLabel('HDF5 pattern', {exact: true}).isVisible()) throw new Error('Missing HDF5 pattern');
+  const browse = mapPanel.getByRole('button', {name: 'Browse', exact: true}).first();
+  await browse.press('Enter');
+  const picker = page.getByRole('dialog');
+  await picker.waitFor();
+  await picker.getByRole('button', {name: 'Cancel', exact: true}).click();
+  await picker.waitFor({state: 'hidden'});
+  await browse.press('Space');
+  await picker.waitFor();
+  await picker.getByRole('button', {name: 'Cancel', exact: true}).click();
+  await picker.waitFor({state: 'hidden'});
+  await show('Binning');
+  const bins = page.getByRole('tabpanel');
+  await bins.getByText('GMD histograms', {exact: true}).click();
+  await bins.getByRole('button', {name: 'Histogram GMD values', exact: true}).waitFor();
   await show('Centroiding');
+  await page.getByRole('button', {name: 'View saved results', exact: true}).click();
+  await page.getByRole('tabpanel').locator('.vmi-results:visible').waitFor();
   await page.screenshot({path: '.cache/vmi-analysis/layout_centroiding.png'});
   await show('Accumulate');
+  await page.getByRole('button', {name: 'View saved result', exact: true}).click();
+  await page.getByRole('tabpanel').locator('.vmi-results:visible').waitFor();
   await page.screenshot({path: '.cache/vmi-analysis/layout_accumulate.png'});
   if (errors.length) throw new Error(errors.join('; '));
   return {passed: true, panels: names, overlayLoaded: true};

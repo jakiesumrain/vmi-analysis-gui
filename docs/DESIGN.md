@@ -113,7 +113,7 @@ panel, not a SaaS landing page.
 
 The shell is a persistent workbench with four regions, and only four:
 
-- **Header** — brand mark + application name, with *Settings* at the right.
+- **Header** — application name, with *Settings* at the right.
   No navigation lives here; navigation is the rail's job.
 - **Left rail** — the tool index, grouped *Acquire / Analyze / Automate*,
   with an icon and a short name per tool. The active tool is marked by a
@@ -143,14 +143,14 @@ A panel that invents its own layout vocabulary is a defect.
    thinks: inputs → parameters → output.
 3. **Fields** — `field_grid(columns)` for even input columns, `check_grid()`
    for option rows, `path_input()` for every filesystem path (full-width,
-   with the keyboard-focusable browse icon in the append slot).
+   with a keyboard-operable Browse button in the append slot).
 4. **Action row** — `action_bar(view, label)`: **one** primary Run button
    that becomes Stop/Cancel while work is active (`JobView.run_button`).
    Secondary and destructive actions sit beside it; destructive actions use
    the flat `vmi-action-danger` treatment and always confirm first.
 5. **Console + results** — `place_console()` at the panel bottom: a
    collapsible, keyboard-operable console dock, collapsed at rest,
-   auto-opening while a job runs, with a monospaced log and a results area
+   auto-opening once per job, with a monospaced log and a results area
    that shows an explicit empty state ("No results yet — …") before the
    first result.
 
@@ -215,10 +215,9 @@ Pipeline adds one element to the anatomy: the numbered stage chip track
 
 ## Accessibility
 
-- Every interactive element is reachable and operable by keyboard. Custom
-  click targets (console header, browse icon) carry `role="button"`,
-  `tabindex="0"`, and Enter/Space handlers — copy the existing pattern,
-  never a div with only `on_click`.
+- Every interactive element is reachable and operable by keyboard. Use a
+  named button for Browse. The custom console header has `role="button"`,
+  `tabindex="0"`, and Enter/Space handlers.
 - Focus is visible: the shared `:focus-visible` outline (2px primary, 2px
   offset) applies to every new control.
 - State is announced, not implied: `aria-expanded` on the console header,

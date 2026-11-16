@@ -228,12 +228,9 @@ def index() -> None:
             ui.button("Close", on_click=lambda: settings_dialog.close()).props("flat")
 
     with ui.header().classes("vmi-header items-center justify-between px-6 py-3"):
-        with ui.row().classes("items-center gap-3"):
-            ui.html('<img src="/brand/electron-spectrum-measured.svg" '
-                    'class="vmi-brand" alt="">')
-            with ui.row().classes("items-baseline gap-3"):
-                ui.label("VMI Analysis").classes("vmi-title vmi-title-md vmi-title-bold")
-                ui.label("photoelectron imaging toolbox").classes("vmi-subtitle")
+        with ui.row().classes("items-baseline gap-3"):
+            ui.label("VMI Analysis").classes("vmi-title vmi-title-md vmi-title-bold")
+            ui.label("photoelectron imaging toolbox").classes("vmi-subtitle")
         with ui.row().classes("items-center gap-3"):
             settings_button = ui.button(
                 "Settings", icon="settings",
@@ -324,7 +321,6 @@ def main(*, host: str = "0.0.0.0", launch_command: str = "uv run vmi-analysis") 
     except ValueError:
         MANAGER.set_max_concurrent(2)
     init_zoom_overlay()
-    app.add_static_files("/brand", str(files("vmi_analysis.gui.assets")))
     ui.run(title="VMI Analysis",
            favicon=str(files("vmi_analysis.gui.assets") / "electron-spectrum-measured.svg"),
            host=host,

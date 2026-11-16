@@ -148,6 +148,7 @@ def build(jobs: JobManager) -> None:
             view.results.clear()
             with view.results:
                 _result_files(_output_dir(centroid_settings()))
+            view.open_console()
         with action_bar(view, on_click=run):
             ui.button("View saved results", icon="insights",
                       on_click=show_saved).props("flat color=secondary")

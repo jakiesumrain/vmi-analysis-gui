@@ -46,6 +46,23 @@ class RunStopButtonTests(ButtonFixture):
                 self.job.status = "cancelled"
         self.manager.cancel.side_effect = cancel
 
+    def test_console_auto_opens_once_per_job(self):
+        view, _ = self.make_view(self.manager, Mock())
+        job = Job(name="Centroiding", status="queued")
+        view.attach(job)
+        self.assertFalse(view.log.visible)
+        job.status = "running"
+        view.refresh()
+        self.assertTrue(view.log.visible)
+        view.toggle_console()
+        view.refresh()
+        self.assertFalse(view.log.visible)
+        job.status = "done"
+        view.refresh()
+        self.assertFalse(view.log.visible)
+        view.attach(Job(name="Centroiding", status="running"))
+        self.assertTrue(view.log.visible)
+
     def test_run_stop_stopping_and_restart_use_one_button(self):
         run = Mock()
         def start():
