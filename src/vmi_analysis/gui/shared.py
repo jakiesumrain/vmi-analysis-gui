@@ -360,9 +360,9 @@ def install(config_path):
         return response
 
     @app.get('/workspace-file/{area}/{relative:path}')
-    async def workspace_file(request: Request, area: str, relative: str):
+    async def workspace_file(request: Request, area: str, relative: str, download: bool = False):
         account = request_account(request.scope)
-        if area not in ('private', 'datasets') or not account:
+        if not account or area not in ('private', 'datasets') or (download and area != 'private'):
             raise HTTPException(404)
         root = account.root if area == 'private' else SERVER.datasets
         try:
@@ -371,7 +371,7 @@ def install(config_path):
                 raise HTTPException(404)
         except (WorkspaceDenied, OSError, RuntimeError):
             raise HTTPException(404) from None
-        return FileResponse(path, headers={
+        return FileResponse(path, filename=path.name if download else None, headers={
             'Cache-Control': 'private, no-store',
             'Content-Security-Policy': "sandbox; default-src 'none'",
             'X-Content-Type-Options': 'nosniff',

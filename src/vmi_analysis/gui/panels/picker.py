@@ -17,7 +17,8 @@ from .. import shared
 _DRIVES = [f"{d}:/" for d in string.ascii_uppercase if os.path.exists(f"{d}:/")]
 _MAX_ENTRIES = 1000
 
-_TITLES = {"file": "Select file", "dir": "Select folder", "save": "Save as"}
+_TITLES = {"file": "Select file", "dir": "Select folder", "save": "Save as",
+           "download": "Choose a file to download"}
 
 
 def _create_directory(parent: Path, name: str) -> Path:
@@ -47,18 +48,19 @@ class LocalFilePicker(ui.dialog):
     """Awaitable dialog; resolves to the chosen path string or None.
 
     mode: "file" (pick an existing file), "dir" (pick a directory),
-    "save" (navigate + file name, may not exist yet).
+    "save" (navigate + file name, may not exist yet), "download" (private file).
     """
 
     def __init__(self, start=None, mode: str = "file",
                  filters: list[str] | None = None, default_name: str = ""):
         super().__init__()
         self.mode = mode
+        self.private_only = mode in ("save", "download")
         self.filters = {f.lower() for f in filters} if filters else None
         if shared.SERVER:
             try:
-                allowed = shared.checked_path(start or ".", write=mode == "save")
-                self.path = shared.checked_path(_nearest_dir(allowed), write=mode == "save")
+                allowed = shared.checked_path(start or ".", write=self.private_only)
+                self.path = shared.checked_path(_nearest_dir(allowed), write=self.private_only)
             except shared.WorkspaceDenied:
                 self.path = shared.workspace_root()
         else:
@@ -78,13 +80,14 @@ class LocalFilePicker(ui.dialog):
             if shared.SERVER:
                 with ui.row().classes("gap-2"):
                     ui.button("My workspace", on_click=lambda: self._nav(shared.workspace_root())).props("flat dense")
-                    if mode != "save":
+                    if not self.private_only:
                         ui.button("Shared datasets", on_click=lambda: self._nav(shared.SERVER.datasets)).props("flat dense")
             self.entries = ui.list().props("bordered separator") \
                 .classes("w-full h-72 overflow-auto")
             with ui.row().classes("w-full items-center justify-end gap-2"):
-                ui.button("New folder", icon="create_new_folder", on_click=self._new_folder) \
-                    .props("flat color=primary").classes("mr-auto")
+                if mode != "download":
+                    ui.button("New folder", icon="create_new_folder", on_click=self._new_folder) \
+                        .props("flat color=primary").classes("mr-auto")
                 if mode == "save":
                     self.name_input = ui.input("File name", value=default_name) \
                         .props("outlined dense").classes("grow")
@@ -137,7 +140,7 @@ class LocalFilePicker(ui.dialog):
     def _nav(self, p: Path):
         if shared.SERVER:
             try:
-                p = shared.checked_path(p, write=self.mode == "save")
+                p = shared.checked_path(p, write=self.private_only)
             except shared.WorkspaceDenied:
                 return
         self.path = p
@@ -147,7 +150,7 @@ class LocalFilePicker(ui.dialog):
 
     def _choose(self, p: Path):
         if shared.SERVER:
-            p = shared.checked_path(p, write=self.mode == "save")
+            p = shared.checked_path(p, write=self.private_only)
         if self.mode == "save":
             self.name_input.value = p.name
         else:
@@ -177,7 +180,7 @@ class LocalFilePicker(ui.dialog):
             return False
         if shared.SERVER:
             try:
-                shared.checked_path(p, write=self.mode == "save")
+                shared.checked_path(p, write=self.private_only)
             except (shared.WorkspaceDenied, OSError, RuntimeError):
                 return False
         if p.is_dir():

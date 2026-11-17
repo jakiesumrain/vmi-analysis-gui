@@ -76,6 +76,9 @@ keeps your form values across browser and server restarts. Closing the browser
 or tunnel leaves your jobs running. Sign back in to see jobs from the current
 server process. After a server restart, open your saved results from disk.
 
+To save an output on your computer, open **Settings**, choose **Download
+workspace file**, and select the file from **My workspace**.
+
 The server queues work when it reaches the concurrency limit. Only VMI
 administrators can change the running server's limit or stop it from Settings.
 Set the startup limit in the JSON file. Restart the server to add or remove

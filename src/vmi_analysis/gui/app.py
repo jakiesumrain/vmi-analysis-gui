@@ -17,7 +17,7 @@ from .jobs import MANAGER, ResourceBusyError
 from .startup import startup_port
 from .panels import (accumulate, binning, calibration, centroid, circularize,
                      dark, gmd_map, ion_luna, movie, pes, pipeline)
-from .panels.common import init_zoom_overlay
+from .panels.common import file_url, init_zoom_overlay
 from .panels.picker import LocalFilePicker
 
 # Keep the saved key so existing on/off preferences carry over.
@@ -162,6 +162,18 @@ def index() -> None:
         store.update(settings)
         ui.navigate.reload()
 
+    async def download_workspace_file():
+        path = await LocalFilePicker(start=shared.workspace_root(), mode="download")
+        if not path:
+            return
+        try:
+            private_path = shared.checked_path(path, write=True)
+            if not private_path.is_file():
+                raise ValueError("This file is no longer available.")
+            ui.download.from_url(file_url(private_path) + "&download=true", filename=private_path.name)
+        except (OSError, ValueError) as exc:
+            ui.notify(str(exc), type="warning")
+
     def change_limit(event):
         shared.require_admin()
         if event.value is None:
@@ -233,6 +245,8 @@ def index() -> None:
         with ui.row().classes("w-full gap-2"):
             ui.button("Save workflow", icon="save", on_click=save_workflow).props("flat")
             ui.button("Load workflow", icon="folder_open", on_click=load_workflow).props("flat")
+        if account:
+            ui.button("Download workspace file", icon="download", on_click=download_workspace_file).props("flat")
         with ui.row().classes("w-full justify-between items-center"):
             with ui.row().classes("gap-1"):
                 ui.button("About", icon="info",

@@ -113,6 +113,8 @@ class SharedServerTests(unittest.TestCase):
         bob = TestClient(web, base_url="http://127.0.0.1:13517")
         private = "/workspace-file/private/preview.txt"
         self.assertEqual(alice.get(private).status_code, 401)
+        download = private + "?download=true"
+        self.assertEqual(alice.get(download).status_code, 401)
         for name, client in (("alice", alice), ("bob", bob)):
             login = client.post("/login", data={"username": name, "password": f"password-for-{name}"},
                                 follow_redirects=False)
@@ -121,6 +123,13 @@ class SharedServerTests(unittest.TestCase):
             self.assertEqual(client.get("/workspace-file/datasets/raw.txt").text, "shared")
         self.assertEqual(alice.get(private).text, "alice")
         self.assertEqual(bob.get(private).status_code, 404)
+        result = alice.get(download)
+        self.assertEqual(result.text, "alice")
+        self.assertEqual(result.headers["content-disposition"], 'attachment; filename="preview.txt"')
+        self.assertEqual(bob.get(download).status_code, 404)
+        self.assertEqual(alice.get("/workspace-file/datasets/raw.txt?download=true").status_code, 404)
+        self.assertEqual(bob.get("/workspace-file/private/%2E%2E/%2E%2E/alice/files/preview.txt?download=true").status_code,
+                         404)
         self.assertEqual(bob.get("/workspace-file/private/%2E%2E/%2E%2E/alice/files/preview.txt").status_code,
                          404)
         self.assertEqual(alice.post("/logout", headers={"Origin": "http://external.invalid"}).status_code, 403)
