@@ -16,7 +16,7 @@ from . import theme, workflow
 from .jobs import MANAGER, ResourceBusyError
 from .startup import startup_port
 from .panels import (accumulate, binning, calibration, centroid, circularize,
-                     dark, gmd_map, movie, pes, pipeline)
+                     dark, gmd_map, ion_luna, movie, pes, pipeline)
 from .panels.common import init_zoom_overlay
 from .panels.picker import LocalFilePicker
 
@@ -102,6 +102,7 @@ TABS = [
     ("Circularize", circularize),
     ("PES", pes),
     ("Pipeline", pipeline),
+    ("TPX3 Dump", ion_luna),
 ]
 TAB_ICONS = {
     "GMD Map": "link",
@@ -114,12 +115,17 @@ TAB_ICONS = {
     "Circularize": "donut_large",
     "PES": "show_chart",
     "Pipeline": "account_tree",
+    "TPX3 Dump": "memory",
 }
 SIDEBAR_GROUPS = (
-    ("Acquire", ("GMD Map", "Movie", "Dark Frame", "Accumulate")),
-    ("Analyze", ("Centroiding", "Binning", "Trig Calibration", "Circularize", "PES")),
-    ("Automate", ("Pipeline",)),
+    ("Electron", (
+        ("Acquire", ("GMD Map", "Movie", "Dark Frame", "Accumulate")),
+        ("Analyze", ("Centroiding", "Binning", "Trig Calibration", "Circularize", "PES")),
+        ("Automate", ("Pipeline",)),
+    )),
+    ("Ion", ((None, ("TPX3 Dump",)),)),
 )
+SIDEBAR_JS = files("vmi_analysis.gui.assets") / "sidebar.js"
 
 
 @ui.page("/")
@@ -262,23 +268,39 @@ def index() -> None:
         keep_dot.classes("vmi-status-dot-keep" if keep_alive
                          else "vmi-status-dot-auto")
 
+    tab_groups = []
+    panel_disclosures = {}
+
+    def reveal_active_group(event):
+        if disclosure := panel_disclosures.get(event.value):
+            ui.run_javascript(f"getHtmlElement({disclosure.id}).open = true")
+
     with ui.row().classes("vmi-workbench w-full no-wrap"):
         with ui.column().classes("vmi-sidebar"):
             ui.label("Workspace").classes("vmi-sidebar-title")
-            with ui.tabs().classes("vmi-sidebar-tabs").props("inline-label") as tabs:
-                for group_index, (group, names) in enumerate(SIDEBAR_GROUPS):
-                    ui.label(group).classes(
-                        "vmi-sidebar-group"
-                        + (" vmi-sidebar-group-first" if group_index == 0 else ""))
-                    for name in names:
-                        ui.tab(name, icon=TAB_ICONS[name])
+            for group, sections in SIDEBAR_GROUPS:
+                with ui.element("details").classes("vmi-sidebar-disclosure").props(
+                        f'data-workspace-group="{group}"') as disclosure:
+                    with ui.element("summary"):
+                        ui.label(group)
+                        ui.icon("expand_more").props('aria-hidden="true"')
+                    with ui.tabs().props(f'inline-label aria-label="{group} tools"') as tabs:
+                        tab_groups.append(tabs)
+                        for index, (section, names) in enumerate(sections):
+                            if section:
+                                ui.label(section).classes(
+                                    "vmi-sidebar-group"
+                                    + (" vmi-sidebar-group-first" if index == 0 else ""))
+                            for name in names:
+                                ui.tab(name, icon=TAB_ICONS[name])
+                                panel_disclosures[name] = disclosure
             with ui.column().classes("vmi-sidebar-foot"):
                 ui.label("Local workspace").classes("vmi-sidebar-foot-label")
                 ui.label(f"{len(TABS)} tools").classes("vmi-sidebar-foot-note")
 
         with ui.column().classes("vmi-workspace"):
-            with ui.tab_panels(tabs, value=TABS[0][0]).classes(
-                    "vmi-tab-panels w-full bg-transparent"):
+            with ui.tab_panels(value=TABS[0][0], on_change=reveal_active_group).classes(
+                    "vmi-tab-panels w-full bg-transparent") as panels:
                 def export_calibration(extracted_path, image_path, manual_center, **settings):
                     return use_calibration(extracted_path, image_path, manual_center, **settings)
 
@@ -291,6 +313,10 @@ def index() -> None:
                                 module.build(MANAGER, use_calibration=export_calibration)
                             else:
                                 module.build(MANAGER)
+
+    for tabs in tab_groups:
+        tabs.bind_value(panels)
+    ui.context.client.on_connect(lambda: ui.run_javascript(SIDEBAR_JS.read_text(encoding="utf-8")))
 
     with ui.footer().classes(
             "vmi-footer vmi-status-footer px-6 py-2 items-center justify-between"):

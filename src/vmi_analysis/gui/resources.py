@@ -160,6 +160,11 @@ def command_access(cmd, cwd=None):
         if backend == "matlab":
             exclusive.add("MATLAB/CPBASEX")
             write(CPBASEX_DIR / "examples")
+    elif module == "vmi_analysis.ion_luna":
+        read(value("--input"))
+        read(value("--timewalk-file"))
+        write(value("--output"))
+        write(value("--metadata-output"))
     return Access(frozenset(reads), frozenset(writes), frozenset(exclusive),
                   gmd_map_output=gmd_map_output, centroid_output_dir=centroid_output_dir)
 

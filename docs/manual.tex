@@ -293,11 +293,15 @@ one Run/Stop control. See Section~\ref{sec:panels} for the panel-specific fields
 \subsection{Window layout and tabs}
 \label{sec:tabs}
 
-Use the left sidebar to select a panel. On narrow windows, scroll the tool
-bar above the panel. \emph{Acquire} groups \emph{GMD Map}, \emph{Movie},
+Use the left sidebar to select a panel. Expand or collapse \emph{Electron}
+and \emph{Ion} independently. Both start collapsed. The browser remembers
+which groups you open.
+On narrow windows, scroll the tool rows above the panel.
+In \emph{Electron}, \emph{Acquire} groups \emph{GMD Map}, \emph{Movie},
 \emph{Dark Frame}, and \emph{Accumulate}. \emph{Analyze} groups
 \emph{Centroiding}, \emph{Binning}, \emph{Trig Calibration},
 \emph{Circularize}, and \emph{PES}. \emph{Automate} contains \emph{Pipeline}.
+\emph{Ion} contains \emph{TPX3 Dump}.
 
 The footer shows running and queued jobs, the job limit, and the server's
 disconnect mode. Open \emph{Settings} to change the limit or disconnect mode,
@@ -2021,6 +2025,59 @@ jobs wait.
 write. After a page reload, the active job badge and console reconnect.
 To run all stages again, clear \emph{Skip stages whose outputs exist}.
 Individual programs can still reuse their own checkpoints or caches.
+
+\subsection{TPX3 Dump}
+\label{sec:tpx3dump}
+
+Use \emph{Ion} $\rightarrow$ \emph{TPX3 Dump} to convert a Timepix3 file
+or a folder of \code{.tpx3} files into one LUNA HDF5 file.
+On Linux, put \code{tpx3dump} on the server's PATH. On Windows, install it
+in WSL2. Expand \emph{WSL2 settings} to select a different distribution or
+enter a Linux executable path. The panel uses Windows paths for input and
+output and converts them to WSL paths when it starts a job.
+
+Select \emph{File} or \emph{Folder} for the picker, choose the input, and
+set \emph{HDF5 output} in \emph{Dump TPX3}. LUNA normally unpacks, sorts,
+and clusters hits.
+\emph{Raw unpacking only} requests unpacking without sorting or clustering.
+\emph{Disable clustering} keeps sorting. \emph{Detector and timing} sets the
+chip layout and TDC reference. The initial reference is \code{TDC1Rising}.
+\emph{Clustering} sets the algorithm and proximity limits. Kuttruff shows a
+buffer size that controls how many recent clusters it checks for each hit.
+\emph{Calculate timewalk statistics} is on by default when clustering is
+enabled. An existing statistics file can seed the calculation. The panel
+uses LUNA's defaults for time bins and HDF5 settings. The console shows the
+full \code{tpx3dump} command for each stage above the log, followed by
+diagnostics and the completed output path.
+
+To apply the correction, choose \emph{Apply timewalk correction} and select
+the HDF5 file with statistics. The input defaults to the dump output path.
+Set the cluster ToT cut for the lookup table and click \emph{Run}. The initial
+cut is 500 ns, shared with the dump stage. The panel
+writes a separate HDF5 file. If the output field is blank, the filename
+ends in \code{\_corrected.h5}. The tested LUNA build updates pixel and
+cluster arrival times and preserves the TDC events.
+
+\emph{Strip 32-byte acquisition prefix} is on by default for single-chip
+recordings with a timestamp and GMD prefix. The panel reads the prefix,
+adds Serval chunk headers to temporary copies of the raw packets, and passes
+the copies to LUNA. The panel sorts files with a \code{frame\_<number>}
+suffix by numeric frame number. Prefixed files without frame numbers use
+acquisition timestamp order. The original files stay intact. The panel writes
+\code{<output-stem>\_metadata.h5} beside the LUNA output before LUNA starts.
+Its \code{/frames} dataset has one row per source file in the same order.
+Each row contains the original
+filename, the timestamp in integer nanoseconds since the Unix epoch,
+\code{gmd1}, and \code{gmd2}. Ties follow filename order.
+Leave the option clear for a standard Serval export.
+
+Expand \emph{Inspect HDF5 files} below the console to inspect a saved file.
+Completed jobs provide \emph{Inspect output} and, when acquisition metadata
+is available, \emph{Inspect metadata} shortcuts. The
+summary shows counts, time spans, and statistics for recognized datasets.
+Expand \emph{HDF5 structure} for groups, dataset shapes and data types,
+compound fields, and attributes. The inspection reads the file without
+changing it.
 
 \section{Output files}
 \label{sec:outputs}

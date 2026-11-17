@@ -313,9 +313,11 @@ class JobView:
     """
 
     def __init__(self, jobs: JobManager, results_builder=None, live_builder=None,
-                 interval: float = 0.7, job_name: str | None = None):
+                 interval: float = 0.7, job_name: str | None = None, command_key: str | None = None):
         self.jobs = jobs
         self.job_name = job_name
+        self._command_key = command_key
+        self.command_label = None
         self.job: Job | None = None
         self.action_button = None
         self._run_label = "Run"
@@ -393,6 +395,8 @@ class JobView:
                     .classes("vmi-caption vmi-console-hint")
             head.on("click", self.toggle_console)
             head.on("keydown", self._on_console_key)
+            if self._command_key is not None:
+                self.command_label = ui.label("").classes("w-full font-mono text-xs break-all select-text")
             self.log = theme.log_console()
             self.results = ui.column().classes("w-full gap-4 vmi-results")
         self._reset_results()
@@ -419,6 +423,7 @@ class JobView:
             self.log.visible = self._console_open
         if self.results is not None:
             self.results.visible = self._console_open
+        self._sync_command()
         if self._chevron is not None:
             if self._console_open:
                 self._chevron.classes(add="vmi-console-open")
@@ -440,6 +445,12 @@ class JobView:
                 ui.icon("insights")
                 ui.label("No results yet — run this stage or open saved results.") \
                     .classes("vmi-caption")
+
+    def _sync_command(self) -> None:
+        if self.command_label is not None:
+            command = self.job.extra.get(self._command_key, "") if self.job else ""
+            self.command_label.text = command
+            self.command_label.visible = self._console_open and bool(command)
 
     def clear_results(self) -> None:
         """Public clear (e.g. after deleting outputs); restores the placeholder.
@@ -474,6 +485,7 @@ class JobView:
                 return
         j = self.job
         self._sync_button()
+        self._sync_command()
         if self.wait_label is not None:
             self.wait_label.visible = j is not None and j.status == "queued"
             self.wait_label.text = j.wait_reason if j is not None else ""
