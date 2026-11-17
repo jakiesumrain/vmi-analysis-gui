@@ -182,7 +182,7 @@ def index() -> None:
 
     with ui.dialog() as about_dialog, ui.card().classes("w-96 gap-3"):
         ui.label("About VMI Analysis").classes("text-lg font-semibold")
-        ui.label("Photoelectron imaging analysis toolbox.").classes("vmi-subtitle")
+        ui.label("Electron and ion imaging toolbox.").classes("vmi-subtitle")
         ui.separator()
         with ui.row().classes("w-full items-center justify-between"):
             ui.label("Author").classes("vmi-caption")
@@ -236,7 +236,7 @@ def index() -> None:
     with ui.header().classes("vmi-header items-center justify-between px-6 py-3"):
         with ui.row().classes("items-baseline gap-3"):
             ui.label("VMI Analysis").classes("vmi-title vmi-title-md vmi-title-bold")
-            ui.label("photoelectron imaging toolbox").classes("vmi-subtitle")
+            ui.label("electron and ion imaging toolbox").classes("vmi-subtitle")
         with ui.row().classes("items-center gap-3"):
             settings_button = ui.button(
                 "Settings", icon="settings",

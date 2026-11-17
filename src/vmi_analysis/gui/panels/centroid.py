@@ -152,6 +152,20 @@ def build(jobs: JobManager) -> None:
                 .props("flat color=negative").classes("vmi-action-danger")
 
     view.place_console()
+    with ui.expansion("Checkpoint contents", icon="description", value=False).classes("w-full"):
+        ui.label("The batch checkpoint stores one row per detected event in the HDF5 table /localizations. "
+                 "Centroiding can resume from this table, and Binning uses it as input.")
+        ui.label(
+            "x, y          Fitted spot coordinates in detector pixels\n"
+            "mass          Fitted photon count\n"
+            "size          Mean fitted spot width (σx and σy) in pixels\n"
+            "ecc           Eccentricity, 1 − smaller width / larger width\n"
+            "signal        Photon count divided by π × size²\n"
+            "frame         Zero-based frame index across the input files\n"
+            "net_gradient  Picasso’s spot-detection score"
+        ).classes("font-mono text-xs whitespace-pre-wrap select-text")
+        ui.label("File attributes record the background subtraction mode. With a frame limit, "
+                 "they also record the requested limit and the number of frames processed.")
 
 
 def _make_widget(kind: str, label: str, value):

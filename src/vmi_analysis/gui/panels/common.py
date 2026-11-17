@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from contextlib import contextmanager
 from pathlib import Path
+from time import monotonic, sleep
 
 import numpy as np
 from nicegui import app, ui
@@ -54,13 +56,58 @@ def file_url(path) -> str:
 # Open-in-file-manager
 # --------------------------------------------------------------------------
 
-def open_folder(path) -> None:
+def _open_windows_folder(folder: Path) -> None:
+    os.startfile(str(folder))
+    try:
+        import pythoncom
+        import pywintypes
+        import win32con
+        import win32gui
+        from win32com.client import Dispatch
+    except ImportError:
+        return
+
+    # Locate the actual folder window after Explorer handles the launch.
+    # Its process ID may be shared by windows showing unrelated folders.
+    expected = os.path.normcase(str(folder))
+    pythoncom.CoInitialize()
+    try:
+        shell = Dispatch("Shell.Application")
+        deadline = monotonic() + 1.5
+        while monotonic() < deadline:
+            for window in shell.Windows():
+                try:
+                    location = os.path.normcase(os.path.normpath(window.Document.Folder.Self.Path))
+                    if location != expected:
+                        continue
+                    hwnd = window.HWND
+                    if win32gui.IsIconic(hwnd):
+                        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                    try:
+                        win32gui.SetForegroundWindow(hwnd)
+                    except pywintypes.error:
+                        pass
+                    if win32gui.GetForegroundWindow() != hwnd:
+                        # Raise the window without taking keyboard focus when Windows blocks activation.
+                        flags = win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
+                        win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, 0, 0, 0, 0, flags)
+                    return
+                except (AttributeError, TypeError, pywintypes.com_error, pywintypes.error):
+                    continue  # A Shell window may be closing or showing a virtual location.
+            sleep(0.05)
+    except pywintypes.com_error:
+        pass  # Explorer already received the open request.
+    finally:
+        pythoncom.CoUninitialize()
+
+
+async def open_folder(path) -> None:
     """Open a file's containing folder (or the folder itself) in the OS
     file manager on the machine running the server."""
     p = Path(path)
-    folder = p if p.is_dir() else p.parent
+    folder = (p if p.is_dir() else p.parent).resolve()
     try:
-        os.startfile(str(folder))  # Windows
+        await asyncio.to_thread(_open_windows_folder, folder)
     except (OSError, AttributeError) as e:
         ui.notify(f"Could not open {folder}: {e}", type="negative")
     else:
@@ -70,8 +117,11 @@ def open_folder(path) -> None:
 def open_folder_button(path, label: str = "open containing folder"
                        ) -> ui.button:
     """Flat caption-style button that opens the folder in the file manager."""
+    async def on_click():
+        await open_folder(path)
+
     return ui.button(label, icon="folder_open",
-                     on_click=lambda: open_folder(path)) \
+                     on_click=on_click) \
         .props("flat dense").classes("vmi-caption")
 
 

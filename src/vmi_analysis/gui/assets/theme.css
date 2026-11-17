@@ -664,6 +664,19 @@ html, body {
 }
 .polar-guide-layer [data-polar-guide="xy"]::before { inset: 6px; border-radius: 50%; }
 
+[data-polar-drag]:not([data-polar-drag="off"]) > img { cursor: crosshair; touch-action: none; }
+.polar-drag-draft {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 2px dashed var(--vmi-primary);
+  background: rgb(37 99 235 / 14%);
+}
+[data-polar-drag="mask"] .polar-drag-draft {
+  border-color: #dc2626;
+  background: rgb(220 38 38 / 16%);
+}
+
 @keyframes vmi-panel-enter {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }

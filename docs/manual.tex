@@ -1330,6 +1330,9 @@ results} rebuilds these views from the current output directory without
 rerunning; \emph{Clear outputs} deletes the listed files after confirmation,
 including the checkpoint if its checkbox is ticked.
 
+Expand \emph{Checkpoint contents} at the bottom of the panel for a text
+reference to the fields and attributes written by the Centroiding batch.
+
 The final summary axes are \emph{Squared radius (pixel$^2$)} or
 \code{Kinetic energy (eV)} depending on whether alpha was set at run time; the
 y axis is always \emph{Intensity (arb. units)}.
@@ -1646,7 +1649,9 @@ accepted ring fits. Saves require a separate \code{.json} file. \\
   \item Select the Abel method and filter settings as needed. Click
         \emph{Apply processing}. The processed preview appears below the
         raw preview. The fit uses the processed preview.
-  \item Select \emph{Select band}. Drag a rectangle around one ring.
+  \item Select \emph{Select band}. With \emph{Full angular range} on, drag
+        horizontally across one ring. For a partial angular range, clear
+        that option and drag a rectangle.
         Click \emph{Zoom to band} to limit the radius range.
         Click \emph{Inspect band} to open a clipped view. Set the
         horizontal zoom between 0.05 and 1 to adjust its width.

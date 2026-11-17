@@ -88,6 +88,13 @@ class PanelHelperTests(unittest.TestCase):
         self.assertEqual(calibration._px_to_data(state, -5, 375), (0.0, pf.TWO_PI))
         self.assertEqual(calibration._px_to_data(state, 105, -20), (100.0, 0.0))
 
+    def test_horizontal_drag_selects_a_full_angle_band(self):
+        state = {"img_size": (100, 360), "view": {"r0": 0, "r1": 100, "theta0": 0, "theta1": pf.TWO_PI}}
+        start, end = (0.4, 0.5), (0.3, 0.5)
+        self.assertEqual(calibration._selection_rect(state, start, end, full_angle=True),
+                         pf.Rect(30, 40, 0, pf.TWO_PI))
+        self.assertIsNone(calibration._selection_rect(state, start, end, full_angle=False))
+
     def test_pointer_reads_displayed_samples_after_crop(self):
         raw = np.arange(20).reshape(4, 5)
         state = {"raw": raw, "processed": raw * 2, "r": np.arange(5) / 2,
