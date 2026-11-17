@@ -115,10 +115,10 @@ The shell is a persistent workbench with four regions, and only four:
 
 - **Header** — application name, with *Settings* at the right.
   No navigation lives here; navigation is the rail's job.
-- **Left rail** — the tool index, grouped *Acquire / Analyze / Automate*,
-  with an icon and a short name per tool. The active tool is marked by a
-  tinted background and a 3px primary indicator at the leading edge.
-  Section captions are small-caps overlines separated by hairlines.
+- **Left rail** — the tool index, with independently collapsible *Electron*
+  and *Ion* groups. *Acquire*, *Analyze*, and *Automate* are section captions
+  inside *Electron*. Each tool has an icon and a short name. The active tool
+  has a colored label and a 3px indicator at the leading edge.
 - **Workspace** — exactly one active panel. Panels switch; they do not
   stack, scroll into each other, or open side by side.
 - **Status footer** — one compact line of global state: active jobs, queued

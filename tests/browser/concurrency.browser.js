@@ -28,6 +28,8 @@ async page => {
     await page.getByRole('button', {name: 'Run', exact: true}).waitFor();
   };
   await page.setViewportSize({width: 1440, height: 1000});
+  const electron = page.locator('[data-workspace-group="Electron"] > summary');
+  if (!await electron.evaluate(el => el.parentElement.open)) await electron.click();
   const settings = page.getByRole('button', {name: 'Settings', exact: true});
   const limit = page.getByRole('combobox', {name: 'Maximum concurrent jobs'});
   const chooseLimit = async value => {
@@ -40,6 +42,12 @@ async page => {
   await waitState(s => s.limit === 3);
   await page.request.post(endpoint('/_test/start'));
   await waitState(s => s.jobs.filter(j => j.status === 'running').length === 3);
+  await show('Movie', 'Frame Movie');
+  await electron.click();
+  await page.getByRole('tab', {name: 'Movie', exact: true}).waitFor({state: 'hidden'});
+  await page.getByRole('tabpanel').getByRole('button', {name: 'Stop', exact: true}).waitFor();
+  check(status(await state(), 'Frame movie') === 'running', 'Collapsing Electron preserves the running job');
+  await electron.click();
   await show('Accumulate', 'Fast Accumulate');
   await page.getByRole('button', {name: 'Cancel queued', exact: true}).waitFor();
   check(await page.getByText('Waiting for Dark frame:', {exact: false}).isVisible(), 'File conflict reason is visible');
