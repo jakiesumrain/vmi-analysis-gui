@@ -432,18 +432,17 @@ change the saved image or the analysis data.
 \subsection{Saved settings}
 \label{sec:settings}
 
-Form values are stored server-side in
-\code{.nicegui/\allowbreak{}storage-\allowbreak{}general.json} inside the workspace. Editing a field
-saves it immediately, even without clicking Run; the values survive a server
-restart and are shared by every browser connected to the same server. Job
-submissions take a snapshot of the inputs, so editing a form after starting
-a job does not change that job or where its results appear.
+The server saves form values when you edit them. They persist across
+restarts. In single-user mode, browsers share the values in
+\code{.nicegui/\allowbreak{}storage-\allowbreak{}general.json}. In shared
+mode, each account has its own settings file. A job uses a snapshot of its
+inputs. Edits after starting a job do not change the job or its outputs.
 
 Saved keys follow the pattern \code{<panel>.\allowbreak{}<field>} and are listed in the
 field tables of Section~\ref{sec:panels}. Some panels derive initial values
 from another panel's saved settings. Legacy \code{centroiding/\allowbreak{}config.\allowbreak{}toml}
-values are migrated once, read-only, for Centroiding and Binning; no GUI job
-passes a configuration file to a script.
+values are migrated once in single-user mode for Centroiding and Binning.
+The migration reads the old file without editing it.
 
 Choose \emph{Save workflow} in \emph{Settings}. The JSON file includes
 saved panel fields and their defaults. It stores file paths and display
@@ -481,16 +480,90 @@ The browser can reconnect within that window while the server remains up.
 Silent connection loss is detected through the socket pings. Both timing
 settings use their defaults for invalid or non-finite values.
 
-\subsection{Connect from Windows to a Linux host}
+\subsection{Set up accounts for a shared server}
+\label{sec:shared-accounts}
+
+A VMI Analysis account gives each person a private workspace, saved form
+values, and access to their own jobs. The person who manages the server
+creates accounts in a JSON file on the host. For a remote connection,
+the SSH account opens the tunnel and the VMI account opens the workspace.
+
+\subsubsection{Create the first administrator and user}
+
+From the repository checkout, run the following command once for each
+account. Enter the password twice. Use at least 12 characters. Copy the
+full hash that the command prints. The user enters the original password
+at sign-in.
+\begin{verbatim}
+uv run python -m vmi_analysis.gui.shared
+\end{verbatim}
+
+Save a file called \code{vmi-shared.json}. Replace the example paths and
+hashes. The dataset folder must already exist. The server creates the
+workspace folders. Keep the JSON file outside both directories and limit
+access to the people or service account that manage the server.
+\begin{verbatim}
+{
+  "datasets": "C:/VMI/datasets",
+  "workspaces": "C:/VMI/workspaces",
+  "max_concurrent_jobs": 2,
+  "accounts": {
+    "jeffrey": {
+      "password_hash": "PASTE_ADMIN_HASH_HERE",
+      "admin": true
+    },
+    "colleague": {
+      "password_hash": "PASTE_USER_HASH_HERE"
+    }
+  }
+}
+\end{verbatim}
+
+The keys under \code{accounts} are the sign-in names. Start each name with
+a lowercase letter. Use up to 32 lowercase letters, digits, underscores,
+or hyphens. Set \code{"admin": true} to let the account stop the server and
+change its job limit in \emph{Settings}. Omit \code{admin} for a regular user.
+On Linux, use Linux paths such as \code{/srv/vmi/datasets} and
+\code{/srv/vmi/workspaces}.
+
+\subsubsection{Start the shared server}
+
+From the repository checkout, set the path to the JSON file and start
+the app. In Windows PowerShell, use the following commands if you saved
+the file in your user folder.
+\begin{verbatim}
+$env:VMI_SHARED_CONFIG = "$env:USERPROFILE\vmi-shared.json"
+uv run vmi-analysis
+\end{verbatim}
+On Linux, replace the path in this example with the location of your file.
+\begin{verbatim}
+VMI_SHARED_CONFIG=/etc/vmi/vmi-shared.json uv run vmi-analysis
+\end{verbatim}
+
+Open \url{http://127.0.0.1:13517} and sign in. For remote access to a Linux
+host, open the SSH tunnel described in Section~\ref{sec:linux-mobaxterm}
+first. To test two accounts on one computer, use a regular browser window
+and a private window.
+
+\subsubsection{Add users or change account access}
+
+To add a user, generate a password hash, add a new entry under
+\code{accounts}, and restart the server. To reset a password, replace the
+account's hash. To change an account's role, edit its \code{admin} field.
+To revoke access, remove the account entry. All these changes take effect
+after a restart, which cancels active and queued jobs.
+
+\subsection{Connect to a Linux host}
 \label{sec:linux-mobaxterm}
 
-The Linux host reads the datasets and runs the analysis. The Windows
-computer connects to the web interface through MobaXterm. You need the
-Linux host's LAN address and an authorized SSH account.
+The Linux host reads the datasets and runs the analysis. You need the
+Linux host's LAN address and an authorized SSH account. To give each person
+separate settings, files, and jobs, set up a shared server as described in
+Section~\ref{sec:shared-accounts}, then use the same tunnels below.
 
 \begin{enumerate}
-  \item In the repository checkout on Linux, start the web server on the
-    loopback interface:
+  \item For single-user mode, start the web server on the loopback interface
+    from the Linux repository checkout.
 \begin{verbatim}
 VMI_GUI_PORT=13517 VMI_GUI_NO_SHOW=1 uv run python -c \
   "from vmi_analysis.gui.app import main; main(host=\"127.0.0.1\")"
@@ -506,6 +579,13 @@ VMI_GUI_PORT=13517 VMI_GUI_NO_SHOW=1 uv run python -c \
     Select datasets using their paths on Linux.
 \end{enumerate}
 
+On a Linux client, open the tunnel with OpenSSH. Keep this command running
+while you use the browser at \url{http://127.0.0.1:13517}:
+\begin{verbatim}
+ssh -N -o ExitOnForwardFailure=yes \
+  -L 127.0.0.1:13517:127.0.0.1:13517 ssh-user@linux-host
+\end{verbatim}
+
 Use SSH keys for approved users and restrict SSH access to your LAN or
 private VPN. Keep port \code{13517} closed to inbound network traffic.
 On Windows, check the tunnel listener in PowerShell:
@@ -514,7 +594,8 @@ Get-NetTCPConnection -LocalPort 13517 -State Listen |
     Select-Object LocalAddress
 \end{verbatim}
 Only loopback addresses (\code{127.0.0.1} or \code{::1}) should appear.
-The web interface uses the SSH tunnel for access and has no separate login.
+Single-user mode uses the SSH tunnel for access. Shared mode also asks for
+your VMI account when you open the web interface.
 
 Closing the tunnel disconnects the browser. With \emph{Keep running on
 disconnect} on, you can restart the tunnel and reopen the page. If you start

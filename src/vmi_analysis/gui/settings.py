@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
-from nicegui import app
-
 from vmi_analysis.centroiding.options import load_settings, options, section
 
 from vmi_analysis.paths import CENTROID_DIR
+from . import shared
+from .shared import centroid_dir, checked_path, settings_store
 LEGACY_CONFIG = CENTROID_DIR / "config.toml"
 MIGRATED_KEY = "centroid.settings_migrated"
 
@@ -17,10 +17,10 @@ def storage_key(group, key):
 
 def centroid_settings(store=None, legacy_path=None):
     """Copy current settings; existing saved keys always win over migration."""
-    store = app.storage.general if store is None else store
-    legacy_path = LEGACY_CONFIG if legacy_path is None else legacy_path
+    store = settings_store() if store is None else store
+    legacy_path = centroid_dir(LEGACY_CONFIG.parent) / LEGACY_CONFIG.name if legacy_path is None else legacy_path
     if not store.get(MIGRATED_KEY):
-        legacy = load_settings(legacy_path if Path(legacy_path).exists() else None)
+        legacy = load_settings(legacy_path if not shared.SERVER and Path(legacy_path).exists() else None)
         for group, key, _ in options():
             name = storage_key(group, key)
             if name not in store:
@@ -37,17 +37,17 @@ def centroid_settings(store=None, legacy_path=None):
 
 def output_dir(config):
     path = Path(config["vmi_picasso"]["output_dir"])
-    return path if path.is_absolute() else CENTROID_DIR / path
+    return path if path.is_absolute() else centroid_dir(CENTROID_DIR) / path
 
 
 def binning_inputs(store=None):
     """Migrate the former Binning config picker to explicit saved inputs once."""
-    store = app.storage.general if store is None else store
+    store = settings_store() if store is None else store
     config = centroid_settings(store)
     if not store.get("binning.inputs_migrated"):
         old_path = store.get("binning.config")
-        if old_path and Path(old_path).is_file():
-            config = load_settings(old_path)
+        if not shared.SERVER and old_path and (local := checked_path(old_path)).is_file():
+            config = load_settings(local)
         vmi = config["vmi_picasso"]
         defaults = {"checkpoint": str(output_dir(config) / vmi["checkpoint_file"]),
                     "output_dir": str(output_dir(config)), "gmd_map": vmi["gmd_map_path"],

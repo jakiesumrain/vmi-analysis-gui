@@ -7,9 +7,10 @@ from io import BytesIO
 import numpy as np
 from matplotlib import colormaps
 from matplotlib.colors import LogNorm, Normalize
-from nicegui import app, ui
+from nicegui import ui
 from PIL import Image
 
+from ..shared import settings_store
 from ..centroid_plots import COLORMAPS
 from .common import persist
 
@@ -49,7 +50,7 @@ def polar_preview(prefix, key, label, guides, make_image, *, legacy_shared_limit
             ("min", "Lower percentile (vmin)", 0, 99.9, 1),
             ("max", "Upper percentile (vmax)", 0.1, 100, 99.5),
         ):
-            legacy = app.storage.general.get(f"{prefix}.color_{bound}_pct") if legacy_shared_limits else None
+            legacy = settings_store().get(f"{prefix}.color_{bound}_pct") if legacy_shared_limits else None
             with ui.column().classes("w-64 max-w-full gap-0"):
                 value_label = ui.label().classes("vmi-subtitle")
                 slider = persist(

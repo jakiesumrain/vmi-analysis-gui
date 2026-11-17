@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi.responses import JSONResponse, Response
 from nicegui import app, ui
 
+from ..shared import generated_dir, workspace_root, workspace_timer
 from ..jobs import Job, JobManager, MANAGER, TERMINAL
 from ..resources import canonical_path
 from .. import theme
@@ -166,7 +167,7 @@ def build(jobs: JobManager) -> None:
             save_movie = persist(ui.checkbox("Save movie file", value=True),
                                  "movie.save_movie")
         movie_dir = persist(path_input("Movie output folder",
-                                       str(REPO_ROOT / "movies"),
+                                       str(workspace_root(REPO_ROOT) / "movies"),
                                        browse="dir"), "movie.movie_dir")
         with field_grid():
             movie_ext = persist(ui.select([".mp4", ".gif"], value=".mp4",
@@ -202,9 +203,9 @@ def build(jobs: JobManager) -> None:
             for previous in jobs.jobs():
                 if previous.name == "Frame movie" and previous.status in TERMINAL:
                     previous.extra.pop("preview_frame", None)
-            job = Job(name="Frame movie", cmd=cmd, cwd=str(REPO_ROOT))
+            job = Job(name="Frame movie", cmd=cmd, cwd=str(workspace_root(REPO_ROOT)))
             if saving:
-                frames_dir = GENERATED / "movie_frames" / uuid.uuid4().hex
+                frames_dir = generated_dir(GENERATED) / "movie_frames" / uuid.uuid4().hex
                 cmd.extend(["--dump-frames", str(frames_dir)])
                 job.extra["frames_dir"] = str(frames_dir)
             else:
@@ -271,13 +272,13 @@ def build(jobs: JobManager) -> None:
                 if job.cancel_requested or job.status != "done" or was_paused:
                     ui.run_javascript("vmiMovieStop()")
                 return
-        ui.timer(0.1, _live_tick)
+        workspace_timer(0.1, _live_tick)
 
     view.place_console()
 
 
 def _saved_frame_dirs(dataset: Path, output_dir: Path):
-    for source in sorted((GENERATED / "movie_frames").glob("*/movie-source.json")):
+    for source in sorted((generated_dir(GENERATED) / "movie_frames").glob("*/movie-source.json")):
         if source.parent.is_symlink() or source.parent.is_junction() or source.is_symlink():
             continue
         try:
@@ -297,8 +298,8 @@ def _clear_outputs(movie_dir, h5_dir, view: JobView, clear_preview) -> None:
             return
         ui.notify("Choose the dataset whose saved outputs you want to clear.", type="info")
         return
-    dataset = canonical_path(h5_dir.value, REPO_ROOT)
-    output_dir = canonical_path(movie_dir.value or REPO_ROOT, REPO_ROOT)
+    dataset = canonical_path(h5_dir.value, workspace_root(REPO_ROOT))
+    output_dir = canonical_path(movie_dir.value or workspace_root(REPO_ROOT), workspace_root(REPO_ROOT))
     name = os.path.basename(os.path.normpath(h5_dir.value))
     movies = [path for ext in (".mp4", ".gif")
               if (path := output_dir / (name + ext)).is_file()]

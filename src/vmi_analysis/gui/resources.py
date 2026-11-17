@@ -6,7 +6,8 @@ from pathlib import Path
 
 from vmi_analysis.centroiding.plot_data import (ABEL_IMAGE, RAW_IMAGE, SPECTRUM_CSV, SUMMARY_DATA,
                                                 SUMMARY_PNG, TUNING_DATA, TUNING_PNG)
-from vmi_analysis.paths import CENTROID_DIR, CIRCULARIZATION_DIR, CPBASEX_DIR
+from vmi_analysis.paths import CPBASEX_DIR
+from .shared import centroid_dir, circularization_dir
 
 
 def canonical_path(value, cwd=None):
@@ -120,14 +121,14 @@ def command_access(cmd, cwd=None):
         write(value("--live-path"))
     elif module == "vmi_analysis.centroiding.compute_dark":
         read(value("--dark-dir"))
-        directory = Path(value("--output-dir", str(CENTROID_DIR)))
+        directory = Path(value("--output-dir", str(centroid_dir())))
         method = value("--method", "median")
         write(directory / f"dark_{method}.npy")
         write(directory / f"dark_{method}_info.txt")
     elif module == "vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch":
         read(value("--h5-dir"))
         if "--dark-subtraction" in args:
-            read(value("--dark-file"), CENTROID_DIR)
+            read(value("--dark-file"), centroid_dir())
         if "--flat-field" in args:
             read(value("--flat-field-file"))
         if "--gmd-weighting" in args:
@@ -149,14 +150,14 @@ def command_access(cmd, cwd=None):
         if "--no-plots" not in args:
             write(value("--plot-dir", "trig_fit_plots"))
     elif module == "vmi_analysis.circularization.process_gmd_bins":
-        read(value("--bin-dir", str(CENTROID_DIR / "vmi_analysis_output_xe_j_100_sig")))
+        read(value("--bin-dir", str(centroid_dir() / "vmi_analysis_output_xe_j_100_sig")))
         for filename in ("extracted-FOC100eV-20260710.txt", "reassignment-FOC100eV-20260710.txt"):
-            read(CIRCULARIZATION_DIR / filename)
+            read(circularization_dir() / filename)
         backend = value("--inversion-backend", "pyabel")
         name = "gmd_bins_results" + value("--weight-suffix", "_w-gmd_norm")
         if backend == "pyabel":
             name += "_pyabel_" + value("--pyabel-method", "daun")
-        write(value("--output-dir", str(CIRCULARIZATION_DIR / name)))
+        write(value("--output-dir", str(circularization_dir() / name)))
         if backend == "matlab":
             exclusive.add("MATLAB/CPBASEX")
             write(CPBASEX_DIR / "examples")
@@ -170,9 +171,10 @@ def command_access(cmd, cwd=None):
 
 
 def job_access(job):
+    panel = f"panel:{job.owner}:{job.name}" if job.owner else f"panel:{job.name}"
     access = Access(frozenset(canonical_path(p, job.cwd) for p in job.reads),
                     frozenset(canonical_path(p, job.cwd) for p in job.writes),
-                    frozenset([*job.exclusive, f"panel:{job.name}"]))
+                    frozenset([*job.exclusive, panel]))
     if job.stages is None:
         command = command_access(job.cmd, job.cwd)
         combined = access.union(command)

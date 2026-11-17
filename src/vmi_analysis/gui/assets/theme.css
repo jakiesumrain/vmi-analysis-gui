@@ -23,6 +23,10 @@
   --vmi-info: #0284c7;
   --vmi-blue: #2563eb;
   --vmi-violet: #7c3aed;
+  /* Spectrum artwork ground colors, also used on the manual cover. */
+  --vmi-spectrum-ground-start: #1c1233;
+  --vmi-spectrum-ground-mid: #120e24;
+  --vmi-spectrum-ground-end: #090c1c;
   --vmi-font-display: "Fira Code", "Fira Mono", ui-monospace, monospace;
   --vmi-font-body: "Fira Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --vmi-font-mono: "Fira Code", "Fira Mono", ui-monospace, monospace;

@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 from nicegui import ui
 
+from ..shared import centroid_dir
 from ..accumulate_plot import FRAME_HISTOGRAM_HEIGHT, frame_histogram_figure
 from ..centroid_plots import plot_options
 from ..gmd_histograms import gmd_histogram_samples
@@ -26,7 +27,7 @@ BIN_LABEL_PATTERN = r"bin\d+_(?:minusinf|[+-]?\d\.\d{2}e[+-]\d+|[+-]?inf|nan)_(?
 
 def _resolve(path_text: str) -> Path:
     path = Path(path_text).expanduser()
-    return path if path.is_absolute() else CENTROID_DIR / path
+    return path if path.is_absolute() else centroid_dir(CENTROID_DIR) / path
 
 
 def build(jobs: JobManager) -> None:
@@ -203,18 +204,18 @@ def build(jobs: JobManager) -> None:
                    "--gmd-floor", str(gmd_floor.value),
                    "--no-show"]
             job = jobs.submit(Job(name="GMD binning", cmd=cmd,
-                                  cwd=str(CENTROID_DIR),
+                                  cwd=str(centroid_dir(CENTROID_DIR)),
                                   extra={"weight_mode": weight_mode.value,
                                          "weight_power": weight_power.value,
                                          "output_dir": str(Path(output.value) if Path(output.value).is_absolute()
-                                                           else CENTROID_DIR / output.value)}))
+                                                           else centroid_dir(CENTROID_DIR) / output.value)}))
             view.attach(job)
 
         def clear():
             if not output.value:
                 ui.notify("Set an output directory first.", type="warning")
                 return
-            directory = canonical_path(output.value, CENTROID_DIR)
+            directory = canonical_path(output.value, centroid_dir(CENTROID_DIR))
             if weight_power.value is None:
                 ui.notify("Enter a weight power first.", type="warning")
                 return

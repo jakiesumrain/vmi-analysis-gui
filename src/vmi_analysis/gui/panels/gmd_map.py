@@ -7,6 +7,7 @@ from pathlib import Path
 from nicegui import ui
 from vmi_analysis.paths import validate_distinct_output
 
+from ..shared import workspace_root
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (JobView, REPO_ROOT, action_bar, field_grid, num_input,
@@ -30,7 +31,7 @@ def build(jobs: JobManager) -> None:
             "", browse="file", filters=[".txt"],
             placeholder="current-time-both.txt"), "gmd_map.gmd_path")
         output_path = persist(path_input(
-            "Output map file", str(REPO_ROOT / "gmd_map_all.txt"),
+            "Output map file", str(workspace_root(REPO_ROOT) / "gmd_map_all.txt"),
             browse="save", filters=[".txt"],
             default_name="gmd_map_all.txt"), "gmd_map.output_path")
         with field_grid(2):
@@ -56,7 +57,7 @@ def _run(jobs, view, h5_dir, gmd_path, output_path, n_files, pattern):
            "--gmd-path", gmd_path.value,
            "--output-path", output_path.value,
            "--n-files", str(int(n_files.value or 0))]
-    job = jobs.submit(Job(name="GMD map", cmd=cmd, cwd=str(REPO_ROOT),
+    job = jobs.submit(Job(name="GMD map", cmd=cmd, cwd=str(workspace_root(REPO_ROOT)),
                           extra={"output_path": output_path.value}))
     view.attach(job)
 
@@ -70,7 +71,7 @@ def _clear_output(output_path, h5_dir, gmd_path, view) -> None:
     try:
         target = validate_distinct_output(txt, (("timestamp file", gmd_path.value),
                                                ("HDF5 directory", h5_dir.value)),
-                                          cwd=REPO_ROOT, output_label="GMD map output")
+                                          cwd=workspace_root(REPO_ROOT), output_label="GMD map output")
     except (OSError, ValueError) as exc:
         ui.notify(str(exc), type="warning")
         return
@@ -80,7 +81,7 @@ def _clear_output(output_path, h5_dir, gmd_path, view) -> None:
 def _results(job: Job):
     out = job.extra.get("output_path", "")
     if job.status == "done" and out:
-        out = Path(job.cwd or REPO_ROOT) / out
+        out = Path(job.cwd or workspace_root(REPO_ROOT)) / out
         if not out.is_file():
             return
         size = os.path.getsize(out) / 1e6

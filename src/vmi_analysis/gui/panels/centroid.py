@@ -4,13 +4,14 @@ import sys
 from operator import not_
 from pathlib import Path
 
-from nicegui import app, ui
+from nicegui import ui
 from plotly.colors import get_colorscale
 from vmi_analysis.paths import validate_distinct_output
 from vmi_analysis.centroiding.options import centroid_cli_args, section as _section, validate_settings
 from vmi_analysis.centroiding.plot_data import (ABEL_IMAGE, RAW_IMAGE, SPECTRUM_CSV,
                                                 SUMMARY_DATA, SUMMARY_PNG, TUNING_DATA, TUNING_PNG)
 
+from ..shared import centroid_dir, checked_path, settings_store
 from ..jobs import Job, JobManager
 from .. import theme
 from ..centroid_plots import (COLORMAPS, PLOT_HEIGHT, RESULT_COLORMAP_DEFAULTS,
@@ -132,7 +133,7 @@ def build(jobs: JobManager) -> None:
                 ui.notify(str(exc), type="negative")
                 return
             job = jobs.submit(Job(name="Centroiding", cmd=cmd,
-                                  cwd=str(CENTROID_DIR),
+                                  cwd=str(centroid_dir(CENTROID_DIR)),
                                   extra={"output_dir": str(_output_dir(snapshot))}))
             view.attach(job)
 
@@ -142,7 +143,10 @@ def build(jobs: JobManager) -> None:
                 return
             view.results.clear()
             with view.results:
-                _result_files(_output_dir(centroid_settings()))
+                try:
+                    _result_files(_output_dir(centroid_settings()))
+                except (OSError, ValueError) as exc:
+                    ui.notify(str(exc), type="warning")
             view.open_console()
         with action_bar(view, on_click=run):
             ui.button("View saved results", icon="insights",
@@ -213,7 +217,7 @@ def _save(widgets) -> bool:
         ui.notify(str(exc), type="negative")
         return False
     for section, key, _ in widgets:
-        app.storage.general[storage_key(section, key)] = _section(doc, section)[key]
+        settings_store()[storage_key(section, key)] = _section(doc, section)[key]
     return True
 
 
@@ -230,10 +234,12 @@ def _clear_outputs(view: JobView) -> None:
     inputs = (("HDF5 directory", vmi["h5_dir"]), ("GMD map", vmi["gmd_map_path"]),
               ("dark frame", vmi["dark_file"]), ("flat field", vmi["processing"]["flat_field_file"]))
     try:
+        out_dir = checked_path(out_dir, write=True)
         checkpoint = validate_distinct_output(out_dir / vmi["checkpoint_file"], inputs,
-                                              cwd=CENTROID_DIR, output_label="checkpoint")
+                                              cwd=centroid_dir(CENTROID_DIR), output_label="checkpoint")
+        checkpoint = checked_path(checkpoint, write=True)
         for name in OUTPUT_NAMES:
-            validate_distinct_output(out_dir / name, inputs, cwd=CENTROID_DIR)
+            validate_distinct_output(out_dir / name, inputs, cwd=centroid_dir(CENTROID_DIR))
     except (OSError, ValueError) as exc:
         ui.notify(str(exc), type="warning")
         return
@@ -357,13 +363,14 @@ def _interactive_plot(figure, *, tuning=False):
 
 
 def _result_files(out_dir: Path):
+    out_dir = checked_path(out_dir)
     open_folder_button(out_dir, "open output folder")
     found = False
     for title, data_file, png_name, builder in (
         ("Tuning check", TUNING_DATA, "01_tuning_check_picasso.png", tuning_figure),
         ("Final summary", SUMMARY_DATA, "04_final_summary.png", summary_figure),
     ):
-        data, png = out_dir / data_file, out_dir / png_name
+        data, png = checked_path(out_dir / data_file), checked_path(out_dir / png_name)
         if not data.exists() and not png.exists():
             continue
         found = True

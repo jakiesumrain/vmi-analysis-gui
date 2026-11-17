@@ -1,6 +1,7 @@
 # Architecture
 
-VMI Analysis GUI is a local NiceGUI application for velocity-map imaging data.
+VMI Analysis GUI is a NiceGUI application for velocity-map imaging data.
+It can run locally or in [shared server mode](shared-server.md).
 The [user manual](manual.pdf) describes panel controls, input formats, and outputs.
 
 ## Source and workspace
@@ -11,6 +12,13 @@ to install it in editable mode. Start the app with `uv run vmi-analysis`.
 `vmi_analysis.paths` resolves the workspace independently of the installed
 package. A checkout uses the repository root. An installed copy uses the startup
 directory. Set `VMI_WORKSPACE_DIR` to choose another workspace.
+
+Shared mode binds to loopback and authenticates browser and Socket.IO
+requests. Each account has a private settings file and a private
+workspace. All jobs use one scheduler with an owner on each submission.
+The server checks file paths at the picker, analysis and download
+boundaries. Shared dataset paths allow reads. Only paths in the signed-in
+account's workspace allow writes.
 
 The workspace contains `centroiding/` and `circularization/` for working data.
 The GUI stores preview artifacts in `.cache/vmi-analysis/`. NiceGUI stores form

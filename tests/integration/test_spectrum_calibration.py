@@ -106,7 +106,7 @@ class CentroidPanelCalibrationTests(unittest.TestCase):
             def snapshot():
                 return centroid_settings(store=store, legacy_path=config)
             with patch.object(centroid, "centroid_settings", snapshot), \
-                    patch.object(centroid.app.storage, "_general", store), \
+                    patch.object(centroid, "settings_store", return_value=store), \
                     patch.object(centroid.ui, "notify"):
                 original = config.read_bytes()
                 self.assertTrue(centroid._save(widgets))

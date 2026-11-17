@@ -8,6 +8,7 @@ from nicegui import ui
 from vmi_analysis.ion_luna import LUNA_COMMAND_PREFIX, PROCESS_OPTIONS, process_arguments
 from vmi_analysis.paths import validate_distinct_output
 
+from ..shared import workspace_root
 from .. import theme
 from ..jobs import Job, JobManager
 from .common import (REPO_ROOT, JobView, action_bar, check_grid, field_grid, num_input,
@@ -94,7 +95,7 @@ def build(jobs: JobManager):
                 cmd += ["--wsl-distribution", distro.value.strip()]
             if executable.value.strip():
                 cmd += ["--wsl-executable", executable.value.strip()]
-        view.attach(jobs.submit(Job(JOB_NAME, cmd=cmd, cwd=str(REPO_ROOT), extra=extra,
+        view.attach(jobs.submit(Job(JOB_NAME, cmd=cmd, cwd=str(workspace_root(REPO_ROOT)), extra=extra,
                                     consume_output=capture_command)))
 
     def run():
@@ -104,21 +105,21 @@ def build(jobs: JobManager):
                 input_value = correction_input.value.strip() or output.value.strip()
                 if not input_value:
                     raise ValueError("Choose the HDF5 file with timewalk statistics.")
-                selected = (REPO_ROOT / Path(input_value).expanduser()).resolve()
+                selected = (workspace_root(REPO_ROOT) / Path(input_value).expanduser()).resolve()
                 target = corrected_output.value.strip() or selected.with_name(f"{selected.stem}_corrected.h5")
                 target = validate_distinct_output(target, [("timewalk input", selected)],
-                                                  cwd=REPO_ROOT, output_label="corrected HDF5 output")
+                                                  cwd=workspace_root(REPO_ROOT), output_label="corrected HDF5 output")
                 submit([*command, "--apply-timewalk-correction", "--input", str(selected), "--output", str(target),
                         "--ctot-cut", str(option_value("ctot-cut"))],
                        {"output": str(target), "corrected": True})
                 return
             if not source.value.strip() or not output.value.strip():
                 raise ValueError("Choose a TPX3 input and an HDF5 output.")
-            selected = (REPO_ROOT / Path(source.value.strip()).expanduser()).resolve()
+            selected = (workspace_root(REPO_ROOT) / Path(source.value.strip()).expanduser()).resolve()
             stats = calculate_stats()
-            matrix = (REPO_ROOT / Path(timewalk.value.strip()).expanduser()).resolve() if stats and timewalk.value.strip() else None
+            matrix = (workspace_root(REPO_ROOT) / Path(timewalk.value.strip()).expanduser()).resolve() if stats and timewalk.value.strip() else None
             target = validate_distinct_output(output.value.strip(), [("TPX3 input", selected), ("timewalk file", matrix)],
-                                              cwd=REPO_ROOT, output_label="HDF5 output")
+                                              cwd=workspace_root(REPO_ROOT), output_label="HDF5 output")
             arguments = {flag: option_value(flag) for flag in ("layout", "raw-only", "disable-clustering")}
             if not arguments["raw-only"]:
                 arguments["tof-tdc-reference"] = option_value("tof-tdc-reference")
@@ -161,7 +162,7 @@ def build(jobs: JobManager):
             with source.add_slot("append"):
                 ui.button(icon="folder_open", on_click=browse_input).classes("vmi-browse-icon") \
                     .props('flat dense round aria-label="Browse TPX3 input"')
-            output = save(path_input("HDF5 output", str(REPO_ROOT / "ions.h5"), browse="save",
+            output = save(path_input("HDF5 output", str(workspace_root(REPO_ROOT) / "ions.h5"), browse="save",
                                      filters=HDF5_TYPES, default_name="ions.h5"), "output")
             prefixed = save(ui.checkbox("Strip 32-byte acquisition prefix", value=True), "acquisition_prefix")
             prefixed.tooltip("For single-chip recordings with timestamp and GMD metadata. Clear for standard ASI Serval files.")

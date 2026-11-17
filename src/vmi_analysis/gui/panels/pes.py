@@ -18,6 +18,7 @@ from vmi_analysis.centroiding.plot_data import load_plot_data
 from vmi_analysis.pes import (ABEL_METHODS, BASELINE_PARAMETERS, BETA_ORDERS, Geometry, PeakGuess, anisotropy_values,
                               average_anisotropy, evaluate_fit_for_plot, fit_peaks)
 
+from ..shared import circularization_dir, generated_dir, workspace_root
 from .. import theme
 from ..centroid_plots import _style, linear_axis_limits, plot_options
 from ..jobs import Job, JobManager
@@ -52,7 +53,7 @@ def default_output_dir(suffix: str, backend: str, method: str) -> Path:
     name = f"gmd_bins_results{suffix}" if suffix else "gmd_bins_results"
     if backend == "pyabel":
         name += f"_pyabel_{method}"
-    return CIRC_DIR / name
+    return circularization_dir(CIRC_DIR) / name
 
 
 def _csv_download(rows, header, name):
@@ -94,7 +95,7 @@ def build(jobs: JobManager) -> None:
         return persist(num_input(label, value, step="any"), f"pes.{key}")
 
     def paths():
-        return list(dict.fromkeys(str(canonical_path(line.strip(), REPO_ROOT))
+        return list(dict.fromkeys(str(canonical_path(line.strip(), workspace_root(REPO_ROOT)))
                                   for line in (images.value or "").splitlines() if line.strip()))
 
     def geometry_fields(auto, center_x, center_y, rotation, resolution):
@@ -116,7 +117,7 @@ def build(jobs: JobManager) -> None:
 
     async def add_image():
         existing = paths()
-        chosen = await LocalFilePicker(start=existing[-1] if existing else REPO_ROOT, filters=[".npy", ".txt"])
+        chosen = await LocalFilePicker(start=existing[-1] if existing else workspace_root(REPO_ROOT), filters=[".npy", ".txt"])
         if chosen:
             images.value = "\n".join(dict.fromkeys([*paths(), str(canonical_path(chosen))]))
 
@@ -196,8 +197,8 @@ def build(jobs: JobManager) -> None:
         except (OSError, TypeError, ValueError) as exc:
             ui.notify(str(exc), type="warning")
             return
-        job = Job(name="PES", cmd=cmd, cwd=str(REPO_ROOT), reads=files)
-        result = GENERATED / f"pes-spectra-{job.id}.npz"
+        job = Job(name="PES", cmd=cmd, cwd=str(workspace_root(REPO_ROOT)), reads=files)
+        result = generated_dir(GENERATED) / f"pes-spectra-{job.id}.npz"
         job.cmd += ["--output", str(result)]
         job.writes.append(str(result))
         job.extra["pes_spectra"] = str(result)
