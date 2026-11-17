@@ -14,8 +14,8 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from hashlib import sha256
+from importlib.resources import files
 from pathlib import Path
-import time
 
 import numpy as np
 from nicegui import app, ui
@@ -37,6 +37,7 @@ from .polar_preview import (POLAR_HEIGHT, bind_percentiles, polar_controls, pola
                             render_polar_image as _render_polar_image, set_polar_source, set_polar_view)
 
 CIRC_DIR = REPO_ROOT / "circularization"
+SELECTION_SCRIPT = (files("vmi_analysis.gui.assets") / "polar_selection.js").read_text(encoding="utf-8")
 
 
 def _image_folder(value):
@@ -68,6 +69,17 @@ def _px_to_data(state, x, y):
     r = view["r0"] + radial_fraction * (view["r1"] - view["r0"])
     theta = view["theta0"] + angular_fraction * (view["theta1"] - view["theta0"])
     return r, theta
+
+
+def _selection_rect(state, start, end, *, full_angle):
+    width, height = state["img_size"]
+    r0, t0 = _px_to_data(state, start[0] * width, start[1] * height)
+    r1, t1 = _px_to_data(state, end[0] * width, end[1] * height)
+    if full_angle:
+        t0, t1 = 0.0, pf.TWO_PI
+    if abs(r1 - r0) < 1e-6 or abs(t1 - t0) < 1e-6:
+        return None
+    return pf.Rect(min(r0, r1), max(r0, r1), min(t0, t1), max(t0, t1))
 
 
 def _polar_sample(state, key, x, y):
@@ -135,15 +147,6 @@ def _overlay_svg(state):
                 f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" '
                 f'fill="rgba(220,38,38,0.16)" stroke="#dc2626" stroke-width="2" '
                 f'vector-effect="non-scaling-stroke"/>')
-    drag = state.get("drag_rect")
-    if drag is not None:
-        box = _clipped_rect(state, drag)
-        if box:
-            x, y, w, h = box
-            parts.append(
-                f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" '
-                f'fill="rgba(217,119,6,0.12)" stroke="#d97706" '
-                f'stroke-width="2" stroke-dasharray="6 4" vector-effect="non-scaling-stroke"/>')
     fit = state.get("last_fit")
     if fit is not None:
         theta = np.linspace(state["view"]["theta0"], state["view"]["theta1"],
@@ -297,6 +300,7 @@ def _rebuild_changes(saved_rings, blocks):
 
 
 def build(jobs=None, *, use_calibration=None) -> None:
+    ui.add_body_html(f"<script>{SELECTION_SCRIPT}</script>")
     theme.panel_header(
         "Trig Calibration",
         "Fit ring shapes in a polar VMI image and export a calibration for Circularize.")
@@ -308,11 +312,9 @@ def build(jobs=None, *, use_calibration=None) -> None:
     state = {
         "raw": None, "processed": None, "theta": None, "r": None, "dr": None,
         "options": None, "view": None, "view_indices": None, "img_size": (0, 0),
-        "tool": "band", "drag_start": None, "drag_now": None,
-        "drag_rect": None, "band": None, "masks": [], "last_fit": None,
+        "selection_revision": 0, "band": None, "masks": [], "last_fit": None,
         "selection_history": [],
         "rings": [], "ready": False,
-        "last_overlay": 0.0,
         "image": None,
         "inspection": None,
         "request_id": 0,
@@ -321,15 +323,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
     widgets = {}
 
     def _polar_image(key):
-        image = ui.interactive_image(
-            "", on_mouse=lambda event: _on_mouse(event, key),
-            events=["mousedown", "mousemove", "mouseup", "mouseleave"], sanitize=False,
-        )
-        image.on("pointerdown", js_handler="""(event) => {
-            if (event.button === 0 && event.target instanceof HTMLImageElement) {
-                event.target.setPointerCapture(event.pointerId);
-            }
-        }""")
+        image = ui.interactive_image("", sanitize=False).props('data-polar-drag="off"')
+        image.on("polar-pointer", lambda event: _on_pointer(event.args["detail"], key), args=["detail"])
         return image
 
     # ---------------------------------------------------------------- inputs
@@ -444,7 +439,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
     # --------------------------------------------------------- image + fit
     with theme.panel_card():
         with ui.column().classes("w-full gap-4"):
-            with ui.column().classes("w-full gap-2 polar-guide-group") as guide_group:
+            with ui.column().classes("w-full gap-2 polar-guide-group").props("data-polar-drag-group") as guide_group:
                 color_scale, colormap, guides = polar_controls("calibration")
                 polar_images, color_limits, color_status = {}, {}, {}
                 pointer_readouts = {}
@@ -683,6 +678,20 @@ def build(jobs=None, *, use_calibration=None) -> None:
         clear_band_button.set_enabled(state["band"] is not None)
         clear_masks_button.set_enabled(bool(state["masks"]))
         _update_labels()
+        _update_selection_targets()
+
+    def _selection_mode(key):
+        if (not state["ready"] or state["request_kind"] is not None
+                or (key == "inspection" and state["inspection"] is None)):
+            return "off"
+        if key == "inspection" or widgets["tool"].value == "mask":
+            return "mask"
+        return "full" if widgets["full_angle"].value else "band"
+
+    def _update_selection_targets():
+        for key, image in (*polar_images.items(), ("inspection", inspection_image)):
+            image.props(f'data-polar-drag="{_selection_mode(key)}" '
+                        f'data-polar-revision="{state["selection_revision"]}"')
 
     def _reset_view():
         state["view"] = {"r0": 0.0, "r1": float(state["r"][-1]),
@@ -697,6 +706,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
             return
         state["view_indices"] = (ti, ri)
         state["img_size"] = (int(ri.size), int(ti.size))
+        state["selection_revision"] += 1
         set_polar_view(guide_group, ri, ti, state["dr"], 360 / state["theta"].size)
         for key in polar_images:
             _refresh_contrast(key)
@@ -732,13 +742,15 @@ def build(jobs=None, *, use_calibration=None) -> None:
             ui.notify("The selected band contains no polar samples.", type="warning")
             return
         state["inspection"] = {"view": view, "view_indices": (ti, ri), "img_size": (ri.size, ti.size)}
+        state["selection_revision"] += 1
         _refresh_inspection_contrast()
         horizontal_zoom.value = 1
         _update_overlay()
         inspection_dialog.open()
 
     def _close_inspection():
-        state.update(inspection=None, drag_start=None, drag_now=None, drag_rect=None)
+        state["inspection"] = None
+        state["selection_revision"] += 1
         pointer_readouts["inspection"].text = ""
         _update_overlay()
 
@@ -765,71 +777,40 @@ def build(jobs=None, *, use_calibration=None) -> None:
         _show_fit(None)
         _update_overlay()
 
-    def _on_mouse(event, key):
-        if event.type == "mouseleave":
+    def _on_pointer(payload, key):
+        kind = payload["kind"]
+        if kind == "leave":
             pointer_readouts[key].text = ""
-        inspection = key == "inspection"
-        if (not state["ready"] or state["request_kind"] is not None
-                or (inspection and state["inspection"] is None)):
             return
-        viewport = state | state["inspection"] if inspection else state
-        if event.type == "mousemove":
-            sample = _polar_sample(viewport, "processed" if inspection else key, event.image_x, event.image_y)
+        mode = _selection_mode(key)
+        if mode == "off":
+            return
+        viewport = state | state["inspection"] if key == "inspection" else state
+        if kind == "hover":
+            x, y = payload["point"]
+            width, height = viewport["img_size"]
+            sample = _polar_sample(viewport, "processed" if key == "inspection" else key, x * width, y * height)
             if sample is None:
                 pointer_readouts[key].text = ""
             else:
                 radius, angle, value = sample
                 intensity = f"{value:.6g}" if np.isfinite(value) else "—"
                 pointer_readouts[key].text = f"r {radius:.3f} px · θ {angle:.2f}° · Intensity {intensity}"
-        if event.type == "mousedown" and event.button == 0:
-            state["drag_start"] = _px_to_data(viewport, event.image_x, event.image_y)
-            state["drag_now"] = state["drag_start"]
             return
-        if event.type == "mousemove" and state["drag_start"] is not None:
-            state["drag_now"] = _px_to_data(viewport, event.image_x, event.image_y)
-            now = time.monotonic()
-            if now - state["last_overlay"] > 0.06:
-                state["last_overlay"] = now
-                state["drag_rect"] = _drag_rect()
-                _update_overlay()
+        if (kind != "select" or payload["mode"] != mode
+                or payload["revision"] != str(state["selection_revision"])):
             return
-        if event.type in ("mouseup", "mouseleave"):
-            if state["drag_start"] is None:
-                return
-            state["drag_now"] = _px_to_data(viewport, event.image_x, event.image_y)
-            rect = _drag_rect()
-            state["drag_start"] = None
-            state["drag_now"] = None
-            state["drag_rect"] = None
-            if rect is None:
-                _update_overlay()
-                return
-            if event.type == "mouseleave":
-                _update_overlay()
-                return
-            if not inspection and state["tool"] == "band":
-                full = bool(widgets["full_angle"].value)
-                band = pf.Rect(
-                    rect.r0, rect.r1, 0.0 if full else rect.theta0,
-                    pf.TWO_PI if full else rect.theta1)
-                _set_selection(band, state["masks"])
-            else:
+        rect = _selection_rect(viewport, payload["start"], payload["end"], full_angle=mode == "full")
+        if rect is not None:
+            if mode == "mask":
                 _set_selection(state["band"], [*state["masks"], rect])
-            return
-
-    def _drag_rect():
-        if state["drag_start"] is None or state["drag_now"] is None:
-            return None
-        r0, t0 = state["drag_start"]
-        r1, t1 = state["drag_now"]
-        if abs(r1 - r0) < 1e-6 or abs(t1 - t0) < 1e-6:
-            return None
-        return pf.Rect(min(r0, r1), max(r0, r1), min(t0, t1), max(t0, t1))
+            else:
+                _set_selection(rect, state["masks"])
 
     def _start_processing_request(kind, status):
         state["request_id"] += 1
         state["request_kind"] = kind
-        state.update(drag_start=None, drag_now=None, drag_rect=None)
+        state["selection_revision"] += 1
         fit_button.disable()
         apply_button.set_enabled(kind != "remap")
         remap_status.text = status
@@ -1317,8 +1298,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
     apply_button.on_click(_apply_processing)
     fit_button.on_click(_fit_selection)
     accept_button.on_click(_accept)
-    widgets["tool"].on_value_change(
-        lambda e: state.__setitem__("tool", e.value or "band"))
+    for control in (widgets["tool"], widgets["full_angle"]):
+        control.on_value_change(_update_selection_targets)
     for control in (color_scale, colormap):
         control.on_value_change(lambda _: _refresh_view())
     for key, sliders in color_limits.items():
