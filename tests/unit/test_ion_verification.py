@@ -8,6 +8,7 @@ import numpy as np
 
 from vmi_analysis import tpx3_analysis as reference
 from vmi_analysis.ion_verification import analyze, read_dump, unpack
+from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS
 
 
 class IonVerificationTests(unittest.TestCase):
@@ -47,3 +48,11 @@ class IonVerificationTests(unittest.TestCase):
                         self.assertEqual(actual[column], list(expected[column]))
             with self.assertRaisesRegex(ValueError, "input was replaced"):
                 analyze(path, expected_id="old-dump")
+            default = analyze(path)
+            same_width = analyze(path, bin_size_ns=DEFAULT_BIN_SIZE_NS)
+            np.testing.assert_array_equal(same_width["edges"], default["edges"])
+            custom = analyze(path, bin_size_ns=17.5)
+            np.testing.assert_allclose(np.diff(custom["edges"])[:-1], 17.5)
+            self.assertEqual(custom["edges"][-1], reference.TOF_PLOT_RANGE[1])
+            self.assertLess(np.diff(custom["edges"])[-1], 17.5)
+            self.assertEqual(json.loads(custom["yield_summary"]), json.loads(default["yield_summary"]))

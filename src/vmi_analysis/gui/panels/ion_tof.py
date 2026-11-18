@@ -10,6 +10,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 from vmi_analysis.tpx3_analysis import FRAME_SHIFT, GMD2_DEFAULT
+from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS
 
 from .. import shared, theme
 from ..centroid_plots import _style, plot_options
@@ -118,7 +119,7 @@ def build(jobs):
                     raise ValueError("Plot TOF from a verification dump first.")
                 if filtered_view.job and filtered_view.job.status in ("queued", "running"):
                     raise ValueError("Wait for the current filter or stop it before applying a new range.")
-                source, count, fixed = (parent.extra[key] for key in ("source", "bins", "fixed"))
+                source, width, fixed = (parent.extra[key] for key in ("source", "bin_size_ns", "fixed"))
                 lo, hi, offset = low.value, high.value, shift.value
                 if lo is None or hi is None or not isfinite(lo) or not isfinite(hi) or lo > hi:
                     raise ValueError("Enter finite GMD2 limits with minimum at or below maximum.")
@@ -128,19 +129,19 @@ def build(jobs):
                 if not dump.value.strip():
                     raise ValueError("Choose an HDF5 file from TPX3 Dump.")
                 source = shared.checked_path(dump.value.strip())
-                count, fixed = bins.value, fixed_window.value
+                width, fixed = bin_size.value, fixed_window.value
                 if not source.is_file():
                     raise ValueError("Choose an existing verification dump.")
-                if count is None or not float(count).is_integer() or not 1 <= count <= 20_000:
-                    raise ValueError("Choose a whole number of TOF bins between 1 and 20,000.")
+                if width is None or not isfinite(width) or width <= 0:
+                    raise ValueError("TOF bin size must be finite and greater than zero.")
             active_view = filtered_view if filtering else view
             job = Job(FILTER_JOB_NAME if filtering else JOB_NAME, cwd=str(shared.workspace_root()))
             output = shared.generated_dir() / f"ion-verify-{job.id}.npz"
             job.cmd = [sys.executable, "-m", "vmi_analysis.ion_verification", "analyze",
-                       "--input", str(source), "--output", str(output), "--bins", str(int(count))]
+                       "--input", str(source), "--output", str(output), "--bin-size", str(width)]
             if fixed:
                 job.cmd.append("--fixed-window")
-            job.extra.update(result=str(output), source=str(source), bins=int(count), fixed=fixed)
+            job.extra.update(result=str(output), source=str(source), bin_size_ns=width, fixed=fixed)
             if filtering:
                 job.cmd += [f"--gmd-min={lo}", f"--gmd-max={hi}", "--shift", str(int(offset)),
                             "--expected-dump-id", parent.extra["dump_id"]]
@@ -200,7 +201,8 @@ def build(jobs):
         dump = persist(path_input("TPX3 verification HDF5", browse="file", filters=[".h5", ".hdf5"]), "ion_tof.dump")
         ui.button("Use latest dump", icon="history", on_click=use_dump).props("flat")
         with field_grid():
-            bins = persist(num_input("TOF bins", 1200, min=1, max=20_000, step=1), "ion_tof.bins")
+            bin_size = persist(num_input("TOF bin size (ns)", DEFAULT_BIN_SIZE_NS, step="any"),
+                               "ion_tof.bin_size_ns")
             fixed_window = persist(ui.checkbox("Use standalone fixed Xe windows"), "ion_tof.fixed_window")
         ui.label("By default the standalone Gaussian fit uses all decoded hits to set the Xe windows. "
                  "GMD2 selects the frames used for counting.").classes("vmi-subtitle")

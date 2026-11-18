@@ -11,6 +11,7 @@ import numpy as np
 
 from vmi_analysis import tpx3_analysis as reference
 from vmi_analysis.paths import validate_distinct_output
+from vmi_analysis.tof_bins import tof_bin_edges
 
 
 SCHEMA = "vmi-tpx3-verification-1"
@@ -98,11 +99,10 @@ def read_dump(path: Path, *, expected_id=None):
 
 
 def analyze(path: Path, *, bins=1200, gmd_window=None, shift=reference.FRAME_SHIFT, tracked=True,
-            diagnostics=True, expected_id=None):
-    if not 1 <= bins <= 20_000:
-        raise ValueError("Choose between 1 and 20,000 TOF bins.")
+            diagnostics=True, expected_id=None, bin_size_ns=None):
     if gmd_window is not None and (not np.isfinite(gmd_window).all() or gmd_window[0] > gmd_window[1]):
         raise ValueError("Enter finite GMD2 limits with minimum at or below maximum.")
+    edges = tof_bin_edges(*reference.TOF_PLOT_RANGE, bins, bin_size_ns=bin_size_ns)
     position, tofs, dump_id = read_dump(path, expected_id=expected_id)
     gmd1, gmd2, pixels = position.arrays()
     # The standalone yield routine requires enough decoded hits to identify Xe peaks.
@@ -111,7 +111,6 @@ def analyze(path: Path, *, bins=1200, gmd_window=None, shift=reference.FRAME_SHI
     else:
         yields = {"valid": False, "reason": "No decoded TOF hits."}
     all_tof = np.concatenate(tofs)
-    edges = np.linspace(*reference.TOF_PLOT_RANGE, bins + 1)
     keep = (np.ones(position.n_frames, dtype=bool) if gmd_window is None
             else reference.select_tof_frames(gmd2, gmd_window, shift))
     selected = all_tof
@@ -146,7 +145,9 @@ def main():
         command.add_argument("--input", required=True, type=Path)
         command.add_argument("--output", required=True, type=Path)
     dump.add_argument("--unwrap", default=reference.UNWRAP_MODE, choices=("signed", "go4"))
-    spectrum.add_argument("--bins", type=int, default=1200)
+    binning = spectrum.add_mutually_exclusive_group()
+    binning.add_argument("--bins", type=int, default=1200)
+    binning.add_argument("--bin-size", type=float, help="TOF bin width in ns")
     spectrum.add_argument("--gmd-min", type=float)
     spectrum.add_argument("--gmd-max", type=float)
     spectrum.add_argument("--shift", type=int, default=reference.FRAME_SHIFT)
@@ -161,7 +162,7 @@ def main():
             raise ValueError("Enter both GMD2 limits.")
         window = None if args.gmd_min is None else (args.gmd_min, args.gmd_max)
         output = validate_distinct_output(args.output, [("verification dump", args.input)], output_label="TOF result")
-        data = analyze(args.input, bins=args.bins, gmd_window=window, shift=args.shift,
+        data = analyze(args.input, bins=args.bins, bin_size_ns=args.bin_size, gmd_window=window, shift=args.shift,
                        tracked=not args.fixed_window, diagnostics=window is None, expected_id=args.expected_dump_id)
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("wb") as file:
