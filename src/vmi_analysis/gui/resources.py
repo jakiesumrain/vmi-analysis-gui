@@ -168,6 +168,7 @@ def command_access(cmd, cwd=None):
         write(value("--metadata-output"))
     elif module == "vmi_analysis.ion_tof":
         read(value("--input"))
+        read(value("--metadata"))
         write(value("--output"))
     return Access(frozenset(reads), frozenset(writes), frozenset(exclusive),
                   gmd_map_output=gmd_map_output, centroid_output_dir=centroid_output_dir)

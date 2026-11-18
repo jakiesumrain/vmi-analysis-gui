@@ -16,16 +16,18 @@ REFERENCES = {"TDC1Rising": 1, "TDC1Falling": 2, "TDC2Rising": 3, "TDC2Falling":
 DEFAULT_REFERENCE = "TDC1Rising"
 DEFAULT_BINS = 1200
 MAX_BINS = 20_000
+GMD_SHIFTS = tuple(range(-5, 6))
+MIN_GMD_PAIRS = 10
 
 
-def _table(file, name, *fields):
+def _table(file, name, *fields, numeric="iu"):
     if not isinstance(file.get(name, getlink=True), h5py.HardLink):
         raise ValueError(f"Choose a LUNA HDF5 file with an embedded {name} dataset.")
     table = file[name]
     if (not isinstance(table, h5py.Dataset) or table.ndim != 1 or table.is_virtual
             or table.external or any(field not in (table.dtype.names or ())
-                                     or table.dtype[field].kind not in "iu" for field in fields)):
-        raise ValueError(f"{name} must be a table containing integer fields {', '.join(fields)}.")
+                                     or table.dtype[field].kind not in numeric for field in fields)):
+        raise ValueError(f"{name} must be a table with compatible numeric fields {', '.join(fields)}.")
     return table
 
 
@@ -58,11 +60,55 @@ def _tof_blocks(table, field, triggers):
         indices = np.searchsorted(triggers, arrivals, side="right") - 1
         matched = indices >= 0
         # Subtract on the integer detector clock to retain single-tick differences.
-        differences = arrivals[matched] - triggers[indices[matched]]
-        yield differences * NS_PER_TICK, int(arrivals.size - differences.size)
+        matched_indices = indices[matched]
+        differences = arrivals[matched] - triggers[matched_indices]
+        yield differences * NS_PER_TICK, matched_indices, int(arrivals.size - differences.size)
 
 
-def histogram(path, sources, reference=DEFAULT_REFERENCE, bins=DEFAULT_BINS, minimum=0.0, maximum=None):
+def _gmd_metadata(path, trigger_count):
+    with h5py.File(path, "r") as file:
+        table = _table(file, "frames", "timestamp_ns", "gmd1", "gmd2", numeric="iuf")
+        if table.dtype["timestamp_ns"].kind not in "iu":
+            raise ValueError("The metadata's timestamp_ns field must contain integer nanoseconds.")
+        frames = table.fields(("timestamp_ns", "gmd1", "gmd2"))[:]
+    if len(frames) != trigger_count:
+        issue = f"{len(frames):,} metadata rows for {trigger_count:,} selected triggers."
+    elif np.any(frames["timestamp_ns"][1:] <= frames["timestamp_ns"][:-1]):
+        issue = "The metadata's acquisition timestamps are not strictly increasing."
+    else:
+        issue = ""
+    return {"gmd1_na": frames["gmd1"] * 1e9, "gmd2_na": frames["gmd2"] * 1e9,
+            "gmd_alignment_issue": issue}
+
+
+def gmd_correlations(gmd2, shot_counts):
+    """Repeat the TPX3 diagnostic pairing GMD2[j] with counts[j + d]."""
+    from scipy.stats import pearsonr, spearmanr
+
+    if len(gmd2) != len(shot_counts):
+        raise ValueError("GMD2 values and shot counts must have the same length.")
+    correlations = np.full((len(GMD_SHIFTS), 2), np.nan)
+    pairs = np.zeros(len(GMD_SHIFTS), dtype=np.int64)
+    for index, shift in enumerate(GMD_SHIFTS):
+        if abs(shift) >= len(gmd2):
+            continue
+        if shift < 0:
+            values, counts = gmd2[-shift:], shot_counts[:shift]
+        else:
+            values, counts = gmd2[:len(gmd2) - shift], shot_counts[shift:]
+        use = np.isfinite(values) & (values > 0) & (counts > 0)
+        pairs[index] = use.sum()
+        if pairs[index] < MIN_GMD_PAIRS:
+            continue
+        values, counts = values[use], counts[use]
+        if values.min() == values.max() or counts.min() == counts.max():
+            continue
+        correlations[index] = pearsonr(values, counts).statistic, spearmanr(values, counts).statistic
+    return correlations, pairs
+
+
+def histogram(path, sources, reference=DEFAULT_REFERENCE, bins=DEFAULT_BINS, minimum=0.0, maximum=None,
+              *, metadata=None):
     """Return a common bin grid and per-source counts and diagnostics."""
     if not 1 <= bins <= MAX_BINS:
         raise ValueError(f"Choose between 1 and {MAX_BINS:,} bins.")
@@ -72,6 +118,10 @@ def histogram(path, sources, reference=DEFAULT_REFERENCE, bins=DEFAULT_BINS, min
         raise ValueError("TOF maximum must be finite and greater than the minimum.")
     with h5py.File(path, "r") as file:
         triggers = _trigger_times(file, reference)
+        gmd = _gmd_metadata(metadata, len(triggers)) if metadata is not None else {}
+        align = bool(gmd) and not gmd["gmd_alignment_issue"]
+        if gmd and not align:
+            print(f'GMD alignment skipped: {gmd["gmd_alignment_issue"]}')
         columns = []
         for source in sources:
             name, field = ARRIVALS[source]
@@ -81,25 +131,34 @@ def histogram(path, sources, reference=DEFAULT_REFERENCE, bins=DEFAULT_BINS, min
             last = minimum
             for source, table, field in columns:
                 print(f"Finding TOF range for {source} ({len(table):,} entries)…")
-                for values, _ in _tof_blocks(table, field, triggers):
+                for values, _, _ in _tof_blocks(table, field, triggers):
                     if values.size:
                         last = max(last, float(values.max()))
             maximum = last if last > minimum else minimum + 1.0
         edges = np.linspace(minimum, maximum, bins + 1)
         if not np.all(edges[1:] > edges[:-1]):
             raise ValueError("The TOF range is too narrow for this bin count.")
-        result = {"edges": edges, "triggers": len(triggers)}
+        result = {"edges": edges, "triggers": len(triggers), **gmd}
+        if align:
+            result["gmd_shifts"] = np.asarray(GMD_SHIFTS)
         for source, table, field in columns:
             print(f"Building TOF histogram for {source}…")
             counts = np.zeros(bins, dtype=np.int64)
+            shot_counts = np.zeros(len(triggers), dtype=np.int64) if align else None
             unmatched = 0
-            for values, before_first in _tof_blocks(table, field, triggers):
+            for values, assigned, before_first in _tof_blocks(table, field, triggers):
                 counts += np.histogram(values, bins=edges)[0]
                 unmatched += before_first
+                if shot_counts is not None:
+                    np.add.at(shot_counts, assigned, 1)
             outside = len(table) - unmatched - int(counts.sum())
             result[source] = counts
             result[f"{source}_unmatched"] = unmatched
             result[f"{source}_outside"] = outside
+            if shot_counts is not None:
+                coefficients, pairs = gmd_correlations(gmd["gmd2_na"], shot_counts)
+                result[f"{source}_gmd_correlation"] = coefficients
+                result[f"{source}_gmd_pairs"] = pairs
             print(f"{source}: {int(counts.sum()):,} plotted, {unmatched:,} without a preceding trigger, "
                   f"{outside:,} outside the TOF range.")
     return result
@@ -109,6 +168,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True, help="Histogram output (.npz)")
+    parser.add_argument("--metadata", type=Path, help="Matching TPX3 Dump acquisition metadata (.h5)")
     parser.add_argument("--source", choices=(*ARRIVALS, "both"), default="pixels")
     parser.add_argument("--reference", choices=REFERENCES, default=DEFAULT_REFERENCE)
     parser.add_argument("--bins", type=int, default=DEFAULT_BINS)
@@ -116,9 +176,11 @@ def main():
     parser.add_argument("--maximum", type=float, help="Maximum TOF in ns (default: largest observed TOF)")
     args = parser.parse_args()
     try:
-        output = validate_distinct_output(args.output, [("LUNA HDF5 input", args.input)])
+        output = validate_distinct_output(args.output, [("LUNA HDF5 input", args.input),
+                                                       ("acquisition metadata", args.metadata)])
         sources = tuple(ARRIVALS) if args.source == "both" else (args.source,)
-        result = histogram(args.input, sources, args.reference, args.bins, args.minimum, args.maximum)
+        result = histogram(args.input, sources, args.reference, args.bins, args.minimum, args.maximum,
+                           metadata=args.metadata)
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("wb") as handle:
             np.savez(handle, **result)
