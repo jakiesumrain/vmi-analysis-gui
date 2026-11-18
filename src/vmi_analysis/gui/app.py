@@ -115,10 +115,10 @@ TAB_ICONS = {
     "Binning": "bar_chart",
     "Trig Calibration": "track_changes",
     "Circularize": "donut_large",
-    "PES": "show_chart",
+    "PES": "multiline_chart",
     "Pipeline": "account_tree",
     "TPX3 Dump": "memory",
-    ion_tof.JOB_NAME: "show_chart",
+    ion_tof.JOB_NAME: "timer",
 }
 SIDEBAR_GROUPS = (
     ("Electron", (
