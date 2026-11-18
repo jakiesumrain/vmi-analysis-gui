@@ -10,8 +10,9 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from vmi_analysis.ion_tof import DEFAULT_BINS, DEFAULT_REFERENCE, GMD_SHIFTS, MAX_BINS, REFERENCES, gmd_diagnostics
+from vmi_analysis.ion_tof import DEFAULT_REFERENCE, GMD_SHIFTS, REFERENCES, gmd_diagnostics
 from vmi_analysis.pes import BASELINE_PARAMETERS, evaluate_fit_for_plot
+from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS
 
 from .. import shared, theme
 from ..centroid_plots import _style, plot_options
@@ -161,9 +162,9 @@ def build(jobs):
             source_file = shared.checked_path(input_file.value.strip())
             if not source_file.is_file():
                 raise ValueError("The selected HDF5 file does not exist.")
-            count = bins.value
-            if count is None or not float(count).is_integer() or not 1 <= count <= MAX_BINS:
-                raise ValueError(f"Choose a whole number of bins between 1 and {MAX_BINS:,}.")
+            width = bin_size.value
+            if width is None or not isfinite(width) or width <= 0:
+                raise ValueError("TOF bin size must be finite and greater than zero.")
             low = minimum.value
             high = maximum.value
             if low is None or not isfinite(low) or low < 0:
@@ -175,7 +176,7 @@ def build(jobs):
             job.cmd = [sys.executable, "-m", "vmi_analysis.ion_tof",
                        "--input", str(source_file), "--output", str(result),
                        "--source", source.value, "--reference", reference.value,
-                       "--bins", str(int(count)), "--minimum", str(low)]
+                       "--bin-size", str(width), "--minimum", str(low)]
             if high is not None:
                 job.cmd += ["--maximum", str(high)]
             job.extra.update(histogram=str(result), reference=reference.value, input_name=source_file.name,
@@ -193,7 +194,7 @@ def build(jobs):
             reference = save(ui.select(REFERENCE_LABELS, value=DEFAULT_REFERENCE, label="Trigger reference")
                              .props("outlined dense"), "reference")
         with field_grid(3):
-            bins = save(num_input("Bins", DEFAULT_BINS, min=1, max=MAX_BINS, step=1), "bins")
+            bin_size = save(num_input("TOF bin size (ns)", DEFAULT_BIN_SIZE_NS, step="any"), "bin_size_ns")
             minimum = save(num_input("TOF minimum (ns)", 0, min=0, step="any"), "minimum")
             maximum = save(num_input("TOF maximum (ns, blank = auto)", None, step="any"), "maximum")
         with action_bar(view, "Plot TOF", on_click=run):

@@ -93,6 +93,11 @@ class IonTofTests(unittest.TestCase):
             np.savez(original, **before)
             earlier = filtered_histogram(path, original, metadata, "TDC1Rising", 2, 3, -1)
             later = filtered_histogram(path, original, metadata, "TDC1Rising", 2, 3, 1)
+            sized = histogram(path, ("pixels", "clusters"), maximum=4, bin_size_ns=1.5)
+            np.savez(original, **sized)
+            sized_filtered = filtered_histogram(path, original, metadata, "TDC1Rising", 2, 3, 1)
+            with self.assertRaisesRegex(ValueError, "Increase the TOF bin size"):
+                histogram(path, ("pixels",), maximum=4, bin_size_ns=0.00001)
             with h5py.File(path, "r+") as file:
                 file["TDCEvents"][-1] = (1, 410_000)
             with self.assertRaisesRegex(ValueError, "triggers changed"):
@@ -104,6 +109,10 @@ class IonTofTests(unittest.TestCase):
         self.assertEqual(later["selected_triggers"], 2)
         np.testing.assert_array_equal(later["pixels"], [0, 0, 1, 1])
         np.testing.assert_array_equal(later["clusters"], [0, 1, 0, 1])
+        np.testing.assert_array_equal(sized["edges"], [0, 1.5, 3, 4])
+        np.testing.assert_array_equal(sized["pixels"], [2, 1, 1])
+        np.testing.assert_array_equal(sized_filtered["edges"], sized["edges"])
+        np.testing.assert_array_equal(sized_filtered["pixels"], [0, 1, 1])
 
     def test_peak_yield_counts_exact_arrivals_on_selected_triggers(self):
         with TemporaryDirectory() as directory:

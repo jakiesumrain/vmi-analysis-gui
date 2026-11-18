@@ -9,6 +9,7 @@ import h5py
 import numpy as np
 
 from vmi_analysis.paths import validate_distinct_output
+from vmi_analysis.tof_bins import tof_bin_edges
 
 
 NS_PER_TICK = 0.0001
@@ -17,7 +18,6 @@ ARRIVALS = {"pixels": ("PixelHits", "toa"), "clusters": ("Clusters", "ctoa")}
 REFERENCES = {"TDC1Rising": 1, "TDC1Falling": 2, "TDC2Rising": 3, "TDC2Falling": 4}
 DEFAULT_REFERENCE = "TDC1Rising"
 DEFAULT_BINS = 1200
-MAX_BINS = 20_000
 GMD_SHIFTS = tuple(range(-5, 6))
 MIN_GMD_PAIRS = 10
 
@@ -124,10 +124,8 @@ def gmd_diagnostics(metadata, counts_by_source):
 
 
 def histogram(path, sources, reference=DEFAULT_REFERENCE, bins=DEFAULT_BINS, minimum=0.0, maximum=None,
-              *, metadata=None):
+              *, metadata=None, bin_size_ns=None):
     """Return a common bin grid and per-source counts and diagnostics."""
-    if not 1 <= bins <= MAX_BINS:
-        raise ValueError(f"Choose between 1 and {MAX_BINS:,} bins.")
     if not np.isfinite(minimum) or minimum < 0:
         raise ValueError("TOF minimum must be finite and at least zero.")
     if maximum is not None and (not np.isfinite(maximum) or maximum <= minimum):
@@ -147,14 +145,12 @@ def histogram(path, sources, reference=DEFAULT_REFERENCE, bins=DEFAULT_BINS, min
                     if values.size:
                         last = max(last, float(values.max()))
             maximum = last if last > minimum else minimum + 1.0
-        edges = np.linspace(minimum, maximum, bins + 1)
-        if not np.all(edges[1:] > edges[:-1]):
-            raise ValueError("The TOF range is too narrow for this bin count.")
+        edges = tof_bin_edges(minimum, maximum, bins, bin_size_ns=bin_size_ns)
         result = {"edges": edges, "triggers": len(triggers), "trigger_times": triggers}
         counts_by_source = {}
         for source, table, field in columns:
             print(f"Building TOF histogram for {source}…")
-            counts = np.zeros(bins, dtype=np.int64)
+            counts = np.zeros(len(edges) - 1, dtype=np.int64)
             shot_counts = np.zeros(len(triggers), dtype=np.int64)
             unmatched = 0
             for values, assigned, before_first in _tof_blocks(table, field, triggers):
@@ -274,7 +270,9 @@ def main():
     parser.add_argument("--fit-spec", type=json.loads, help="Gaussian peak fit settings as JSON")
     parser.add_argument("--source", choices=(*ARRIVALS, "both"), default="pixels")
     parser.add_argument("--reference", choices=REFERENCES, default=DEFAULT_REFERENCE)
-    parser.add_argument("--bins", type=int, default=DEFAULT_BINS)
+    binning = parser.add_mutually_exclusive_group()
+    binning.add_argument("--bins", type=int, default=DEFAULT_BINS)
+    binning.add_argument("--bin-size", type=float, help="TOF bin width in ns")
     parser.add_argument("--minimum", type=float, default=0.0, help="Minimum TOF in ns")
     parser.add_argument("--maximum", type=float, help="Maximum TOF in ns (default: largest observed TOF)")
     args = parser.parse_args()
@@ -299,7 +297,7 @@ def main():
         else:
             sources = tuple(ARRIVALS) if args.source == "both" else (args.source,)
             result = histogram(args.input, sources, args.reference, args.bins, args.minimum, args.maximum,
-                               metadata=args.metadata)
+                               metadata=args.metadata, bin_size_ns=args.bin_size)
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("wb") as handle:
             np.savez(handle, **result)
