@@ -148,7 +148,7 @@ def histogram(path, sources, reference=DEFAULT_REFERENCE, bins=DEFAULT_BINS, min
         edges = np.linspace(minimum, maximum, bins + 1)
         if not np.all(edges[1:] > edges[:-1]):
             raise ValueError("The TOF range is too narrow for this bin count.")
-        result = {"edges": edges, "triggers": len(triggers)}
+        result = {"edges": edges, "triggers": len(triggers), "trigger_times": triggers}
         counts_by_source = {}
         for source, table, field in columns:
             print(f"Building TOF histogram for {source}…")
@@ -175,11 +175,55 @@ def histogram(path, sources, reference=DEFAULT_REFERENCE, bins=DEFAULT_BINS, min
     return result
 
 
+def filtered_histogram(path, tof_result, metadata, reference, low, high, shift):
+    """Select triggers by GMD2 and bin their arrivals on the original TOF grid."""
+    if not np.isfinite([low, high]).all() or low >= high:
+        raise ValueError("Enter increasing, finite GMD2 limits.")
+    with np.load(tof_result, allow_pickle=False) as original:
+        if "trigger_times" not in original:
+            raise ValueError("Plot TOF again before filtering this older result.")
+        edges = original["edges"]
+        original_triggers = original["trigger_times"]
+        sources = [source for source in ARRIVALS if source in original]
+    gmd = _gmd_metadata(metadata, len(original_triggers))
+    if gmd["gmd_alignment_issue"]:
+        raise ValueError(gmd["gmd_alignment_issue"])
+    readings = gmd["gmd2_na"]
+    if abs(shift) >= len(readings):
+        raise ValueError("The alignment shift leaves no paired frames.")
+    metadata_rows = np.flatnonzero(np.isfinite(readings) & (readings >= low) & (readings <= high))
+    camera_rows = metadata_rows + shift
+    selected = np.zeros(len(readings), dtype=bool)
+    selected[camera_rows[(camera_rows >= 0) & (camera_rows < len(readings))]] = True
+    selected_count = np.count_nonzero(selected)
+    result = {"edges": edges, "selected_triggers": selected_count, "triggers": len(selected)}
+    print(f"GMD2 {low:g} to {high:g} nA, shift {shift:+d}: {selected_count:,} selected triggers.")
+    with h5py.File(path, "r") as file:
+        triggers = _trigger_times(file, reference)
+        if not np.array_equal(triggers, original_triggers):
+            raise ValueError("The selected triggers changed. Plot TOF again before filtering.")
+        for source in sources:
+            name, field = ARRIVALS[source]
+            table = _table(file, name, field)
+            counts = np.zeros(len(edges) - 1, dtype=np.int64)
+            if selected_count:
+                print(f"Building GMD2-filtered TOF histogram for {source}…")
+                for values, assigned, _ in _tof_blocks(table, field, triggers):
+                    counts += np.histogram(values[selected[assigned]], bins=edges)[0]
+            result[source] = counts
+            print(f"{source}: {int(counts.sum()):,} selected counts in the TOF range.")
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True, help="Histogram output (.npz)")
     parser.add_argument("--metadata", type=Path, help="Matching TPX3 Dump acquisition metadata (.h5)")
+    parser.add_argument("--tof-result", type=Path, help="Existing unfiltered histogram (.npz)")
+    parser.add_argument("--gmd-min", type=float, help="Inclusive GMD2 minimum in nA")
+    parser.add_argument("--gmd-max", type=float, help="Inclusive GMD2 maximum in nA")
+    parser.add_argument("--gmd-shift", type=int, help="Pair GMD row j with camera frame j + shift")
     parser.add_argument("--source", choices=(*ARRIVALS, "both"), default="pixels")
     parser.add_argument("--reference", choices=REFERENCES, default=DEFAULT_REFERENCE)
     parser.add_argument("--bins", type=int, default=DEFAULT_BINS)
@@ -188,10 +232,18 @@ def main():
     args = parser.parse_args()
     try:
         output = validate_distinct_output(args.output, [("LUNA HDF5 input", args.input),
-                                                       ("acquisition metadata", args.metadata)])
-        sources = tuple(ARRIVALS) if args.source == "both" else (args.source,)
-        result = histogram(args.input, sources, args.reference, args.bins, args.minimum, args.maximum,
-                           metadata=args.metadata)
+                                                       ("acquisition metadata", args.metadata),
+                                                       ("unfiltered TOF result", args.tof_result)])
+        if any(value is not None for value in (args.tof_result, args.gmd_min, args.gmd_max, args.gmd_shift)):
+            if any(value is None for value in (args.tof_result, args.metadata, args.gmd_min,
+                                               args.gmd_max, args.gmd_shift)):
+                raise ValueError("Filtering requires the unfiltered TOF result, metadata, GMD limits, and shift.")
+            result = filtered_histogram(args.input, args.tof_result, args.metadata, args.reference,
+                                        args.gmd_min, args.gmd_max, args.gmd_shift)
+        else:
+            sources = tuple(ARRIVALS) if args.source == "both" else (args.source,)
+            result = histogram(args.input, sources, args.reference, args.bins, args.minimum, args.maximum,
+                               metadata=args.metadata)
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("wb") as handle:
             np.savez(handle, **result)

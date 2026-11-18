@@ -9,7 +9,8 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from vmi_analysis.ion_tof import DEFAULT_BINS, DEFAULT_REFERENCE, MAX_BINS, REFERENCES, gmd_diagnostics
+from vmi_analysis.ion_tof import DEFAULT_BINS, DEFAULT_REFERENCE, GMD_SHIFTS, MAX_BINS, REFERENCES, gmd_diagnostics
+from vmi_analysis.pes import BASELINE_PARAMETERS, PeakGuess, evaluate_fit_for_plot, fit_peaks
 
 from .. import shared, theme
 from ..centroid_plots import _style, plot_options
@@ -18,72 +19,72 @@ from .common import JobView, action_bar, field_grid, num_input, path_input, pers
 
 
 JOB_NAME = "Ion TOF"
+FILTER_JOB_NAME = "GMD-filtered TOF"
 SOURCES = {"pixels": "Raw pixel hits", "clusters": "Clustered events", "both": "Both"}
 REFERENCE_LABELS = {name: name.replace("Rising", " rising").replace("Falling", " falling")
                     for name in REFERENCES}
 
 
-def _gmd_results(result, sources):
-    theme.form_section("GMD alignment diagnostic")
-    ui.label("The diagnostic compares GMD2 from row j with counts from camera frame j + d. "
-             "At d = −1, a camera frame uses the next row’s GMD2. At d = +1, it uses the previous row’s GMD2.")
-    issue = str(result["gmd_alignment_issue"])
+def _gmd_histogram(label, values):
+    counts, edges = np.histogram(values[np.isfinite(values)], bins=80)
+    fig = go.Figure(go.Bar(x=(edges[1:] + edges[:-1]) / 2, y=counts, width=np.diff(edges),
+                           marker=dict(color="#1e40af", line=dict(color="#f5f7fa", width=0.5))))
+    _style(fig, f"{label} histogram")
+    fig.update_layout(height=360)
+    fig.update_xaxes(title_text=f"{label} (nA)")
+    fig.update_yaxes(title_text="Frames / bin", rangemode="tozero")
+    return fig
+
+
+def _correlation_plot(result, sources):
+    fig = go.Figure()
+    best_shifts = []
+    issue = result["gmd_alignment_issue"]
     if issue:
-        ui.label(f"Alignment unavailable. {issue}").classes("vmi-subtitle")
+        fig.add_annotation(text="Alignment unavailable", x=0.5, y=0.5, xref="paper", yref="paper",
+                           showarrow=False)
     else:
-        ui.label("Uses all hits assigned to each trigger, regardless of the TOF plot range. "
-                 "Pairs require positive GMD2 and positive counts, with at least 10 pairs per shift."
-                 ).classes("vmi-subtitle")
         shifts = result["gmd_shifts"]
-        fig = go.Figure()
-        colors = ("#1e40af", "#c2410c")
-        for index, source in enumerate(sources):
+        for source, color in zip(sources, ("#1e40af", "#c2410c")):
             coefficients = result[f"{source}_gmd_correlation"]
             pairs = result[f"{source}_gmd_pairs"]
             for column, (statistic, dash) in enumerate((("Pearson", "solid"), ("Spearman", "dash"))):
-                fig.add_trace(go.Scatter(
-                    x=shifts, y=coefficients[:, column], customdata=pairs,
-                    mode="lines+markers", line=dict(dash=dash, color=colors[index]),
-                    name=f"{SOURCES[source]} · {statistic}",
+                fig.add_scatter(
+                    x=shifts, y=coefficients[:, column], customdata=pairs, mode="lines+markers",
+                    line=dict(dash=dash, color=color), name=f"{SOURCES[source]} · {statistic}",
                     hovertemplate="d = %{x:+d}<br>Correlation %{y:.3f}<br>%{customdata:,} pairs",
-                ))
+                )
             pearson = coefficients[:, 0]
-            if np.any(np.isfinite(pearson)):
-                best = int(np.nanargmax(pearson))
-                ties = np.count_nonzero(pearson == pearson[best])
-                detail = (f"highest Pearson r = {pearson[best]:.3f} at d = {shifts[best]:+d}"
-                          if ties == 1 else f"highest Pearson r = {pearson[best]:.3f}, tied at {ties} shifts")
-            else:
-                detail = "no correlation could be calculated"
-            ui.label(f"{SOURCES[source]} · {detail}").classes("vmi-caption")
-        _style(fig, "GMD2 versus counts per frame")
-        fig.update_layout(height=420, showlegend=True, legend=dict(orientation="h", y=-0.22),
-                          margin=dict(b=115))
-        fig.update_xaxes(title_text="Shift d (frames)", tickmode="array", tickvals=shifts)
-        fig.update_yaxes(title_text="Correlation coefficient", range=[-1.05, 1.05])
+            maxima = np.isfinite(pearson) & (pearson == np.max(pearson, where=np.isfinite(pearson), initial=-np.inf))
+            best_shifts.append(int(shifts[maxima][0]) if maxima.sum() == 1 else None)
+        fig.update_xaxes(tickmode="array", tickvals=shifts)
         fig.add_vline(x=0, line_dash="dot", line_color="#94a3b8")
-        ui.plotly(plot_options(fig)).classes("w-full")
+    _style(fig, "GMD2 versus counts per frame")
+    fig.update_layout(height=360, showlegend=not issue, legend=dict(orientation="h", y=-0.24),
+                      margin=dict(b=110))
+    fig.update_xaxes(title_text="Shift d (frames)")
+    fig.update_yaxes(title_text="Correlation coefficient", range=[-1.05, 1.05])
+    suggested = best_shifts[0] if best_shifts and len(set(best_shifts)) == 1 else None
+    return fig, suggested
 
-    theme.form_section("GMD readings")
+
+def _gmd_results(result, sources):
     first, second = result["gmd1_na"], result["gmd2_na"]
     valid = np.isfinite(first) & np.isfinite(second)
-    fig = go.Figure(go.Scattergl(x=second[valid], y=first[valid], mode="markers",
-                                marker=dict(size=4, opacity=0.55)))
-    _style(fig, "GMD1 versus GMD2")
-    fig.update_layout(height=400)
-    fig.update_xaxes(title_text="GMD2 (nA)")
-    fig.update_yaxes(title_text="GMD1 (nA)")
-    ui.plotly(plot_options(fig)).classes("w-full")
-    with field_grid():
-        for label, values in (("GMD1", first), ("GMD2", second)):
-            counts, edges = np.histogram(values[np.isfinite(values)], bins=80)
-            plot = go.Figure(go.Scatter(x=edges, y=np.r_[counts, 0], mode="lines", line_shape="hv"))
-            _style(plot, f"{label} histogram")
-            plot.update_layout(height=330)
-            plot.update_xaxes(title_text=f"{label} (nA)")
-            plot.update_yaxes(title_text="Frames / bin", rangemode="tozero")
-            ui.plotly(plot_options(plot)).classes("w-full")
-
+    scatter = go.Figure(go.Scattergl(x=second[valid], y=first[valid], mode="markers",
+                                    marker=dict(size=4, opacity=0.55)))
+    _style(scatter, "GMD1 versus GMD2")
+    scatter.update_layout(height=360)
+    scatter.update_xaxes(title_text="GMD2 (nA)")
+    scatter.update_yaxes(title_text="GMD1 (nA)")
+    correlation, suggested = _correlation_plot(result, sources)
+    with ui.expansion("GMD diagnostic plots", icon="insights", value=False).classes("w-full"):
+        with ui.element("div").classes("grid grid-cols-1 md:grid-cols-2 gap-4 w-full"):
+            for fig in (scatter, _gmd_histogram("GMD1", first), _gmd_histogram("GMD2", second), correlation):
+                ui.plotly(plot_options(fig)).classes("w-full min-w-0")
+        ui.label("Correlation compares GMD2 row j with camera frame j + d across all assigned hits. "
+                 "It uses positive GMD2 and counts, with at least 10 pairs per shift.").classes("vmi-subtitle")
+    return suggested
 
 def _load_gmd_diagnostics(result_path, metadata):
     with np.load(result_path, allow_pickle=False) as result:
@@ -92,6 +93,38 @@ def _load_gmd_diagnostics(result_path, metadata):
     if not counts:
         raise ValueError("Plot TOF again to save the counts per trigger for GMD diagnostics.")
     return gmd_diagnostics(metadata, counts), list(counts)
+
+
+def _drag_interval(event):
+    ranges = event.args or {}
+    return next((sorted(limits) for axis, limits in ranges.items()
+                 if axis.startswith("x") and len(limits) == 2), None)
+
+
+def _mark_interval(fig, low, high, selecting):
+    has_range = low is not None and high is not None and isfinite(low) and isfinite(high) and low < high
+    if has_range:
+        fig.add_vrect(x0=low, x1=high, fillcolor="#1e40af", opacity=0.15, line_width=0)
+    fig.update_layout(dragmode="select" if selecting else "zoom", selectdirection="h", selections=[],
+                      selectionrevision=f"{low}:{high}")
+
+
+def _tof_figure(edges, spectra, title, *, selecting=False):
+    fig = make_subplots(rows=len(spectra), cols=1, shared_xaxes=True,
+                        subplot_titles=[SOURCES[source] for source in spectra])
+    for row, (source, counts) in enumerate(spectra.items(), start=1):
+        # An invisible bin-center trace enables selection without shifting the step histogram.
+        fig.add_scatter(x=edges, y=np.r_[counts, 0], mode="lines", line_shape="hv",
+                        name=SOURCES[source], hovertemplate="TOF %{x:.4~g} ns<br>Count %{y:,}<extra></extra>",
+                        row=row, col=1)
+        if selecting:
+            fig.add_scatter(x=(edges[:-1] + edges[1:]) / 2, y=counts, mode="markers",
+                            marker=dict(opacity=0), showlegend=False, hoverinfo="skip", row=row, col=1)
+        fig.update_yaxes(title_text="Counts / bin", rangemode="tozero", row=row, col=1)
+    _style(fig, title)
+    fig.update_layout(height=400 if len(spectra) == 1 else 650)
+    fig.update_xaxes(title_text="Time of flight (ns)", row=len(spectra), col=1)
+    return fig
 
 
 def _results(job):
@@ -103,22 +136,12 @@ def _results(job):
         sources = [name for name in ("pixels", "clusters") if name in result]
         ui.label(f'{job.extra["input_name"]} · {REFERENCE_LABELS[job.extra["reference"]]} '
                  f'· {int(result["triggers"]):,} triggers').classes("vmi-caption break-all")
-        fig = make_subplots(rows=len(sources), cols=1, shared_xaxes=True,
-                            subplot_titles=[SOURCES[source] for source in sources])
-        for row, source in enumerate(sources, start=1):
+        for source in sources:
             counts = result[source]
             ui.label(f'{SOURCES[source]} · {int(counts.sum()):,} plotted · '
                      f'{int(result[f"{source}_unmatched"]):,} with no preceding trigger · '
                      f'{int(result[f"{source}_outside"]):,} outside the TOF range').classes("vmi-subtitle")
-            fig.add_trace(go.Scatter(
-                x=edges, y=np.r_[counts, 0], mode="lines", line_shape="hv",
-                name=SOURCES[source],
-                hovertemplate="TOF %{x:.4~g} ns<br>Count %{y:,}<extra></extra>",
-            ), row=row, col=1)
-            fig.update_yaxes(title_text="Counts / bin", rangemode="tozero", row=row, col=1)
-        _style(fig, "Time-of-flight spectrum")
-        fig.update_layout(height=400 if len(sources) == 1 else 650)
-        fig.update_xaxes(title_text="Time of flight (ns)", row=len(sources), col=1)
+        fig = _tof_figure(edges, {source: result[source] for source in sources}, "Time-of-flight spectrum")
         ui.plotly(plot_options(fig)).classes("w-full")
 
 
@@ -153,9 +176,10 @@ def build(jobs):
                        "--bins", str(int(count)), "--minimum", str(low)]
             if high is not None:
                 job.cmd += ["--maximum", str(high)]
-            job.extra.update(histogram=str(result), reference=reference.value, input_name=source_file.name)
+            job.extra.update(histogram=str(result), reference=reference.value, input_name=source_file.name,
+                             source_file=str(source_file))
             view.attach(jobs.submit(job))
-            gmd_display.clear()
+            reset_gmd()
         except (OSError, ValueError) as exc:
             ui.notify(str(exc), type="warning")
 
@@ -173,8 +197,23 @@ def build(jobs):
         with action_bar(view, "Plot TOF", on_click=run):
             pass
     view.place_console()
+    reset_gmd = _gmd_section(jobs, view, save)
+
+
+def _gmd_section(jobs, view, save):
+    loaded_job = None
+    loaded_metadata = None
+    readings = None
+
+    def reset_gmd():
+        nonlocal loaded_job, loaded_metadata, readings
+        loaded_job = loaded_metadata = readings = None
+        gmd_display.clear()
+        filtered_display.clear()
+        filter_card.set_visibility(False)
 
     async def plot_gmd():
+        nonlocal loaded_job, loaded_metadata, readings
         job = view.job
         if job is None or job.status != "done":
             ui.notify("Complete a TOF plot first.", type="warning")
@@ -189,12 +228,23 @@ def build(jobs):
             result_path = shared.checked_path(job.extra["histogram"])
             with jobs.preview_read_access([result_path, metadata]):
                 result, sources = await asyncio.to_thread(_load_gmd_diagnostics, result_path, metadata)
-            if view.job is job:
-                gmd_display.clear()
+            if view.job is job and metadata_file.value.strip() == metadata_value:
+                reset_gmd()
+                loaded_job, loaded_metadata = job, metadata
+                readings = result["gmd2_na"]
                 with gmd_display:
                     ui.label(f'{job.extra["input_name"]} · {REFERENCE_LABELS[job.extra["reference"]]} '
                              f'· {metadata.name}').classes("vmi-caption break-all")
-                    _gmd_results(result, sources)
+                    suggested = _gmd_results(result, sources)
+                    if issue := result["gmd_alignment_issue"]:
+                        ui.label(f"Cannot filter by GMD2. {issue}").classes("text-negative")
+                gmd_low.value = gmd_high.value = None
+                shift.value = suggested
+                filter_view.action_button.set_visibility(not issue)
+                filter_card.set_visibility(True)
+                refresh_gmd_plot()
+                if (finished := filter_view.job) and finished.status == "done":
+                    show_filtered(finished)
         except (OSError, ValueError, ResourceBusyError) as exc:
             ui.notify(str(exc), type="warning")
         finally:
@@ -209,3 +259,233 @@ def build(jobs):
                                         browse="file", filters=[".h5", ".hdf5"]), "metadata")
         gmd_button = ui.button("Plot GMD diagnostics", icon="show_chart", on_click=plot_gmd)
         gmd_display = ui.column().classes("w-full gap-4")
+
+    def refresh_gmd_plot():
+        if readings is None:
+            return
+        fig = _gmd_histogram("GMD2", readings)
+        _mark_interval(fig, gmd_low.value, gmd_high.value, gmd_mode.value == "Select GMD2 range")
+        fig.update_layout(uirevision=loaded_job.id)
+        gmd_plot.update_figure(plot_options(fig))
+
+    def select_gmd(event):
+        if gmd_mode.value == "Select GMD2 range" and (limits := _drag_interval(event)):
+            gmd_low.value, gmd_high.value = limits
+            if filter_view.action_button.visible:
+                run_filter()
+
+    def run_filter():
+        if filter_view.job and filter_view.job.status in ("running", "queued"):
+            ui.notify("Wait for the current filter or stop it before applying a new range.", type="warning")
+            return
+        try:
+            if loaded_job is None or loaded_job is not view.job:
+                raise ValueError("Load GMD diagnostics for the latest TOF plot.")
+            low, high = gmd_low.value, gmd_high.value
+            if low is None or high is None or not isfinite(low) or not isfinite(high) or low >= high:
+                raise ValueError("Select a GMD2 range or enter increasing, finite limits.")
+            if shift.value is None:
+                raise ValueError("Select an alignment shift before filtering.")
+            if "source_file" not in loaded_job.extra:
+                raise ValueError("Plot TOF again before filtering this older result.")
+            source_file = shared.checked_path(loaded_job.extra["source_file"])
+            original = shared.checked_path(loaded_job.extra["histogram"])
+            metadata = shared.checked_path(loaded_metadata)
+            job = Job(FILTER_JOB_NAME, cwd=str(shared.workspace_root()))
+            result = shared.generated_dir() / f"ion-tof-filtered-{job.id}.npz"
+            job.cmd = [sys.executable, "-m", "vmi_analysis.ion_tof", "--input", str(source_file),
+                       "--output", str(result), "--tof-result", str(original), "--metadata", str(metadata),
+                       "--reference", loaded_job.extra["reference"], f"--gmd-min={low}", f"--gmd-max={high}",
+                       "--gmd-shift", str(shift.value)]
+            job.extra.update(histogram=str(result), parent_id=loaded_job.id, metadata=str(metadata),
+                             gmd_min=low, gmd_max=high, gmd_shift=shift.value)
+            job = jobs.submit(job)
+            filtered_display.clear()
+            filter_view.attach(job)
+        except (OSError, ValueError, ResourceBusyError) as exc:
+            ui.notify(str(exc), type="warning")
+
+    def show_filtered(job):
+        if (job.status != "done" or loaded_job is None or loaded_job is not view.job
+                or job.extra["parent_id"] != loaded_job.id or job.extra["metadata"] != str(loaded_metadata)):
+            return
+        with np.load(shared.checked_path(job.extra["histogram"]), allow_pickle=False) as result:
+            edges = result["edges"]
+            spectra = {source: result[source] for source in ("pixels", "clusters") if source in result}
+            selected = int(result["selected_triggers"])
+            total = int(result["triggers"])
+        filtered_display.clear()
+        with filtered_display:
+            theme.form_section("GMD2-filtered TOF")
+            ui.label(f'GMD2 {job.extra["gmd_min"]:g}–{job.extra["gmd_max"]:g} nA · '
+                     f'shift {job.extra["gmd_shift"]:+d} · {selected:,} of {total:,} triggers').classes("vmi-caption")
+            if not any(counts.any() for counts in spectra.values()):
+                ui.label("No counts in the TOF range for these triggers.").classes("vmi-subtitle")
+                fig = _tof_figure(edges, spectra, "GMD2-filtered time-of-flight spectra")
+                ui.plotly(plot_options(fig)).classes("w-full")
+            else:
+                _peak_fitting(edges, spectra)
+
+    filter_view = JobView(jobs, job_name=FILTER_JOB_NAME, results_builder=show_filtered)
+    with theme.panel_card() as filter_card:
+        filter_card.set_visibility(False)
+        theme.form_section("GMD2 range")
+        gmd_mode = ui.toggle(["Zoom", "Select GMD2 range"], value="Zoom",
+                             on_change=lambda _: refresh_gmd_plot())
+        gmd_plot = ui.plotly(go.Figure()).classes("w-full")
+        gmd_plot.on("plotly_selected", select_gmd, js_handler="event => emit(event?.range ?? null)")
+        with field_grid(3):
+            gmd_low = num_input("GMD2 min (nA)", None, step="any")
+            gmd_high = num_input("GMD2 max (nA)", None, step="any")
+            shift = ui.select({d: f"{d:+d}" for d in GMD_SHIFTS}, label="Alignment shift d (frames)") \
+                .props("outlined dense")
+        for field in (gmd_low, gmd_high):
+            field.on_value_change(lambda _: refresh_gmd_plot())
+        ui.label("GMD2 row j selects camera frame j + d. Drag to apply a range, or enter limits and "
+                 "click Apply GMD2 range. The limits are inclusive.").classes("vmi-subtitle")
+        filter_view.run_button("Apply GMD2 range", on_click=run_filter)
+        filter_view.place_console("Filtered TOF console")
+        filtered_display = ui.column().classes("w-full gap-4")
+    metadata_file.on_value_change(lambda _: reset_gmd())
+    return reset_gmd
+
+
+def _peak_fitting(edges, spectra):
+    centers = (edges[:-1] + edges[1:]) / 2
+    peak_rows = []
+
+    def refresh_plot():
+        selecting = mode.value == "Select fit range"
+        fig = _tof_figure(edges, spectra, "GMD2-filtered time-of-flight spectra", selecting=selecting)
+        _mark_interval(fig, fit_low.value, fit_high.value, selecting)
+        fig.update_layout(uirevision="filtered-tof")
+        plot.update_figure(plot_options(fig))
+
+    def select_fit_range(event):
+        if mode.value == "Select fit range" and (limits := _drag_interval(event)):
+            fit_low.value, fit_high.value = limits
+
+    def clear_fit_range():
+        fit_low.value = fit_high.value = None
+        fit_display.clear()
+
+    def add_peak():
+        with peak_list, ui.row().classes("w-full items-center gap-3") as row:
+            center = num_input("Peak center (ns)", None, step="any")
+            gaussian = num_input("Gaussian FWHM (ns)", None, min=0, step="any")
+            lorentzian = num_input("Lorentzian FWHM (ns)", 0, min=0, step="any")
+            lorentzian.bind_visibility_from(profile, "value", lambda value: value == "Voigt")
+            fields = (center, gaussian, lorentzian)
+            peak_rows.append(fields)
+
+            def remove():
+                peak_rows.remove(fields)
+                row.delete()
+
+            ui.button(icon="remove_circle_outline", on_click=remove).props('flat round aria-label="Remove peak"')
+
+    async def fit():
+        try:
+            region = fit_low.value, fit_high.value
+            if None in region or not np.isfinite(region).all() or region[0] >= region[1]:
+                raise ValueError("Select a fit range or enter increasing, finite TOF limits.")
+            if not targets.value:
+                raise ValueError("Choose at least one TOF spectrum.")
+            model, peak_profile = baseline.value, profile.value
+            guesses = []
+            for center, gaussian, lorentzian in peak_rows:
+                wing = (lorentzian.value or 0) if peak_profile == "Voigt" else 0
+                if center.value is None and gaussian.value is None and not wing:
+                    continue
+                if center.value is None or gaussian.value is None:
+                    raise ValueError("Enter a center and Gaussian FWHM for each peak.")
+                guesses.append(PeakGuess(peak_profile, center.value, gaussian.value, wing))
+            selected = list(targets.value)
+        except ValueError as exc:
+            ui.notify(str(exc), type="warning")
+            return
+
+        def fit_selected():
+            results, errors = {}, []
+            for source in selected:
+                try:
+                    results[source] = fit_peaks(centers, spectra[source], region, guesses, model,
+                                                auto_profile=peak_profile)
+                except (RuntimeError, ValueError, FloatingPointError) as exc:
+                    errors.append(f"{SOURCES[source]}: {exc}")
+            return results, errors
+
+        fit_button.disable()
+        try:
+            results, errors = await asyncio.to_thread(fit_selected)
+        finally:
+            if not fit_button.is_deleted:
+                fit_button.enable()
+        if fit_display.is_deleted or (fit_low.value, fit_high.value) != region:
+            return
+        fit_display.clear()
+        with fit_display:
+            for error in errors:
+                ui.label(error).classes("text-negative")
+            if results:
+                _show_peak_fits(results, model)
+
+    with ui.row().classes("items-center gap-2"):
+        mode = ui.toggle(["Zoom", "Select fit range"], value="Zoom", on_change=lambda _: refresh_plot())
+        ui.button("Clear fit range", on_click=clear_fit_range).props("flat")
+    plot = ui.plotly(go.Figure()).classes("w-full")
+    plot.on("plotly_selected", select_fit_range, js_handler="event => emit(event?.range ?? null)")
+    theme.form_section("TOF peak fitting")
+    ui.label("Drag a fit range on a filtered spectrum or enter the limits. Leave peak estimates blank "
+             "for automatic detection.").classes("vmi-subtitle")
+    with field_grid():
+        fit_low = num_input("Fit TOF min (ns)", None, step="any")
+        fit_high = num_input("Fit TOF max (ns)", None, step="any")
+        targets = ui.select({source: SOURCES[source] for source in spectra}, value=list(spectra),
+                            label="TOF spectra to fit", multiple=True).props("outlined dense use-chips")
+        baseline = ui.select(list(BASELINE_PARAMETERS), value="Constant", label="Baseline").props("outlined dense")
+        profile = ui.select(["Gaussian", "Voigt"], value="Gaussian", label="Peak profile").props("outlined dense")
+    for field in (fit_low, fit_high):
+        field.on_value_change(lambda _: refresh_plot())
+    peak_list = ui.column().classes("w-full")
+    with ui.row().classes("gap-2"):
+        ui.button("Add peak estimate", icon="add", on_click=add_peak).props("flat")
+        fit_button = ui.button("Fit TOF peaks", icon="show_chart", on_click=fit)
+    fit_display = ui.column().classes("w-full")
+    refresh_plot()
+
+
+def _show_peak_fits(results, model):
+    columns = [("spectrum", "Spectrum"), ("peak", "Peak"), ("profile", "Profile"), ("center", "Center (ns)"),
+               ("fwhm", "FWHM (ns)"), ("area", "Area (counts/bin × ns)"), ("bound", "At bound")]
+    rows = [dict(spectrum=SOURCES[source], **peak) for source, result in results.items() for peak in result[-1]]
+    ui.table(columns=[dict(name=key, field=key, label=label) for key, label in columns],
+             rows=[dict(id=index, **{key: f"{value:.6g}" if isinstance(value, float) else value
+                                     for key, value in row.items()})
+                   for index, row in enumerate(rows)], row_key="id").classes("w-full")
+    target = ui.select({source: SOURCES[source] for source in results}, value=next(iter(results)),
+                       label="Inspect TOF fit").props("outlined dense")
+    chart = ui.plotly(go.Figure()).classes("w-full")
+
+    def redraw():
+        x, fitted, background, _, residual, peaks = results[target.value]
+        grid, total, baseline, components = evaluate_fit_for_plot(x, background, peaks)
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.74, 0.26], vertical_spacing=0.09)
+        fig.add_scatter(x=x, y=fitted + residual, mode="markers", name="Counts", marker=dict(size=8), row=1, col=1)
+        fig.add_scatter(x=grid, y=total, mode="lines", name="Total fit", row=1, col=1)
+        if model != "None":
+            fig.add_scatter(x=grid, y=baseline, mode="lines", name="Baseline", line=dict(dash="dot"), row=1, col=1)
+        suffix = " + baseline" if model != "None" else ""
+        for index, peak in enumerate(components, 1):
+            fig.add_scatter(x=grid, y=baseline + peak, mode="lines", name=f"Peak {index}{suffix}",
+                            line=dict(dash="dash"), row=1, col=1)
+        fig.add_scatter(x=x, y=residual, name="Residual", showlegend=False, row=2, col=1)
+        _style(fig, "TOF peak fit and residuals")
+        fig.update_layout(height=570, showlegend=True)
+        fig.update_xaxes(title_text="Time of flight (ns)", row=2, col=1)
+        fig.update_yaxes(title_text="Counts / bin", row=1, col=1)
+        fig.update_yaxes(title_text="Residual", row=2, col=1)
+        chart.update_figure(plot_options(fig))
+
+    target.on_value_change(lambda _: redraw())
+    redraw()

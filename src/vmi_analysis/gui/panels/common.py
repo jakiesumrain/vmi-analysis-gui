@@ -447,7 +447,7 @@ class JobView:
         self.action_button.props("color=negative" if active else "color=primary")
         self.action_button.set_enabled(not stopping)
 
-    def place_console(self) -> None:
+    def place_console(self, title: str = "Console") -> None:
         """Create the collapsible log console and results area; call at panel bottom."""
         with ui.column().classes("vmi-console w-full gap-2"):
             head = ui.row().classes(
@@ -457,7 +457,7 @@ class JobView:
             with head:
                 self._chevron = ui.icon("chevron_right") \
                     .classes("vmi-console-chevron")
-                ui.label("Console").classes("vmi-console-title")
+                ui.label(title).classes("vmi-console-title")
                 self.console_hint = ui.label("Output appears here after a run.") \
                     .classes("vmi-caption vmi-console-hint")
             head.on("click", self.toggle_console)

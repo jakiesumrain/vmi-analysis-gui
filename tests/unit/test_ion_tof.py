@@ -5,7 +5,7 @@ import unittest
 import h5py
 import numpy as np
 
-from vmi_analysis.ion_tof import GMD_SHIFTS, gmd_diagnostics, histogram
+from vmi_analysis.ion_tof import GMD_SHIFTS, filtered_histogram, gmd_diagnostics, histogram
 
 
 class IonTofTests(unittest.TestCase):
@@ -73,3 +73,32 @@ class IonTofTests(unittest.TestCase):
         np.testing.assert_allclose(diagnostics["gmd2_na"], gmd)
         self.assertIn("not strictly increasing", misordered["gmd_alignment_issue"])
         self.assertNotIn("gmd_shifts", misordered)
+
+    def test_filter_uses_inclusive_gmd_limits_and_signed_shift_on_original_bins(self):
+        with TemporaryDirectory() as directory:
+            path, metadata, original = [Path(directory) / name for name in ("luna.h5", "meta.h5", "tof.npz")]
+            with h5py.File(path, "w") as file:
+                file["TDCEvents"] = np.array([(1, t) for t in (100_000, 200_000, 300_000, 400_000)],
+                                             dtype=[("tdc_type", "u1"), ("timestamp", "u8")])
+                file["PixelHits"] = np.array([(110_000,), (225_000,), (330_000,), (401_000,)],
+                                             dtype=[("toa", "u8")])
+                file["Clusters"] = np.array([(102_000,), (210_000,), (330_000,), (431_000,)],
+                                            dtype=[("ctoa", "u8")])
+            with h5py.File(metadata, "w") as file:
+                file["frames"] = np.array([(j, v, v) for j, v in enumerate([2e-9, 3e-9, 9e-9, 9e-9])],
+                                          dtype=[("timestamp_ns", "i8"), ("gmd1", "f8"), ("gmd2", "f8")])
+            before = histogram(path, ("pixels", "clusters"), bins=4, maximum=4)
+            np.savez(original, **before)
+            earlier = filtered_histogram(path, original, metadata, "TDC1Rising", 2, 3, -1)
+            later = filtered_histogram(path, original, metadata, "TDC1Rising", 2, 3, 1)
+            with h5py.File(path, "r+") as file:
+                file["TDCEvents"][-1] = (1, 410_000)
+            with self.assertRaisesRegex(ValueError, "triggers changed"):
+                filtered_histogram(path, original, metadata, "TDC1Rising", 2, 3, -1)
+        np.testing.assert_array_equal(earlier["edges"], before["edges"])
+        self.assertEqual(earlier["selected_triggers"], 1)
+        np.testing.assert_array_equal(earlier["pixels"], [0, 1, 0, 0])
+        np.testing.assert_array_equal(earlier["clusters"], [1, 0, 0, 0])
+        self.assertEqual(later["selected_triggers"], 2)
+        np.testing.assert_array_equal(later["pixels"], [0, 0, 1, 1])
+        np.testing.assert_array_equal(later["clusters"], [0, 1, 0, 1])
