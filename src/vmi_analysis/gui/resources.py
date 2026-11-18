@@ -166,6 +166,9 @@ def command_access(cmd, cwd=None):
         read(value("--timewalk-file"))
         write(value("--output"))
         write(value("--metadata-output"))
+    elif module == "vmi_analysis.ion_pipeline":
+        read(value("--input"))
+        write(value("--output-dir"))
     elif module == "vmi_analysis.ion_tof":
         read(value("--input"))
         read(value("--metadata"))

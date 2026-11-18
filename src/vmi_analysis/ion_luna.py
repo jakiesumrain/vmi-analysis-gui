@@ -1,7 +1,7 @@
 """Run ASI LUNA's TPX3 processor and publish a completed HDF5 result."""
 
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 import os
 from pathlib import Path, PureWindowsPath
@@ -100,39 +100,48 @@ def frame_order(paths):
     return [path for _, path in sorted(numbered, key=lambda item: (int(item[0][1]), item[1].name))]
 
 
-def preprocess_acquisition(paths, destination, metadata, *, numbered):
+def _write_chunks(source, framed, body, path):
+    while body:
+        if len(body) % 8:
+            raise ValueError(f"{path.name} ends with an incomplete 8-byte Timepix3 packet.")
+        framed.write(SERVAL_HEADER.pack(b"TPX3", 0, 0, len(body)))
+        framed.write(body)
+        body = source.read(MAX_CHUNK_BYTES)
+
+
+def preprocess_acquisition(paths, destination, metadata, *, numbered, combined=False):
     """Preserve each file's acquisition metadata and frame its single-chip packets."""
     destination.mkdir()
     records = []
     prepared = {}
-    for index, path in enumerate(paths):
-        with path.open("rb") as source:
-            prefix = source.read(ACQUISITION_PREFIX.size)
-            if prefix.startswith(b"TPX3"):
-                raise ValueError(f"{path.name} already has a Serval header. Select ASI Serval input.")
-            if len(prefix) != ACQUISITION_PREFIX.size:
-                raise ValueError(f"{path.name} has an incomplete 32-byte acquisition prefix.")
-            seconds, nanoseconds, gmd1, gmd2 = ACQUISITION_PREFIX.unpack(prefix)
-            if not 0 <= nanoseconds < 1_000_000_000:
-                raise ValueError(f"{path.name} has an invalid acquisition timestamp nanosecond field.")
-            timestamp_ns = seconds * 1_000_000_000 + nanoseconds
-            if not -(2**63) <= timestamp_ns < 2**63:
-                raise ValueError(f"{path.name} has an acquisition timestamp outside the 64-bit nanosecond range.")
-            records.append((path.name, timestamp_ns, gmd1, gmd2))
-            body = source.read(MAX_CHUNK_BYTES)
-            if not body:
-                continue
-            # Fixed-width names preserve the chosen order in LUNA's filename sort.
-            order = index if numbered else timestamp_ns + 2**63
-            target = destination / f"{order:020d}_{index:09d}.tpx3"
-            with target.open("wb") as framed:
-                while body:
-                    if len(body) % 8:
-                        raise ValueError(f"{path.name} ends with an incomplete 8-byte Timepix3 packet.")
-                    framed.write(SERVAL_HEADER.pack(b"TPX3", 0, 0, len(body)))
-                    framed.write(body)
-                    body = source.read(MAX_CHUNK_BYTES)
-            prepared[target] = path
+    combined_path = destination / "acquisition.tpx3"
+    with combined_path.open("wb") if combined else nullcontext() as combined_stream:
+        for index, path in enumerate(paths):
+            with path.open("rb") as source:
+                prefix = source.read(ACQUISITION_PREFIX.size)
+                if prefix.startswith(b"TPX3"):
+                    raise ValueError(f"{path.name} already has a Serval header. Select ASI Serval input.")
+                if len(prefix) != ACQUISITION_PREFIX.size:
+                    raise ValueError(f"{path.name} has an incomplete 32-byte acquisition prefix.")
+                seconds, nanoseconds, gmd1, gmd2 = ACQUISITION_PREFIX.unpack(prefix)
+                if not 0 <= nanoseconds < 1_000_000_000:
+                    raise ValueError(f"{path.name} has an invalid acquisition timestamp nanosecond field.")
+                timestamp_ns = seconds * 1_000_000_000 + nanoseconds
+                if not -(2**63) <= timestamp_ns < 2**63:
+                    raise ValueError(f"{path.name} has an acquisition timestamp outside the 64-bit nanosecond range.")
+                records.append((path.name, timestamp_ns, gmd1, gmd2))
+                body = source.read(MAX_CHUNK_BYTES)
+                if not body:
+                    continue
+                if combined_stream is not None:
+                    _write_chunks(source, combined_stream, body, path)
+                    continue
+                # Fixed-width names preserve the chosen order in LUNA's filename sort.
+                order = index if numbered else timestamp_ns + 2**63
+                target = destination / f"{order:020d}_{index:09d}.tpx3"
+                with target.open("wb") as framed:
+                    _write_chunks(source, framed, body, path)
+                prepared[target] = path
     with h5py.File(metadata, "w") as result:
         frames = result.create_dataset("frames", data=records if numbered else sorted(records, key=lambda row: row[1]), dtype=[
             ("filename", h5py.string_dtype("utf-8")), ("timestamp_ns", "<i8"),
@@ -200,16 +209,16 @@ def display_input_path(line, original_paths):
     return line
 
 
-def _run_luna(command, *, windows, original_paths=None):
+def _run_luna(command, *, windows, original_paths=None, log=None):
     if not windows:
         command = [which(command[0]) or command[0], *command[1:]]
-        print(f"{LUNA_COMMAND_PREFIX}{shlex.join(command)}", flush=True)
+        print(f"{LUNA_COMMAND_PREFIX}{shlex.join(command)}", file=log, flush=True)
     with subprocess.Popen(command, stdin=subprocess.PIPE if windows else subprocess.DEVNULL,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                           encoding="utf-8", errors="replace", env={**os.environ, "WSL_UTF8": "1"},
                           creationflags=subprocess.CREATE_NO_WINDOW if windows else 0) as process:
         for line in process.stdout:
-            print(display_input_path(line, original_paths), end="", flush=True)
+            print(display_input_path(line, original_paths), end="", file=log, flush=True)
             if "panicked at" in line:
                 if windows:
                     process.stdin.close()
@@ -224,18 +233,18 @@ def _run_luna(command, *, windows, original_paths=None):
             raise ValueError(f"LUNA exited with status {code}. See the console above.")
 
 
-def publish_result(command, pending, output, *, windows, staged_paths=None):
+def publish_result(command, pending, output, *, windows, staged_paths=None, log=None):
     originals = {staged.name: original for staged, original in (staged_paths or {}).items()}
-    _run_luna(command, windows=windows, original_paths=originals)
+    _run_luna(command, windows=windows, original_paths=originals, log=log)
     with h5py.File(pending, "r") as result:
         for name in ("PixelHits", "Clusters", "TDCEvents", "TimewalkMatrix", "TimewalkLookupTable"):
             if name in result:
-                print(f"{name}: {len(result[name]):,}", flush=True)
+                print(f"{name}: {len(result[name]):,}", file=log, flush=True)
     pending.replace(output)
-    print(f"HDF5 ready: {output}", flush=True)
+    print(f"HDF5 ready: {output}", file=log, flush=True)
 
 
-def apply_timewalk(source, output, options, *, windows):
+def apply_timewalk(source, output, options, *, windows, log=None):
     with h5py.File(source, "r") as data:
         for name in ("TimewalkMatrix", "PixelHits", "Clusters"):
             if name not in data or len(data[name]) == 0:
@@ -247,7 +256,7 @@ def apply_timewalk(source, output, options, *, windows):
         pending = Path(staging) / output.name
         command = luna_command(source, pending, None, args, options.wsl_distribution,
                                options.wsl_executable, windows=windows, correction=True)
-        publish_result(command, pending, output, windows=windows)
+        publish_result(command, pending, output, windows=windows, log=log)
 
 
 def main(argv=None):

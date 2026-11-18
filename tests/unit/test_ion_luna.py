@@ -46,7 +46,7 @@ class LunaTests(unittest.TestCase):
             (source / "z_frame_2.tpx3").write_bytes(prefix + packet)
             output, metadata = root / "events.h5", root / "metadata.h5"
 
-            def write_result(command, *, windows, original_paths):
+            def write_result(command, *, windows, original_paths, log):
                 framed = Path(command[command.index("-i") + 1])
                 staged = sorted(framed.iterdir())
                 expected = (struct.pack("<4sBBH", b"TPX3", 0, 0, MAX_CHUNK_BYTES)
@@ -88,7 +88,7 @@ class LunaTests(unittest.TestCase):
                     h5.create_dataset(name, data=[1])
             original = source.read_bytes()
 
-            def correct(command, *, windows, original_paths):
+            def correct(command, *, windows, original_paths, log):
                 self.assertEqual(command[1:4], ["apply-timewalk-correction", "--timewalk-file", str(source)])
                 pending = Path(command[command.index("--output-file") + 1])
                 self.assertNotEqual(pending, output)
@@ -130,7 +130,7 @@ class LunaTests(unittest.TestCase):
             (source / "b.tpx3").write_bytes(b"TPX3\0\0\0\0")
             output = root / "events.h5"
 
-            def write_result(command, *, windows, original_paths):
+            def write_result(command, *, windows, original_paths, log):
                 with h5py.File(command[command.index("-o") + 1], "w") as file:
                     file.create_dataset("Clusters", data=[1, 2])
 
