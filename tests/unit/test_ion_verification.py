@@ -8,6 +8,7 @@ import numpy as np
 
 from vmi_analysis import tpx3_analysis as reference
 from vmi_analysis.ion_verification import analyze, read_dump, unpack
+from vmi_analysis.ion_pipeline import DEFAULT_PEAKS, run
 from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS
 
 
@@ -56,3 +57,13 @@ class IonVerificationTests(unittest.TestCase):
             self.assertEqual(custom["edges"][-1], reference.TOF_PLOT_RANGE[1])
             self.assertLess(np.diff(custom["edges"])[-1], 17.5)
             self.assertEqual(json.loads(custom["yield_summary"]), json.loads(default["yield_summary"]))
+            pipeline_rows = run(root, root / "pipeline-output", {
+                "peaks": DEFAULT_PEAKS, "fit_bins": 60, "window_sigma": 3,
+                "gate_gmd": True, "gmd_min": 2, "gmd_max": 6, "gmd_shift": -1,
+                "unwrap": "signed", "keep_dumps": False,
+            })
+            expected = reference.compute_yield(position, (2, 6))
+            self.assertEqual([row["status"] for row in pipeline_rows], ["OK", "OK"])
+            self.assertEqual([row["counts"] for row in pipeline_rows], [expected["xe1"], expected["xe2"]])
+            self.assertEqual([row["hits_per_frame"] for row in pipeline_rows], [expected["y1"], expected["y2"]])
+            self.assertEqual([row["selected_frames"] for row in pipeline_rows], [expected["n_window"]] * 2)
