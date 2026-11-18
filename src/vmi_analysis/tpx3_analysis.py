@@ -378,11 +378,15 @@ class FrameRecord:
 
 def scan_folder(folder: Path) -> list[FrameRecord]:
     """BLOCK 2.2 扫描一个延迟位置文件夹，返回按时间戳排序的记录列表。"""
+    return scan_files(folder.glob('*.tpx3'))
+
+
+def scan_files(paths: Iterable[Path]) -> list[FrameRecord]:
     recs: list[FrameRecord] = []
-    for f in folder.glob('*.tpx3'):
+    for f in paths:
         try:
             size = f.stat().st_size
-            raw = open(f, 'rb').read()
+            raw = f.read_bytes()
         except OSError:
             continue
         if len(raw) < 40 or (len(raw) - HEADER_BYTES) % 8:
@@ -450,13 +454,14 @@ def scan_dataset(root: Path) -> list[Position]:
 
 def ensure_tof(pos: Position, unwrap: str = UNWRAP_MODE) -> list[np.ndarray]:
     """BLOCK 2.4 为位置内每一帧计算 TOF 数组（耗时的完整解析）。"""
-    out = []
-    for r in pos.records:
-        try:
-            out.append(read_frame(r.path, unwrap=unwrap).tof())
-        except Tpx3FormatError:
-            out.append(np.zeros(0))
-    return out
+    return [read_record_tof(r, unwrap) for r in pos.records]
+
+
+def read_record_tof(record: FrameRecord, unwrap: str = UNWRAP_MODE) -> np.ndarray:
+    try:
+        return read_frame(record.path, unwrap=unwrap).tof()
+    except Tpx3FormatError:
+        return np.zeros(0)
 
 
 # =============================================================================
@@ -649,13 +654,14 @@ def bootstrap_erf(t: np.ndarray, y: np.ndarray, err: np.ndarray,
 def compute_yield(pos: Position, gmd_window: tuple[float, float] | None,
                   shift: int = FRAME_SHIFT,
                   use_tracked: bool = True,
-                  unwrap: str = UNWRAP_MODE) -> dict:
+                  unwrap: str = UNWRAP_MODE, *, tofs: Sequence[np.ndarray] | None = None) -> dict:
     """BLOCK 5.1 计算单个延迟位置的 Xe1+/Xe2+ 产率。
 
     gmd_window=None 表示不筛选（分母 = 全部帧）。
     分母为"GMD2 落在窗口内的帧数"，分子为这些帧所管辖的相机帧中的 Xe 计数。
     """
-    tofs = ensure_tof(pos, unwrap=unwrap)
+    if tofs is None:
+        tofs = ensure_tof(pos, unwrap=unwrap)
     all_tof = np.concatenate([t for t in tofs if t.size]) if tofs else np.zeros(0)
     if all_tof.size < MIN_PIXELS_FOR_FIT:
         return dict(valid=False, name=pos.name, delay=pos.delay,
@@ -914,6 +920,16 @@ def task_gmd_diagnostics(root: Path, out: Path, sample: str | None = None) -> No
 # BLOCK 8 ── 任务：TOF 谱
 # =============================================================================
 
+def select_tof_frames(gmd2: np.ndarray, gmd_window: tuple[float, float], shift: int) -> np.ndarray:
+    keep = np.zeros(gmd2.size, bool)
+    for j in range(gmd2.size):
+        if gmd_window[0] <= gmd2[j] <= gmd_window[1]:
+            target = j - shift
+            if 0 <= target < gmd2.size:
+                keep[target] = True
+    return keep
+
+
 def task_tof_spectrum(pos: Position, out: Path,
                       gmd_window: tuple[float, float] | None = GMD2_DEFAULT,
                       shift: int = FRAME_SHIFT, bins: int = 1200) -> None:
@@ -938,12 +954,7 @@ def task_tof_spectrum(pos: Position, out: Path,
         nframes = pos.n_frames
     else:
         n_win, _, _ = pair_counts(g2, tofs, *gmd_window, shift, None)
-        keep = np.zeros(g2.size, bool)
-        for j in range(g2.size):
-            if gmd_window[0] <= g2[j] <= gmd_window[1]:
-                tgt = j - shift
-                if 0 <= tgt < g2.size:
-                    keep[tgt] = True
+        keep = select_tof_frames(g2, gmd_window, shift)
         if not keep.any():
             print(f'[tof] {pos.name}: GMD 窗口内没有帧，改用全部像素')
             sel = all_tof

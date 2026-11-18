@@ -16,7 +16,7 @@ from . import shared, theme, workflow
 from .jobs import MANAGER, ResourceBusyError
 from .startup import startup_port
 from .panels import (accumulate, binning, calibration, centroid, circularize,
-                     dark, gmd_map, ion_analysis, ion_luna, movie, pes, pipeline)
+                     dark, gmd_map, ion_analysis, ion_tof, ion_unpack, movie, pes, pipeline)
 from .panels.common import init_zoom_overlay
 from .panels.picker import LocalFilePicker
 
@@ -103,7 +103,8 @@ TABS = [
     ("Circularize", circularize),
     ("PES", pes),
     ("Pipeline", pipeline),
-    ("TPX3 Dump", ion_luna),
+    (ion_unpack.JOB_NAME, ion_unpack),
+    (ion_tof.JOB_NAME, ion_tof),
     (ion_analysis.JOB_NAME, ion_analysis),
 ]
 TAB_ICONS = {
@@ -118,6 +119,7 @@ TAB_ICONS = {
     "PES": "show_chart",
     "Pipeline": "account_tree",
     "TPX3 Dump": "memory",
+    ion_tof.JOB_NAME: "timer",
     ion_analysis.JOB_NAME: "science",
 }
 SIDEBAR_GROUPS = (
@@ -126,7 +128,7 @@ SIDEBAR_GROUPS = (
         ("Analyze", ("Centroiding", "Binning", "Trig Calibration", "Circularize", "PES")),
         ("Automate", ("Pipeline",)),
     )),
-    ("Ion", ((None, ("TPX3 Dump", ion_analysis.JOB_NAME)),)),
+    ("Ion", ((None, (ion_unpack.JOB_NAME, ion_tof.JOB_NAME, ion_analysis.JOB_NAME)),)),
 )
 SIDEBAR_JS = files("vmi_analysis.gui.assets") / "sidebar.js"
 

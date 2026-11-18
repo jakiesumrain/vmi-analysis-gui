@@ -166,6 +166,9 @@ def command_access(cmd, cwd=None):
         read(value("--timewalk-file"))
         write(value("--output"))
         write(value("--metadata-output"))
+    elif module == "vmi_analysis.ion_verification":
+        read(value("--input"))
+        write(value("--output"))
     return Access(frozenset(reads), frozenset(writes), frozenset(exclusive),
                   gmd_map_output=gmd_map_output, centroid_output_dir=centroid_output_dir)
 
