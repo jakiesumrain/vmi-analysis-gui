@@ -5,7 +5,7 @@ import unittest
 import h5py
 import numpy as np
 
-from vmi_analysis.ion_tof import GMD_SHIFTS, histogram
+from vmi_analysis.ion_tof import GMD_SHIFTS, gmd_diagnostics, histogram
 
 
 class IonTofTests(unittest.TestCase):
@@ -59,13 +59,17 @@ class IonTofTests(unittest.TestCase):
                 file["frames"] = np.array([(index, 2 * value * 1e-9, value * 1e-9)
                                            for index, value in enumerate(gmd)],
                                           dtype=[("timestamp_ns", "i8"), ("gmd1", "f8"), ("gmd2", "f8")])
-            result = histogram(path, ("pixels", "clusters"), maximum=0.1, metadata=metadata)
+            result = histogram(path, ("pixels", "clusters"), maximum=0.1)
+            diagnostics = gmd_diagnostics(metadata, {
+                source: result[f"{source}_shot_counts"] for source in ("pixels", "clusters")
+            })
             with h5py.File(metadata, "r+") as file:
                 file["frames"][-1] = file["frames"][-2]
             misordered = histogram(path, ("pixels",), maximum=0.1, metadata=metadata)
         self.assertEqual(result["pixels"].sum(), 0)
-        self.assertEqual(GMD_SHIFTS[np.nanargmax(result["pixels_gmd_correlation"][:, 0])], -1)
-        self.assertEqual(GMD_SHIFTS[np.nanargmax(result["clusters_gmd_correlation"][:, 0])], 0)
-        np.testing.assert_allclose(result["gmd2_na"], gmd)
+        self.assertNotIn("gmd2_na", result)
+        self.assertEqual(GMD_SHIFTS[np.nanargmax(diagnostics["pixels_gmd_correlation"][:, 0])], -1)
+        self.assertEqual(GMD_SHIFTS[np.nanargmax(diagnostics["clusters_gmd_correlation"][:, 0])], 0)
+        np.testing.assert_allclose(diagnostics["gmd2_na"], gmd)
         self.assertIn("not strictly increasing", misordered["gmd_alignment_issue"])
         self.assertNotIn("gmd_shifts", misordered)

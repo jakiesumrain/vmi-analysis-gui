@@ -1,5 +1,6 @@
 """Unfiltered time-of-flight spectra from LUNA Timepix3 dumps."""
 
+import asyncio
 from math import isfinite
 import sys
 
@@ -8,11 +9,11 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from vmi_analysis.ion_tof import DEFAULT_BINS, DEFAULT_REFERENCE, MAX_BINS, REFERENCES
+from vmi_analysis.ion_tof import DEFAULT_BINS, DEFAULT_REFERENCE, MAX_BINS, REFERENCES, gmd_diagnostics
 
 from .. import shared, theme
 from ..centroid_plots import _style, plot_options
-from ..jobs import Job
+from ..jobs import Job, ResourceBusyError
 from .common import JobView, action_bar, field_grid, num_input, path_input, persist
 
 
@@ -84,6 +85,15 @@ def _gmd_results(result, sources):
             ui.plotly(plot_options(plot)).classes("w-full")
 
 
+def _load_gmd_diagnostics(result_path, metadata):
+    with np.load(result_path, allow_pickle=False) as result:
+        counts = {source: result[f"{source}_shot_counts"] for source in ("pixels", "clusters")
+                  if f"{source}_shot_counts" in result}
+    if not counts:
+        raise ValueError("Plot TOF again to save the counts per trigger for GMD diagnostics.")
+    return gmd_diagnostics(metadata, counts), list(counts)
+
+
 def _results(job):
     if job.status != "done":
         return
@@ -110,8 +120,6 @@ def _results(job):
         fig.update_layout(height=400 if len(sources) == 1 else 650)
         fig.update_xaxes(title_text="Time of flight (ns)", row=len(sources), col=1)
         ui.plotly(plot_options(fig)).classes("w-full")
-        if "gmd1_na" in result:
-            _gmd_results(result, sources)
 
 
 def build(jobs):
@@ -145,13 +153,9 @@ def build(jobs):
                        "--bins", str(int(count)), "--minimum", str(low)]
             if high is not None:
                 job.cmd += ["--maximum", str(high)]
-            if metadata_file.value.strip():
-                metadata = shared.checked_path(metadata_file.value.strip())
-                if not metadata.is_file():
-                    raise ValueError("The selected GMD metadata file does not exist.")
-                job.cmd += ["--metadata", str(metadata)]
             job.extra.update(histogram=str(result), reference=reference.value, input_name=source_file.name)
             view.attach(jobs.submit(job))
+            gmd_display.clear()
         except (OSError, ValueError) as exc:
             ui.notify(str(exc), type="warning")
 
@@ -166,11 +170,42 @@ def build(jobs):
             bins = save(num_input("Bins", DEFAULT_BINS, min=1, max=MAX_BINS, step=1), "bins")
             minimum = save(num_input("TOF minimum (ns)", 0, min=0, step="any"), "minimum")
             maximum = save(num_input("TOF maximum (ns, blank = auto)", None, step="any"), "maximum")
-        theme.form_section("GMD diagnostics")
-        metadata_file = save(path_input("Matching acquisition metadata HDF5 (optional)",
-                                       browse="file", filters=[".h5", ".hdf5"]), "metadata")
-        ui.label("Choose the metadata exported with this dump. Alignment assumes one selected trigger per "
-                 "metadata row, in acquisition order.").classes("vmi-subtitle")
         with action_bar(view, "Plot TOF", on_click=run):
             pass
     view.place_console()
+
+    async def plot_gmd():
+        job = view.job
+        if job is None or job.status != "done":
+            ui.notify("Complete a TOF plot first.", type="warning")
+            return
+        metadata_value = metadata_file.value.strip()
+        if not metadata_value:
+            ui.notify("Choose the matching acquisition metadata HDF5 file.", type="warning")
+            return
+        gmd_button.disable()
+        try:
+            metadata = shared.checked_path(metadata_value)
+            result_path = shared.checked_path(job.extra["histogram"])
+            with jobs.preview_read_access([result_path, metadata]):
+                result, sources = await asyncio.to_thread(_load_gmd_diagnostics, result_path, metadata)
+            if view.job is job:
+                gmd_display.clear()
+                with gmd_display:
+                    ui.label(f'{job.extra["input_name"]} · {REFERENCE_LABELS[job.extra["reference"]]} '
+                             f'· {metadata.name}').classes("vmi-caption break-all")
+                    _gmd_results(result, sources)
+        except (OSError, ValueError, ResourceBusyError) as exc:
+            ui.notify(str(exc), type="warning")
+        finally:
+            gmd_button.enable()
+
+    with theme.panel_card():
+        theme.form_section("GMD diagnostics")
+        ui.label("Uses the count source and trigger reference from the latest TOF plot. Choose the metadata "
+                 "exported with that dump. Alignment assumes one selected trigger per metadata row, in "
+                 "acquisition order.").classes("vmi-subtitle")
+        metadata_file = save(path_input("Matching acquisition metadata HDF5",
+                                        browse="file", filters=[".h5", ".hdf5"]), "metadata")
+        gmd_button = ui.button("Plot GMD diagnostics", icon="show_chart", on_click=plot_gmd)
+        gmd_display = ui.column().classes("w-full gap-4")

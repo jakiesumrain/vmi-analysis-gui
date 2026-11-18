@@ -107,6 +107,20 @@ def gmd_correlations(gmd2, shot_counts):
     return correlations, pairs
 
 
+def gmd_diagnostics(metadata, counts_by_source):
+    """Compare GMD readings with counts from an existing TOF run."""
+    trigger_count = len(next(iter(counts_by_source.values())))
+    result = _gmd_metadata(metadata, trigger_count)
+    if result["gmd_alignment_issue"]:
+        return result
+    result["gmd_shifts"] = np.asarray(GMD_SHIFTS)
+    for source, shot_counts in counts_by_source.items():
+        coefficients, pairs = gmd_correlations(result["gmd2_na"], shot_counts)
+        result[f"{source}_gmd_correlation"] = coefficients
+        result[f"{source}_gmd_pairs"] = pairs
+    return result
+
+
 def histogram(path, sources, reference=DEFAULT_REFERENCE, bins=DEFAULT_BINS, minimum=0.0, maximum=None,
               *, metadata=None):
     """Return a common bin grid and per-source counts and diagnostics."""
@@ -118,10 +132,6 @@ def histogram(path, sources, reference=DEFAULT_REFERENCE, bins=DEFAULT_BINS, min
         raise ValueError("TOF maximum must be finite and greater than the minimum.")
     with h5py.File(path, "r") as file:
         triggers = _trigger_times(file, reference)
-        gmd = _gmd_metadata(metadata, len(triggers)) if metadata is not None else {}
-        align = bool(gmd) and not gmd["gmd_alignment_issue"]
-        if gmd and not align:
-            print(f'GMD alignment skipped: {gmd["gmd_alignment_issue"]}')
         columns = []
         for source in sources:
             name, field = ARRIVALS[source]
@@ -138,29 +148,30 @@ def histogram(path, sources, reference=DEFAULT_REFERENCE, bins=DEFAULT_BINS, min
         edges = np.linspace(minimum, maximum, bins + 1)
         if not np.all(edges[1:] > edges[:-1]):
             raise ValueError("The TOF range is too narrow for this bin count.")
-        result = {"edges": edges, "triggers": len(triggers), **gmd}
-        if align:
-            result["gmd_shifts"] = np.asarray(GMD_SHIFTS)
+        result = {"edges": edges, "triggers": len(triggers)}
+        counts_by_source = {}
         for source, table, field in columns:
             print(f"Building TOF histogram for {source}…")
             counts = np.zeros(bins, dtype=np.int64)
-            shot_counts = np.zeros(len(triggers), dtype=np.int64) if align else None
+            shot_counts = np.zeros(len(triggers), dtype=np.int64)
             unmatched = 0
             for values, assigned, before_first in _tof_blocks(table, field, triggers):
                 counts += np.histogram(values, bins=edges)[0]
                 unmatched += before_first
-                if shot_counts is not None:
-                    np.add.at(shot_counts, assigned, 1)
+                np.add.at(shot_counts, assigned, 1)
             outside = len(table) - unmatched - int(counts.sum())
             result[source] = counts
             result[f"{source}_unmatched"] = unmatched
             result[f"{source}_outside"] = outside
-            if shot_counts is not None:
-                coefficients, pairs = gmd_correlations(gmd["gmd2_na"], shot_counts)
-                result[f"{source}_gmd_correlation"] = coefficients
-                result[f"{source}_gmd_pairs"] = pairs
+            result[f"{source}_shot_counts"] = counts_by_source[source] = shot_counts
             print(f"{source}: {int(counts.sum()):,} plotted, {unmatched:,} without a preceding trigger, "
                   f"{outside:,} outside the TOF range.")
+    if metadata is not None:
+        gmd = gmd_diagnostics(metadata, counts_by_source)
+        issue = gmd["gmd_alignment_issue"]
+        if issue:
+            print(f"GMD alignment skipped: {issue}")
+        result.update(gmd)
     return result
 
 
