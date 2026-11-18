@@ -1,11 +1,13 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
+import json
 
 import h5py
 import numpy as np
 
-from vmi_analysis.ion_tof import GMD_SHIFTS, filtered_histogram, gmd_diagnostics, histogram
+from vmi_analysis.ion_tof import GMD_SHIFTS, filtered_histogram, fit_filtered_peaks, gmd_diagnostics, histogram
 
 
 class IonTofTests(unittest.TestCase):
@@ -102,3 +104,24 @@ class IonTofTests(unittest.TestCase):
         self.assertEqual(later["selected_triggers"], 2)
         np.testing.assert_array_equal(later["pixels"], [0, 0, 1, 1])
         np.testing.assert_array_equal(later["clusters"], [0, 1, 0, 1])
+
+    def test_peak_yield_counts_exact_arrivals_on_selected_triggers(self):
+        with TemporaryDirectory() as directory:
+            path, filtered = [Path(directory) / name for name in ("luna.h5", "filtered.npz")]
+            triggers = np.array([100_000, 200_000, 300_000], dtype="u8")
+            with h5py.File(path, "w") as file:
+                file["TDCEvents"] = np.array([(1, t) for t in triggers],
+                                             dtype=[("tdc_type", "u1"), ("timestamp", "u8")])
+                file["PixelHits"] = np.array([(99_999,), (109_999,), (110_000,), (140_000,),
+                                              (169_999,), (170_000,), (240_000,)], dtype=[("toa", "u8")])
+            # The newest selected trigger has zero hits. The count window extends beyond the TOF plot.
+            np.savez(filtered, edges=[2.0, 3.0, 4.0, 5.0, 6.0], pixels=[0, 0, 1, 0],
+                     trigger_times=triggers, selected_mask=[True, False, True], selected_triggers=2)
+            x = np.array([2.5, 3.5, 4.5, 5.5])
+            peak = {"center": 4.0, "gaussian_fwhm": 2 * np.sqrt(2 * np.log(2))}
+            with patch("vmi_analysis.pes.fit_peaks", return_value=(x, x, x, None, x, [peak])):
+                result = fit_filtered_peaks(path, filtered, "TDC1Rising", ["pixels"], (2, 6), [], "Constant")
+        counted = json.loads(result["pixels_peaks"])[0]
+        self.assertEqual((counted["low"], counted["high"]), (1.0, 7.0))
+        self.assertEqual(counted["counts"], 3)
+        self.assertEqual(counted["yield_per_trigger"], 1.5)

@@ -170,6 +170,7 @@ def command_access(cmd, cwd=None):
         read(value("--input"))
         read(value("--metadata"))
         read(value("--tof-result"))
+        read(value("--filtered-result"))
         write(value("--output"))
     return Access(frozenset(reads), frozenset(writes), frozenset(exclusive),
                   gmd_map_output=gmd_map_output, centroid_output_dir=centroid_output_dir)

@@ -1,6 +1,7 @@
 """Unfiltered time-of-flight spectra from LUNA Timepix3 dumps."""
 
 import asyncio
+import json
 from math import isfinite
 import sys
 
@@ -10,7 +11,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from vmi_analysis.ion_tof import DEFAULT_BINS, DEFAULT_REFERENCE, GMD_SHIFTS, MAX_BINS, REFERENCES, gmd_diagnostics
-from vmi_analysis.pes import BASELINE_PARAMETERS, PeakGuess, evaluate_fit_for_plot, fit_peaks
+from vmi_analysis.pes import BASELINE_PARAMETERS, evaluate_fit_for_plot
 
 from .. import shared, theme
 from ..centroid_plots import _style, plot_options
@@ -20,6 +21,7 @@ from .common import JobView, action_bar, field_grid, num_input, path_input, pers
 
 JOB_NAME = "Ion TOF"
 FILTER_JOB_NAME = "GMD-filtered TOF"
+FIT_JOB_NAME = "TOF peak fit"
 SOURCES = {"pixels": "Raw pixel hits", "clusters": "Clustered events", "both": "Both"}
 REFERENCE_LABELS = {name: name.replace("Rising", " rising").replace("Falling", " falling")
                     for name in REFERENCES}
@@ -298,7 +300,8 @@ def _gmd_section(jobs, view, save):
                        "--reference", loaded_job.extra["reference"], f"--gmd-min={low}", f"--gmd-max={high}",
                        "--gmd-shift", str(shift.value)]
             job.extra.update(histogram=str(result), parent_id=loaded_job.id, metadata=str(metadata),
-                             gmd_min=low, gmd_max=high, gmd_shift=shift.value)
+                             gmd_min=low, gmd_max=high, gmd_shift=shift.value,
+                             source_file=str(source_file), reference=loaded_job.extra["reference"])
             job = jobs.submit(job)
             filtered_display.clear()
             filter_view.attach(job)
@@ -324,7 +327,7 @@ def _gmd_section(jobs, view, save):
                 fig = _tof_figure(edges, spectra, "GMD2-filtered time-of-flight spectra")
                 ui.plotly(plot_options(fig)).classes("w-full")
             else:
-                _peak_fitting(edges, spectra)
+                _peak_fitting(jobs, job, edges, spectra)
 
     filter_view = JobView(jobs, job_name=FILTER_JOB_NAME, results_builder=show_filtered)
     with theme.panel_card() as filter_card:
@@ -350,8 +353,7 @@ def _gmd_section(jobs, view, save):
     return reset_gmd
 
 
-def _peak_fitting(edges, spectra):
-    centers = (edges[:-1] + edges[1:]) / 2
+def _peak_fitting(jobs, filtered_job, edges, spectra):
     peak_rows = []
 
     def refresh_plot():
@@ -367,15 +369,13 @@ def _peak_fitting(edges, spectra):
 
     def clear_fit_range():
         fit_low.value = fit_high.value = None
-        fit_display.clear()
+        fit_view.clear_results()
 
     def add_peak():
         with peak_list, ui.row().classes("w-full items-center gap-3") as row:
             center = num_input("Peak center (ns)", None, step="any")
             gaussian = num_input("Gaussian FWHM (ns)", None, min=0, step="any")
-            lorentzian = num_input("Lorentzian FWHM (ns)", 0, min=0, step="any")
-            lorentzian.bind_visibility_from(profile, "value", lambda value: value == "Voigt")
-            fields = (center, gaussian, lorentzian)
+            fields = (center, gaussian)
             peak_rows.append(fields)
 
             def remove():
@@ -384,58 +384,56 @@ def _peak_fitting(edges, spectra):
 
             ui.button(icon="remove_circle_outline", on_click=remove).props('flat round aria-label="Remove peak"')
 
-    async def fit():
+    def fit():
         try:
             region = fit_low.value, fit_high.value
             if None in region or not np.isfinite(region).all() or region[0] >= region[1]:
                 raise ValueError("Select a fit range or enter increasing, finite TOF limits.")
             if not targets.value:
                 raise ValueError("Choose at least one TOF spectrum.")
-            model, peak_profile = baseline.value, profile.value
-            guesses = []
-            for center, gaussian, lorentzian in peak_rows:
-                wing = (lorentzian.value or 0) if peak_profile == "Voigt" else 0
-                if center.value is None and gaussian.value is None and not wing:
+            estimates = []
+            for center, gaussian in peak_rows:
+                if center.value is None and gaussian.value is None:
                     continue
                 if center.value is None or gaussian.value is None:
                     raise ValueError("Enter a center and Gaussian FWHM for each peak.")
-                guesses.append(PeakGuess(peak_profile, center.value, gaussian.value, wing))
-            selected = list(targets.value)
-        except ValueError as exc:
+                if not np.isfinite([center.value, gaussian.value]).all():
+                    raise ValueError("Use finite peak centers and widths.")
+                estimates.append((center.value, gaussian.value))
+            if "source_file" not in filtered_job.extra:
+                raise ValueError("Apply the GMD2 range again before fitting this older spectrum.")
+            source = shared.checked_path(filtered_job.extra["source_file"])
+            filtered = shared.checked_path(filtered_job.extra["histogram"])
+            spec = dict(sources=targets.value, region=region, estimates=estimates, baseline=baseline.value)
+            job = Job(FIT_JOB_NAME, cwd=str(shared.workspace_root()))
+            output = shared.generated_dir() / f"ion-tof-peaks-{job.id}.npz"
+            job.cmd = [sys.executable, "-m", "vmi_analysis.ion_tof", "--input", str(source),
+                       "--filtered-result", str(filtered), "--output", str(output),
+                       "--reference", filtered_job.extra["reference"], "--fit-spec", json.dumps(spec)]
+            job.extra.update(peak_result=str(output), filtered_id=filtered_job.id, baseline=baseline.value,
+                             fit_range=region)
+            fit_view.attach(jobs.submit(job))
+        except (OSError, ValueError, ResourceBusyError) as exc:
             ui.notify(str(exc), type="warning")
-            return
 
-        def fit_selected():
-            results, errors = {}, []
-            for source in selected:
-                try:
-                    results[source] = fit_peaks(centers, spectra[source], region, guesses, model,
-                                                auto_profile=peak_profile)
-                except (RuntimeError, ValueError, FloatingPointError) as exc:
-                    errors.append(f"{SOURCES[source]}: {exc}")
-            return results, errors
-
-        fit_button.disable()
-        try:
-            results, errors = await asyncio.to_thread(fit_selected)
-        finally:
-            if not fit_button.is_deleted:
-                fit_button.enable()
-        if fit_display.is_deleted or (fit_low.value, fit_high.value) != region:
+    def show_fits(job):
+        if job.status != "done" or job.extra["filtered_id"] != filtered_job.id:
             return
-        fit_display.clear()
-        with fit_display:
-            for error in errors:
-                ui.label(error).classes("text-negative")
+        with np.load(shared.checked_path(job.extra["peak_result"]), allow_pickle=False) as data:
+            for source, error in json.loads(data["fit_errors"].item()).items():
+                ui.label(f"{SOURCES[source]}: {error}").classes("text-negative")
+            results = {source: (data[f"{source}_curve"], json.loads(data[f"{source}_peaks"].item()))
+                       for source in spectra if f"{source}_curve" in data}
             if results:
-                _show_peak_fits(results, model)
+                low, high = job.extra["fit_range"]
+                _show_peak_fits(results, job.extra["baseline"], int(data["selected_triggers"]), low, high)
 
     with ui.row().classes("items-center gap-2"):
         mode = ui.toggle(["Zoom", "Select fit range"], value="Zoom", on_change=lambda _: refresh_plot())
         ui.button("Clear fit range", on_click=clear_fit_range).props("flat")
     plot = ui.plotly(go.Figure()).classes("w-full")
     plot.on("plotly_selected", select_fit_range, js_handler="event => emit(event?.range ?? null)")
-    theme.form_section("TOF peak fitting")
+    theme.form_section("Gaussian TOF peak fitting")
     ui.label("Drag a fit range on a filtered spectrum or enter the limits. Leave peak estimates blank "
              "for automatic detection.").classes("vmi-subtitle")
     with field_grid():
@@ -444,21 +442,27 @@ def _peak_fitting(edges, spectra):
         targets = ui.select({source: SOURCES[source] for source in spectra}, value=list(spectra),
                             label="TOF spectra to fit", multiple=True).props("outlined dense use-chips")
         baseline = ui.select(list(BASELINE_PARAMETERS), value="Constant", label="Baseline").props("outlined dense")
-        profile = ui.select(["Gaussian", "Voigt"], value="Gaussian", label="Peak profile").props("outlined dense")
     for field in (fit_low, fit_high):
         field.on_value_change(lambda _: refresh_plot())
     peak_list = ui.column().classes("w-full")
+    fit_view = JobView(jobs, job_name=FIT_JOB_NAME, results_builder=show_fits)
     with ui.row().classes("gap-2"):
         ui.button("Add peak estimate", icon="add", on_click=add_peak).props("flat")
-        fit_button = ui.button("Fit TOF peaks", icon="show_chart", on_click=fit)
-    fit_display = ui.column().classes("w-full")
+        fit_view.run_button("Fit TOF peaks", on_click=fit)
+    fit_view.place_console("TOF peak fit results")
     refresh_plot()
 
 
-def _show_peak_fits(results, model):
-    columns = [("spectrum", "Spectrum"), ("peak", "Peak"), ("profile", "Profile"), ("center", "Center (ns)"),
-               ("fwhm", "FWHM (ns)"), ("area", "Area (counts/bin × ns)"), ("bound", "At bound")]
-    rows = [dict(spectrum=SOURCES[source], **peak) for source, result in results.items() for peak in result[-1]]
+def _show_peak_fits(results, model, selected, fit_low, fit_high):
+    ui.label(f"Fit range {fit_low:g}–{fit_high:g} ns · {selected:,} GMD-selected triggers").classes("vmi-caption")
+    ui.label("Counts use individual arrivals from μ − 3σ (inclusive) to μ + 3σ (exclusive). "
+             "Counts include background and any overlapping peaks. Yield divides counts by all selected triggers, "
+             "including those with zero hits.").classes("vmi-subtitle")
+    columns = [("spectrum", "Spectrum"), ("peak", "Peak"), ("center", "Center (ns)"),
+               ("fwhm", "FWHM (ns)"), ("low", "Window min (ns)"), ("high", "Window max (ns)"),
+               ("counts", "Counts in window"), ("yield_per_trigger", "Counts per selected trigger"),
+               ("bound", "At bound")]
+    rows = [dict(spectrum=SOURCES[source], **peak) for source, (_, peaks) in results.items() for peak in peaks]
     ui.table(columns=[dict(name=key, field=key, label=label) for key, label in columns],
              rows=[dict(id=index, **{key: f"{value:.6g}" if isinstance(value, float) else value
                                      for key, value in row.items()})
@@ -468,7 +472,7 @@ def _show_peak_fits(results, model):
     chart = ui.plotly(go.Figure()).classes("w-full")
 
     def redraw():
-        x, fitted, background, _, residual, peaks = results[target.value]
+        (x, fitted, background, residual), peaks = results[target.value]
         grid, total, baseline, components = evaluate_fit_for_plot(x, background, peaks)
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.74, 0.26], vertical_spacing=0.09)
         fig.add_scatter(x=x, y=fitted + residual, mode="markers", name="Counts", marker=dict(size=8), row=1, col=1)

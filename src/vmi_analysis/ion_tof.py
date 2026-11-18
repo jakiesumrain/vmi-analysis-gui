@@ -1,6 +1,8 @@
 """Histogram Timepix3 arrivals relative to the selected LUNA trigger edge."""
 
 import argparse
+import json
+from math import log, sqrt
 from pathlib import Path
 
 import h5py
@@ -196,7 +198,8 @@ def filtered_histogram(path, tof_result, metadata, reference, low, high, shift):
     selected = np.zeros(len(readings), dtype=bool)
     selected[camera_rows[(camera_rows >= 0) & (camera_rows < len(readings))]] = True
     selected_count = np.count_nonzero(selected)
-    result = {"edges": edges, "selected_triggers": selected_count, "triggers": len(selected)}
+    result = {"edges": edges, "selected_triggers": selected_count, "triggers": len(selected),
+              "trigger_times": original_triggers, "selected_mask": selected}
     print(f"GMD2 {low:g} to {high:g} nA, shift {shift:+d}: {selected_count:,} selected triggers.")
     with h5py.File(path, "r") as file:
         triggers = _trigger_times(file, reference)
@@ -215,15 +218,60 @@ def filtered_histogram(path, tof_result, metadata, reference, low, high, shift):
     return result
 
 
+def fit_filtered_peaks(path, filtered_result, reference, sources, region, estimates, baseline):
+    """Fit Gaussian peaks and count exact arrivals in each fitted ±3σ window."""
+    from vmi_analysis.pes import PeakGuess, fit_peaks
+
+    guesses = [PeakGuess("Gaussian", center, width) for center, width in estimates]
+    results = {}
+    errors = {}
+    with np.load(filtered_result, allow_pickle=False) as filtered, h5py.File(path, "r") as file:
+        if "selected_mask" not in filtered:
+            raise ValueError("Apply the GMD2 range again before fitting this older spectrum.")
+        edges = filtered["edges"]
+        centers = (edges[:-1] + edges[1:]) / 2
+        selected = filtered["selected_mask"]
+        selected_count = int(filtered["selected_triggers"])
+        triggers = _trigger_times(file, reference)
+        if not np.array_equal(triggers, filtered["trigger_times"]):
+            raise ValueError("The selected triggers changed. Plot TOF and apply the GMD2 range again.")
+        for source in sources:
+            if source not in ARRIVALS or source not in filtered:
+                raise ValueError("Choose a count source from the filtered TOF result.")
+            try:
+                x, fitted, background, _, residual, peaks = fit_peaks(
+                    centers, filtered[source], region, guesses, baseline,
+                )
+            except (RuntimeError, ValueError, FloatingPointError) as exc:
+                errors[source] = str(exc)
+                continue
+            for peak in peaks:
+                half_width = 3 * peak["gaussian_fwhm"] / (2 * sqrt(2 * log(2)))
+                peak.update(low=peak["center"] - half_width, high=peak["center"] + half_width, counts=0)
+            name, field = ARRIVALS[source]
+            print(f"Counting {source} in {len(peaks)} Gaussian peak windows…")
+            for values, assigned, _ in _tof_blocks(_table(file, name, field), field, triggers):
+                arrivals = values[selected[assigned]]
+                for peak in peaks:
+                    peak["counts"] += int(np.count_nonzero((arrivals >= peak["low"]) & (arrivals < peak["high"])))
+            for peak in peaks:
+                peak["yield_per_trigger"] = peak["counts"] / selected_count
+            results[f"{source}_curve"] = np.stack((x, fitted, background, residual))
+            results[f"{source}_peaks"] = json.dumps(peaks)
+    return {**results, "fit_errors": json.dumps(errors), "selected_triggers": selected_count}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True, help="Histogram output (.npz)")
+    parser.add_argument("--output", type=Path, required=True, help="Histogram or peak fit output (.npz)")
     parser.add_argument("--metadata", type=Path, help="Matching TPX3 Dump acquisition metadata (.h5)")
     parser.add_argument("--tof-result", type=Path, help="Existing unfiltered histogram (.npz)")
     parser.add_argument("--gmd-min", type=float, help="Inclusive GMD2 minimum in nA")
     parser.add_argument("--gmd-max", type=float, help="Inclusive GMD2 maximum in nA")
     parser.add_argument("--gmd-shift", type=int, help="Pair GMD row j with camera frame j + shift")
+    parser.add_argument("--filtered-result", type=Path, help="Existing GMD2-filtered histogram (.npz)")
+    parser.add_argument("--fit-spec", type=json.loads, help="Gaussian peak fit settings as JSON")
     parser.add_argument("--source", choices=(*ARRIVALS, "both"), default="pixels")
     parser.add_argument("--reference", choices=REFERENCES, default=DEFAULT_REFERENCE)
     parser.add_argument("--bins", type=int, default=DEFAULT_BINS)
@@ -233,8 +281,16 @@ def main():
     try:
         output = validate_distinct_output(args.output, [("LUNA HDF5 input", args.input),
                                                        ("acquisition metadata", args.metadata),
-                                                       ("unfiltered TOF result", args.tof_result)])
-        if any(value is not None for value in (args.tof_result, args.gmd_min, args.gmd_max, args.gmd_shift)):
+                                                       ("unfiltered TOF result", args.tof_result),
+                                                       ("filtered TOF result", args.filtered_result)])
+        if args.filtered_result is not None or args.fit_spec is not None:
+            if args.filtered_result is None or not isinstance(args.fit_spec, dict):
+                raise ValueError("Peak fitting requires the filtered TOF result and fit settings.")
+            try:
+                result = fit_filtered_peaks(args.input, args.filtered_result, args.reference, **args.fit_spec)
+            except TypeError as exc:
+                raise ValueError(f"Invalid TOF peak fit settings. {exc}") from exc
+        elif any(value is not None for value in (args.tof_result, args.gmd_min, args.gmd_max, args.gmd_shift)):
             if any(value is None for value in (args.tof_result, args.metadata, args.gmd_min,
                                                args.gmd_max, args.gmd_shift)):
                 raise ValueError("Filtering requires the unfiltered TOF result, metadata, GMD limits, and shift.")
