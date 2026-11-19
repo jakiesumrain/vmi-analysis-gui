@@ -207,8 +207,6 @@ html, body {
   .vmi-sidebar--collapsed .vmi-sidebar-group,
   .vmi-sidebar--collapsed .vmi-sidebar-disclosure > summary,
   .vmi-sidebar--collapsed .q-tab__label { display: none; }
-  /* Quasar's .block utility sets display: block !important. */
-  .vmi-sidebar--collapsed .vmi-sidebar-settings .block { display: none !important; }
   .vmi-sidebar--collapsed .vmi-sidebar-heading { justify-content: center; }
   .vmi-sidebar--collapsed .vmi-sidebar-toggle .q-icon { transform: rotate(180deg); }
   .vmi-sidebar.vmi-sidebar--collapsed .q-tab,

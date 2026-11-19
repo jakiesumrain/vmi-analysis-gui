@@ -70,6 +70,9 @@ async page => {
   await sidebar.getByRole('button', {name: 'Expand sidebar', exact: true}).press('Space');
   await page.waitForFunction(() => !document.querySelector('.vmi-sidebar--collapsed'));
   if ((await sidebar.boundingBox()).width <= width) throw new Error('Sidebar did not expand');
+  if (!await settings.locator('.block').isVisible()) {
+    throw new Error('Settings label text did not return when the sidebar expanded');
+  }
 
   await page.setViewportSize({width: 390, height: 844});
   if (!await settings.isVisible()) throw new Error('Settings is hidden on narrow screens');
