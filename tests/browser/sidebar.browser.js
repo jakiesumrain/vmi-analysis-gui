@@ -51,6 +51,9 @@ async page => {
   await page.waitForFunction(() => document.querySelector('.vmi-sidebar--collapsed'));
   const width = (await sidebar.boundingBox()).width;
   if (width > 80) throw new Error('Icon rail is not narrow');
+  if (await settings.locator('.block').isVisible()) {
+    throw new Error('Settings label text is shown in the icon rail');
+  }
   for (const name of ['Circularize', 'TPX3 Dump', 'Ion Pipeline']) {
     await tab(name).click();
     await panel(name).waitFor();
