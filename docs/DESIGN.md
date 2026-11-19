@@ -119,6 +119,9 @@ The shell is a persistent workbench with four regions, and only four:
   and *Ion* groups. *Acquire*, *Analyze*, and *Automate* are section captions
   inside *Electron*. Each tool has an icon and a short name. The active tool
   has a colored label and a 3px indicator at the leading edge.
+  The rail can collapse to icons on desktop, with tooltips and accessible
+  names for every tool. Its bottom action is Settings, with a stronger blue
+  treatment than the tool entries. Keep Settings available on narrow screens.
 - **Workspace** — exactly one active panel. Panels switch; they do not
   stack, scroll into each other, or open side by side.
 - **Status footer** — one compact line of global state: active jobs, queued

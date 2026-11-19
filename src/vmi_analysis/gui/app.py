@@ -267,14 +267,8 @@ def index() -> None:
         with ui.row().classes("items-baseline gap-3"):
             ui.label("VMI Analysis").classes("vmi-title vmi-title-md vmi-title-bold")
             ui.label("electron and ion imaging toolbox").classes("vmi-subtitle")
-        with ui.row().classes("items-center gap-3"):
-            if account:
-                ui.label(account.name).classes("vmi-status-label")
-            settings_button = ui.button(
-                "Settings", icon="settings",
-                on_click=lambda: settings_dialog.open()).props("outline dense")
-            settings_button.tooltip("Server controls and workflow files" if administrator
-                                    else "Account and workflow files")
+        if account:
+            ui.label(account.name).classes("vmi-status-label")
 
     def status_item(label, value, note):
         with ui.row().classes("vmi-status-item items-baseline gap-1"):
@@ -309,7 +303,11 @@ def index() -> None:
 
     with ui.row().classes("vmi-workbench w-full no-wrap"):
         with ui.column().classes("vmi-sidebar"):
-            ui.label("Workspace").classes("vmi-sidebar-title")
+            with ui.row().classes("vmi-sidebar-heading w-full items-center justify-between no-wrap"):
+                ui.label("Workspace").classes("vmi-sidebar-title")
+                ui.button(icon="chevron_left").props(
+                    'flat round dense data-sidebar-toggle aria-label="Collapse sidebar" aria-expanded="true"'
+                ).classes("vmi-sidebar-toggle")
             for group, sections in SIDEBAR_GROUPS:
                 with ui.element("details").classes("vmi-sidebar-disclosure").props(
                         f'data-workspace-group="{group}"') as disclosure:
@@ -324,11 +322,13 @@ def index() -> None:
                                     "vmi-sidebar-group"
                                     + (" vmi-sidebar-group-first" if index == 0 else ""))
                             for name in names:
-                                ui.tab(name, icon=TAB_ICONS[name])
+                                ui.tab(name, icon=TAB_ICONS[name]).props(f'aria-label="{name}"').tooltip(name)
                                 panel_disclosures[name] = disclosure
             with ui.column().classes("vmi-sidebar-foot"):
-                ui.label("Private workspace" if account else "Local workspace").classes("vmi-sidebar-foot-label")
-                ui.label(f"{len(TABS)} tools").classes("vmi-sidebar-foot-note")
+                settings_button = ui.button("Settings", icon="settings", on_click=settings_dialog.open).props(
+                    'flat no-caps aria-label="Settings"').classes("vmi-sidebar-settings")
+                settings_button.tooltip("Server controls and workflow files" if administrator
+                                        else "Account and workflow files")
 
         with ui.column().classes("vmi-workspace"):
             with ui.tab_panels(value=TABS[0][0], on_change=reveal_active_group).classes(

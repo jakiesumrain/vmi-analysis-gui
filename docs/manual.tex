@@ -296,12 +296,16 @@ one Run/Stop control. See Section~\ref{sec:panels} for the panel-specific fields
 Use the left sidebar to select a panel. Expand or collapse \emph{Electron}
 and \emph{Ion} independently. Both start collapsed. The browser remembers
 which groups you open.
+On desktop, use the arrow beside \emph{Workspace} to collapse the sidebar
+to icons. Hover over an icon to see its tool name. Use the arrow again to
+expand the sidebar. The browser remembers the sidebar width.
+Open \emph{Settings} at the bottom of the sidebar for workspace and server controls.
 On narrow windows, scroll the tool rows above the panel.
 In \emph{Electron}, \emph{Acquire} groups \emph{GMD Map}, \emph{Movie},
 \emph{Dark Frame}, and \emph{Accumulate}. \emph{Analyze} groups
 \emph{Centroiding}, \emph{Binning}, \emph{Trig Calibration},
 \emph{Circularize}, and \emph{PES}. \emph{Automate} contains \emph{Pipeline}.
-\emph{Ion} contains \emph{TPX3 Dump}.
+\emph{Ion} contains \emph{TPX3 Dump}, \emph{Ion TOF}, and \emph{Ion Pipeline}.
 
 The footer shows running and queued jobs, the job limit, and the server's
 disconnect mode. Open \emph{Settings} to change the limit or disconnect mode,
@@ -462,7 +466,7 @@ port is unavailable the program prints an error plus a ready-to-paste
 suggestion for a free port; it does not switch ports on its own.
 
 What happens when the last browser client disconnects is controlled by
-\emph{Keep running on disconnect} in the header \emph{Settings} panel (off by
+\emph{Keep running on disconnect} in the sidebar \emph{Settings} panel (off by
 default). When it is on, the server stays available even when no jobs are
 running. Jobs continue after all browsers disconnect, and you can reopen the
 page to reattach. When the option is off, the server shuts down after the last
