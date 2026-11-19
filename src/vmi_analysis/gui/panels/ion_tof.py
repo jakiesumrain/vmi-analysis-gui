@@ -10,7 +10,8 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from vmi_analysis.ion_tof import DEFAULT_REFERENCE, GMD_SHIFTS, REFERENCES, gmd_diagnostics
+from vmi_analysis.ion_tof import DEFAULT_REFERENCE, GMD_SHIFTS, REFERENCES, gmd_diagnostics, gmd_limits
+from vmi_analysis.ion_acquisition import collection_reads
 from vmi_analysis.pes import BASELINE_PARAMETERS, evaluate_fit_for_plot
 from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS
 
@@ -93,9 +94,10 @@ def _load_gmd_diagnostics(result_path, metadata):
     with np.load(result_path, allow_pickle=False) as result:
         counts = {source: result[f"{source}_shot_counts"] for source in ("pixels", "clusters")
                   if f"{source}_shot_counts" in result}
+        boundaries = result["segment_offsets"] if "segment_offsets" in result else None
     if not counts:
         raise ValueError("Plot TOF again to save the counts per trigger for GMD diagnostics.")
-    return gmd_diagnostics(metadata, counts), list(counts)
+    return gmd_diagnostics(metadata, counts, boundaries), list(counts)
 
 
 def _drag_interval(event):
@@ -155,13 +157,24 @@ def build(jobs):
     def save(widget, key):
         return persist(widget, f"ion_tof.{key}")
 
+    def use_latest():
+        candidates = [job for job in jobs.jobs() if job.name == "TPX3 Dump" and job.status == "done"]
+        if not candidates:
+            ui.notify("Complete a TPX3 dump first or choose a saved collection.", type="warning")
+            return
+        latest = max(candidates, key=lambda job: job.finished)
+        input_file.value = latest.extra.get("collection", latest.extra["output"])
+        set_metadata(latest.extra.get("collection", latest.extra.get("metadata", "")))
+
     def run():
         try:
             if not input_file.value.strip():
-                raise ValueError("Choose a LUNA HDF5 file.")
+                raise ValueError("Choose a LUNA HDF5 file or acquisition collection.")
             source_file = shared.checked_path(input_file.value.strip())
             if not source_file.is_file():
                 raise ValueError("The selected HDF5 file does not exist.")
+            for path in collection_reads(source_file):
+                shared.checked_path(path)
             width = bin_size.value
             if width is None or not isfinite(width) or width <= 0:
                 raise ValueError("TOF bin size must be finite and greater than zero.")
@@ -183,11 +196,15 @@ def build(jobs):
                              source_file=str(source_file))
             view.attach(jobs.submit(job))
             reset_gmd()
+            if source_file.suffix.lower() == ".json":
+                set_metadata(str(source_file))
         except (OSError, ValueError) as exc:
             ui.notify(str(exc), type="warning")
 
     with theme.panel_card():
-        input_file = save(path_input("LUNA HDF5 file", browse="file", filters=[".h5", ".hdf5"]), "input")
+        input_file = save(path_input("LUNA HDF5 file or acquisition collection", browse="file",
+                                    filters=[".h5", ".hdf5", ".json"]), "input")
+        ui.button("Use latest dump from TPX3 Dump", icon="history", on_click=use_latest).props("flat")
         ui.label("Choose either an uncorrected dump or a timewalk-corrected file.").classes("vmi-subtitle")
         with field_grid():
             source = save(ui.select(SOURCES, value="pixels", label="Count").props("outlined dense"), "source")
@@ -200,7 +217,7 @@ def build(jobs):
         with action_bar(view, "Plot TOF", on_click=run):
             pass
     view.place_console()
-    reset_gmd = _gmd_section(jobs, view, save)
+    reset_gmd, set_metadata = _gmd_section(jobs, view, save)
 
 
 def _gmd_section(jobs, view, save):
@@ -229,7 +246,7 @@ def _gmd_section(jobs, view, save):
         try:
             metadata = shared.checked_path(metadata_value)
             result_path = shared.checked_path(job.extra["histogram"])
-            with jobs.preview_read_access([result_path, metadata]):
+            with jobs.preview_read_access([result_path, *collection_reads(metadata)]):
                 result, sources = await asyncio.to_thread(_load_gmd_diagnostics, result_path, metadata)
             if view.job is job and metadata_file.value.strip() == metadata_value:
                 reset_gmd()
@@ -256,10 +273,10 @@ def _gmd_section(jobs, view, save):
     with theme.panel_card():
         theme.form_section("GMD diagnostics")
         ui.label("Uses the count source and trigger reference from the latest TOF plot. Choose the metadata "
-                 "exported with that dump. Alignment assumes one selected trigger per metadata row, in "
-                 "acquisition order.").classes("vmi-subtitle")
-        metadata_file = save(path_input("Matching acquisition metadata HDF5",
-                                        browse="file", filters=[".h5", ".hdf5"]), "metadata")
+                 "exported with that dump. A collection loads each segment's matching metadata. "
+                 "GMD pairing stays within each acquisition.").classes("vmi-subtitle")
+        metadata_file = save(path_input("Matching acquisition metadata HDF5 or collection",
+                                        browse="file", filters=[".h5", ".hdf5", ".json"]), "metadata")
         gmd_button = ui.button("Plot GMD diagnostics", icon="show_chart", on_click=plot_gmd)
         gmd_display = ui.column().classes("w-full gap-4")
 
@@ -267,7 +284,11 @@ def _gmd_section(jobs, view, save):
         if readings is None:
             return
         fig = _gmd_histogram("GMD2", readings)
-        _mark_interval(fig, gmd_low.value, gmd_high.value, gmd_mode.value == "Select GMD2 range")
+        try:
+            low, high = gmd_limits(readings, gmd_low.value, gmd_high.value)
+        except ValueError:
+            low = high = None
+        _mark_interval(fig, low, high, gmd_mode.value == "Select GMD2 range")
         fig.update_layout(uirevision=loaded_job.id)
         gmd_plot.update_figure(plot_options(fig))
 
@@ -284,9 +305,7 @@ def _gmd_section(jobs, view, save):
         try:
             if loaded_job is None or loaded_job is not view.job:
                 raise ValueError("Load GMD diagnostics for the latest TOF plot.")
-            low, high = gmd_low.value, gmd_high.value
-            if low is None or high is None or not isfinite(low) or not isfinite(high) or low >= high:
-                raise ValueError("Select a GMD2 range or enter increasing, finite limits.")
+            low, high = gmd_limits(readings, gmd_low.value, gmd_high.value)
             if shift.value is None:
                 raise ValueError("Select an alignment shift before filtering.")
             if "source_file" not in loaded_job.extra:
@@ -339,19 +358,23 @@ def _gmd_section(jobs, view, save):
         gmd_plot = ui.plotly(go.Figure()).classes("w-full")
         gmd_plot.on("plotly_selected", select_gmd, js_handler="event => emit(event?.range ?? null)")
         with field_grid(3):
-            gmd_low = num_input("GMD2 min (nA)", None, step="any")
-            gmd_high = num_input("GMD2 max (nA)", None, step="any")
+            gmd_low = num_input("GMD2 min (nA, blank = data min)", None, step="any")
+            gmd_high = num_input("GMD2 max (nA, blank = data max)", None, step="any")
             shift = ui.select({d: f"{d:+d}" for d in GMD_SHIFTS}, label="Alignment shift d (frames)") \
                 .props("outlined dense")
         for field in (gmd_low, gmd_high):
             field.on_value_change(lambda _: refresh_gmd_plot())
         ui.label("GMD2 row j selects camera frame j + d. Drag to apply a range, or enter limits and "
-                 "click Apply GMD2 range. The limits are inclusive.").classes("vmi-subtitle")
+                 "click Apply GMD2 range. Pairing stays within each acquisition. The limits are inclusive."
+                 ).classes("vmi-subtitle")
         filter_view.run_button("Apply GMD2 range", on_click=run_filter)
         filter_view.place_console("Filtered TOF console")
         filtered_display = ui.column().classes("w-full gap-4")
     metadata_file.on_value_change(lambda _: reset_gmd())
-    return reset_gmd
+    def set_metadata(value):
+        metadata_file.value = value
+
+    return reset_gmd, set_metadata
 
 
 def _peak_fitting(jobs, filtered_job, edges, spectra):

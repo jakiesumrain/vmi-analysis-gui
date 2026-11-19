@@ -11,43 +11,13 @@ import numpy as np
 from vmi_analysis.ion_luna import (ACQUISITION_PREFIX, apply_timewalk, frame_order, input_files,
                                     luna_command, preprocess_acquisition, process_arguments, publish_result)
 from vmi_analysis.ion_pipeline import PositionData, delay_from_files
+from vmi_analysis.ion_acquisition import TDC_PERIOD_TICKS, acquisition_splits, read_timing
 from vmi_analysis.ion_tof import ARRIVALS, DEFAULT_REFERENCE, _table, _tof_blocks, _trigger_times
 
 
 NAME = "LUNA"
 DEFAULT_SHIFT = 1
 SHIFT_HELP = "GMD2 row j selects frame j + shift within the same acquisition."
-TDC_PERIOD_TICKS = 2**32 * 250_000
-
-
-def read_timing(path):
-    raw = path.read_bytes()
-    if len(raw) < ACQUISITION_PREFIX.size:
-        raise ValueError(f"{path.name} has an incomplete acquisition header.")
-    sec, ns, _, _ = ACQUISITION_PREFIX.unpack_from(raw)
-    if not 0 <= ns < 10**9 or (len(raw) - ACQUISITION_PREFIX.size) % 8:
-        raise ValueError(f"Invalid TPX3 acquisition header or packet length in {path.name}.")
-    words = np.frombuffer(raw, dtype="<u8", offset=ACQUISITION_PREFIX.size)
-    references = words[(words >> 56) == 0x6F]
-    if references.size != 1:
-        raise ValueError(f"{path.name} contains {references.size} TDC1 rising edges. Expected one per frame.")
-    word = int(references[0])
-    coarse = (word >> 12) & 0xFFFFFFFF
-    fine = ((((word >> 5) & 0xF) - 1) << 9) // 12
-    tdc = coarse * 250_000 + ((word & 0xE00) | (fine & 0x1FF)) * (250_000 / 4096)
-    return sec * 10**9 + ns, tdc
-
-
-def acquisition_splits(wall_ns, tdc_ticks):
-    """Distinguish a TDC rollover from a backward clock jump after acquisition restart."""
-    wall_step = np.diff(wall_ns)
-    if np.any(wall_step <= 0):
-        raise ValueError("Frame numbers and wall-clock timestamps must increase in the same order.")
-    step = np.diff(tdc_ticks)
-    expected_ns = (step % TDC_PERIOD_TICKS) / 10_000
-    return np.flatnonzero((step < 0) & (np.abs(expected_ns - wall_step) > 1e9)) + 1
-
-
 def _decode_segment(paths, raw_tdc, target, options, log):
     windows = sys.platform == "win32"
     source = options["source"]

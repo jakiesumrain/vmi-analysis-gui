@@ -1,6 +1,7 @@
 """Histogram Timepix3 arrivals relative to the selected LUNA trigger edge."""
 
 import argparse
+from contextlib import ExitStack
 import json
 from math import log, sqrt
 from pathlib import Path
@@ -10,6 +11,7 @@ import numpy as np
 
 from vmi_analysis.paths import validate_distinct_output
 from vmi_analysis.tof_bins import tof_bin_edges
+from vmi_analysis.ion_acquisition import segment_files
 
 
 NS_PER_TICK = 0.0001
@@ -67,7 +69,17 @@ def _tof_blocks(table, field, triggers):
         yield differences * NS_PER_TICK, matched_indices, int(arrivals.size - differences.size)
 
 
-def _gmd_metadata(path, trigger_count):
+def _gmd_metadata(path, trigger_count, segment_offsets=None):
+    if Path(path).suffix.lower() == ".json":
+        files = segment_files(path)
+        if segment_offsets is None or len(segment_offsets) != len(files) + 1:
+            raise ValueError("The TOF result and metadata collection have different acquisition segments.")
+        readings = [_gmd_metadata(metadata, int(stop - start))
+                    for (_, metadata), start, stop in zip(files, segment_offsets[:-1], segment_offsets[1:])]
+        return {"gmd1_na": np.concatenate([r["gmd1_na"] for r in readings]),
+                "gmd2_na": np.concatenate([r["gmd2_na"] for r in readings]),
+                "gmd_alignment_issue": " ".join(r["gmd_alignment_issue"] for r in readings
+                                                if r["gmd_alignment_issue"])}
     with h5py.File(path, "r") as file:
         table = _table(file, "frames", "timestamp_ns", "gmd1", "gmd2", numeric="iuf")
         if table.dtype["timestamp_ns"].kind not in "iu":
@@ -83,7 +95,7 @@ def _gmd_metadata(path, trigger_count):
             "gmd_alignment_issue": issue}
 
 
-def gmd_correlations(gmd2, shot_counts):
+def gmd_correlations(gmd2, shot_counts, segment_offsets=None):
     """Repeat the TPX3 diagnostic pairing GMD2[j] with counts[j + d]."""
     from scipy.stats import pearsonr, spearmanr
 
@@ -91,13 +103,23 @@ def gmd_correlations(gmd2, shot_counts):
         raise ValueError("GMD2 values and shot counts must have the same length.")
     correlations = np.full((len(GMD_SHIFTS), 2), np.nan)
     pairs = np.zeros(len(GMD_SHIFTS), dtype=np.int64)
+    boundaries = np.array([0, len(gmd2)]) if segment_offsets is None else segment_offsets
     for index, shift in enumerate(GMD_SHIFTS):
         if abs(shift) >= len(gmd2):
             continue
-        if shift < 0:
-            values, counts = gmd2[-shift:], shot_counts[:shift]
-        else:
-            values, counts = gmd2[:len(gmd2) - shift], shot_counts[shift:]
+        first, second = [], []
+        for start, stop in zip(boundaries[:-1], boundaries[1:]):
+            if abs(shift) >= stop - start:
+                continue
+            if shift < 0:
+                first.append(gmd2[start - shift:stop])
+                second.append(shot_counts[start:stop + shift])
+            else:
+                first.append(gmd2[start:stop - shift])
+                second.append(shot_counts[start + shift:stop])
+        if not first:
+            continue
+        values, counts = np.concatenate(first), np.concatenate(second)
         use = np.isfinite(values) & (values > 0) & (counts > 0)
         pairs[index] = use.sum()
         if pairs[index] < MIN_GMD_PAIRS:
@@ -109,15 +131,15 @@ def gmd_correlations(gmd2, shot_counts):
     return correlations, pairs
 
 
-def gmd_diagnostics(metadata, counts_by_source):
+def gmd_diagnostics(metadata, counts_by_source, segment_offsets=None):
     """Compare GMD readings with counts from an existing TOF run."""
     trigger_count = len(next(iter(counts_by_source.values())))
-    result = _gmd_metadata(metadata, trigger_count)
+    result = _gmd_metadata(metadata, trigger_count, segment_offsets)
     if result["gmd_alignment_issue"]:
         return result
     result["gmd_shifts"] = np.asarray(GMD_SHIFTS)
     for source, shot_counts in counts_by_source.items():
-        coefficients, pairs = gmd_correlations(result["gmd2_na"], shot_counts)
+        coefficients, pairs = gmd_correlations(result["gmd2_na"], shot_counts, segment_offsets)
         result[f"{source}_gmd_correlation"] = coefficients
         result[f"{source}_gmd_pairs"] = pairs
     return result
@@ -130,34 +152,37 @@ def histogram(path, sources, reference=DEFAULT_REFERENCE, bins=DEFAULT_BINS, min
         raise ValueError("TOF minimum must be finite and at least zero.")
     if maximum is not None and (not np.isfinite(maximum) or maximum <= minimum):
         raise ValueError("TOF maximum must be finite and greater than the minimum.")
-    with h5py.File(path, "r") as file:
-        triggers = _trigger_times(file, reference)
-        columns = []
-        for source in sources:
-            name, field = ARRIVALS[source]
-            columns.append((source, _table(file, name, field), field))
-
+    paths = segment_files(path)
+    with ExitStack() as stack:
+        files = [stack.enter_context(h5py.File(data, "r")) for data, _ in paths]
+        trigger_sets = [_trigger_times(file, reference) for file in files]
+        boundaries = np.r_[0, np.cumsum([len(times) for times in trigger_sets])]
         if maximum is None:
             last = minimum
-            for source, table, field in columns:
-                print(f"Finding TOF range for {source} ({len(table):,} entries)…")
-                for values, _, _ in _tof_blocks(table, field, triggers):
-                    if values.size:
-                        last = max(last, float(values.max()))
+            for file, triggers in zip(files, trigger_sets):
+                for source in sources:
+                    name, field = ARRIVALS[source]
+                    for values, _, _ in _tof_blocks(_table(file, name, field), field, triggers):
+                        if values.size:
+                            last = max(last, float(values.max()))
             maximum = last if last > minimum else minimum + 1.0
         edges = tof_bin_edges(minimum, maximum, bins, bin_size_ns=bin_size_ns)
-        result = {"edges": edges, "triggers": len(triggers), "trigger_times": triggers}
+        result = {"edges": edges, "triggers": int(boundaries[-1]),
+                  "trigger_times": np.concatenate(trigger_sets), "segment_offsets": boundaries}
         counts_by_source = {}
-        for source, table, field in columns:
-            print(f"Building TOF histogram for {source}…")
+        for source in sources:
             counts = np.zeros(len(edges) - 1, dtype=np.int64)
-            shot_counts = np.zeros(len(triggers), dtype=np.int64)
-            unmatched = 0
-            for values, assigned, before_first in _tof_blocks(table, field, triggers):
-                counts += np.histogram(values, bins=edges)[0]
-                unmatched += before_first
-                np.add.at(shot_counts, assigned, 1)
-            outside = len(table) - unmatched - int(counts.sum())
+            shot_counts = np.zeros(int(boundaries[-1]), dtype=np.int64)
+            unmatched = total = 0
+            name, field = ARRIVALS[source]
+            for file, triggers, start in zip(files, trigger_sets, boundaries[:-1]):
+                table = _table(file, name, field)
+                total += len(table)
+                for values, assigned, before_first in _tof_blocks(table, field, triggers):
+                    counts += np.histogram(values, bins=edges)[0]
+                    unmatched += before_first
+                    np.add.at(shot_counts, assigned + start, 1)
+            outside = total - unmatched - int(counts.sum())
             result[source] = counts
             result[f"{source}_unmatched"] = unmatched
             result[f"{source}_outside"] = outside
@@ -165,54 +190,66 @@ def histogram(path, sources, reference=DEFAULT_REFERENCE, bins=DEFAULT_BINS, min
             print(f"{source}: {int(counts.sum()):,} plotted, {unmatched:,} without a preceding trigger, "
                   f"{outside:,} outside the TOF range.")
     if metadata is not None:
-        gmd = gmd_diagnostics(metadata, counts_by_source)
-        issue = gmd["gmd_alignment_issue"]
-        if issue:
-            print(f"GMD alignment skipped: {issue}")
-        result.update(gmd)
+        result.update(gmd_diagnostics(metadata, counts_by_source, boundaries))
     return result
 
 
+def gmd_limits(readings, low, high):
+    finite = readings[np.isfinite(readings)]
+    if not finite.size:
+        raise ValueError("The GMD2 data contain no finite values.")
+    low = float(finite.min()) if low is None else low
+    high = float(finite.max()) if high is None else high
+    if not np.isfinite([low, high]).all() or low > high:
+        raise ValueError("Enter finite GMD2 limits with minimum at or below maximum.")
+    return low, high
+
+
+def _saved_blocks(path, reference, source, expected, boundaries):
+    paths = segment_files(path)
+    if len(paths) + 1 != len(boundaries):
+        raise ValueError("The input acquisition segments changed. Plot TOF again.")
+    for (data, _), start, stop in zip(paths, boundaries[:-1], boundaries[1:]):
+        with h5py.File(data, "r") as file:
+            triggers = _trigger_times(file, reference)
+            if not np.array_equal(triggers, expected[start:stop]):
+                raise ValueError("The selected triggers changed. Plot TOF again before filtering or fitting.")
+            name, field = ARRIVALS[source]
+            for values, indices, unmatched in _tof_blocks(_table(file, name, field), field, triggers):
+                yield values, indices + start, unmatched
+
+
 def filtered_histogram(path, tof_result, metadata, reference, low, high, shift):
-    """Select triggers by GMD2 and bin their arrivals on the original TOF grid."""
-    if not np.isfinite([low, high]).all() or low >= high:
-        raise ValueError("Enter increasing, finite GMD2 limits.")
+    """Gate within each acquisition and use the saved combined TOF grid."""
     with np.load(tof_result, allow_pickle=False) as original:
         if "trigger_times" not in original:
             raise ValueError("Plot TOF again before filtering this older result.")
         edges = original["edges"]
-        original_triggers = original["trigger_times"]
+        expected = original["trigger_times"]
+        boundaries = original["segment_offsets"] if "segment_offsets" in original else np.array([0, len(expected)])
         sources = [source for source in ARRIVALS if source in original]
-    gmd = _gmd_metadata(metadata, len(original_triggers))
+    gmd = _gmd_metadata(metadata, len(expected), boundaries)
     if gmd["gmd_alignment_issue"]:
         raise ValueError(gmd["gmd_alignment_issue"])
     readings = gmd["gmd2_na"]
-    if abs(shift) >= len(readings):
-        raise ValueError("The alignment shift leaves no paired frames.")
-    metadata_rows = np.flatnonzero(np.isfinite(readings) & (readings >= low) & (readings <= high))
-    camera_rows = metadata_rows + shift
-    selected = np.zeros(len(readings), dtype=bool)
-    selected[camera_rows[(camera_rows >= 0) & (camera_rows < len(readings))]] = True
-    selected_count = np.count_nonzero(selected)
-    result = {"edges": edges, "selected_triggers": selected_count, "triggers": len(selected),
-              "trigger_times": original_triggers, "selected_mask": selected}
-    print(f"GMD2 {low:g} to {high:g} nA, shift {shift:+d}: {selected_count:,} selected triggers.")
-    with h5py.File(path, "r") as file:
-        triggers = _trigger_times(file, reference)
-        if not np.array_equal(triggers, original_triggers):
-            raise ValueError("The selected triggers changed. Plot TOF again before filtering.")
-        for source in sources:
-            name, field = ARRIVALS[source]
-            table = _table(file, name, field)
-            counts = np.zeros(len(edges) - 1, dtype=np.int64)
-            if selected_count:
-                print(f"Building GMD2-filtered TOF histogram for {source}…")
-                for values, assigned, _ in _tof_blocks(table, field, triggers):
-                    counts += np.histogram(values[selected[assigned]], bins=edges)[0]
-            result[source] = counts
-            print(f"{source}: {int(counts.sum()):,} selected counts in the TOF range.")
+    low, high = gmd_limits(readings, low, high)
+    selected = np.zeros(len(expected), dtype=bool)
+    for start, stop in zip(boundaries[:-1], boundaries[1:]):
+        values = readings[start:stop]
+        rows = np.flatnonzero(np.isfinite(values) & (values >= low) & (values <= high)) + shift
+        selected[start + rows[(rows >= 0) & (rows < stop - start)]] = True
+    count = int(selected.sum())
+    result = {"edges": edges, "selected_triggers": count, "triggers": len(expected),
+              "trigger_times": expected, "selected_mask": selected, "segment_offsets": boundaries,
+              "gmd_min": low, "gmd_max": high}
+    print(f"GMD2 {low:g} to {high:g} nA, shift {shift:+d}: {count:,} selected triggers.")
+    for source in sources:
+        counts = np.zeros(len(edges) - 1, dtype=np.int64)
+        for values, indices, _ in _saved_blocks(path, reference, source, expected, boundaries):
+            counts += np.histogram(values[selected[indices]], bins=edges)[0]
+        result[source] = counts
+        print(f"{source}: {int(counts.sum()):,} selected counts in the TOF range.")
     return result
-
 
 def fit_filtered_peaks(path, filtered_result, reference, sources, region, estimates, baseline):
     """Fit Gaussian peaks and count exact arrivals in each fitted ±3σ window."""
@@ -221,16 +258,15 @@ def fit_filtered_peaks(path, filtered_result, reference, sources, region, estima
     guesses = [PeakGuess("Gaussian", center, width) for center, width in estimates]
     results = {}
     errors = {}
-    with np.load(filtered_result, allow_pickle=False) as filtered, h5py.File(path, "r") as file:
+    with np.load(filtered_result, allow_pickle=False) as filtered:
         if "selected_mask" not in filtered:
             raise ValueError("Apply the GMD2 range again before fitting this older spectrum.")
         edges = filtered["edges"]
         centers = (edges[:-1] + edges[1:]) / 2
         selected = filtered["selected_mask"]
         selected_count = int(filtered["selected_triggers"])
-        triggers = _trigger_times(file, reference)
-        if not np.array_equal(triggers, filtered["trigger_times"]):
-            raise ValueError("The selected triggers changed. Plot TOF and apply the GMD2 range again.")
+        triggers = filtered["trigger_times"]
+        boundaries = filtered["segment_offsets"] if "segment_offsets" in filtered else np.array([0, len(triggers)])
         for source in sources:
             if source not in ARRIVALS or source not in filtered:
                 raise ValueError("Choose a count source from the filtered TOF result.")
@@ -244,9 +280,8 @@ def fit_filtered_peaks(path, filtered_result, reference, sources, region, estima
             for peak in peaks:
                 half_width = 3 * peak["gaussian_fwhm"] / (2 * sqrt(2 * log(2)))
                 peak.update(low=peak["center"] - half_width, high=peak["center"] + half_width, counts=0)
-            name, field = ARRIVALS[source]
             print(f"Counting {source} in {len(peaks)} Gaussian peak windows…")
-            for values, assigned, _ in _tof_blocks(_table(file, name, field), field, triggers):
+            for values, assigned, _ in _saved_blocks(path, reference, source, triggers, boundaries):
                 arrivals = values[selected[assigned]]
                 for peak in peaks:
                     peak["counts"] += int(np.count_nonzero((arrivals >= peak["low"]) & (arrivals < peak["high"])))
@@ -289,9 +324,8 @@ def main():
             except TypeError as exc:
                 raise ValueError(f"Invalid TOF peak fit settings. {exc}") from exc
         elif any(value is not None for value in (args.tof_result, args.gmd_min, args.gmd_max, args.gmd_shift)):
-            if any(value is None for value in (args.tof_result, args.metadata, args.gmd_min,
-                                               args.gmd_max, args.gmd_shift)):
-                raise ValueError("Filtering requires the unfiltered TOF result, metadata, GMD limits, and shift.")
+            if any(value is None for value in (args.tof_result, args.metadata, args.gmd_shift)):
+                raise ValueError("Filtering requires the unfiltered TOF result, metadata, and shift.")
             result = filtered_histogram(args.input, args.tof_result, args.metadata, args.reference,
                                         args.gmd_min, args.gmd_max, args.gmd_shift)
         else:

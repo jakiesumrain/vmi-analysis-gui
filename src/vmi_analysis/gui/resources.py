@@ -7,6 +7,7 @@ from pathlib import Path
 from vmi_analysis.centroiding.plot_data import (ABEL_IMAGE, RAW_IMAGE, SPECTRUM_CSV, SUMMARY_DATA,
                                                 SUMMARY_PNG, TUNING_DATA, TUNING_PNG)
 from vmi_analysis.paths import CPBASEX_DIR
+from vmi_analysis.ion_acquisition import collection_reads, manifest_path
 from .shared import centroid_dir, circularization_dir
 
 
@@ -97,6 +98,14 @@ def command_access(cmd, cwd=None):
         if path:
             writes.add(canonical_path(path, cwd))
 
+    def read_collection(path):
+        read(path)
+        if path:
+            candidate = canonical_path(path, cwd)
+            if candidate.suffix.lower() == ".json":
+                for item in collection_reads(candidate):
+                    read(item)
+
     if module == "vmi_analysis.gmd.build_gmd_map":
         read(value("--h5-dir")); read(value("--gmd-path"))
         output = value("--output-path", "gmd_map_all.txt")
@@ -162,16 +171,20 @@ def command_access(cmd, cwd=None):
             exclusive.add("MATLAB/CPBASEX")
             write(CPBASEX_DIR / "examples")
     elif module == "vmi_analysis.ion_luna":
-        read(value("--input"))
+        read_collection(value("--input"))
         read(value("--timewalk-file"))
         write(value("--output"))
         write(value("--metadata-output"))
+        if "--split-acquisitions" in args or value("--input").lower().endswith(".json"):
+            output = canonical_path(value("--output"), cwd)
+            write(manifest_path(output))
+            write(output.parent / (output.stem + "_segments"))
     elif module == "vmi_analysis.ion_pipeline":
         read(value("--input"))
         write(value("--output-dir"))
     elif module == "vmi_analysis.ion_tof":
-        read(value("--input"))
-        read(value("--metadata"))
+        read_collection(value("--input"))
+        read_collection(value("--metadata"))
         read(value("--tof-result"))
         read(value("--filtered-result"))
         write(value("--output"))
