@@ -2116,7 +2116,7 @@ Individual programs can still reuse their own checkpoints or caches.
 \label{sec:tpx3dump}
 
 Use \emph{Ion} $\rightarrow$ \emph{TPX3 Dump} to convert a Timepix3 file
-or a folder of \code{.tpx3} files into one LUNA HDF5 file.
+or a folder of \code{.tpx3} files into LUNA HDF5 output.
 On Linux, put \code{tpx3dump} on the server's PATH. On Windows, install it
 in WSL2. Expand \emph{WSL2 settings} to select a different distribution or
 enter a Linux executable path. The panel uses Windows paths for input and
@@ -2157,6 +2157,15 @@ filename, the timestamp in integer nanoseconds since the Unix epoch,
 \code{gmd1}, and \code{gmd2}. Ties follow filename order.
 Leave the option clear for a standard Serval export.
 
+For prefixed recordings, the panel detects acquisition restarts from backward
+TDC timestamps and acquisition timestamps. It processes each detected segment
+as a separate LUNA stream to prevent incorrect hit-to-trigger pairing across
+a clock reset. A long acquisition gap alone does not require a split.
+Each segment has a separate data HDF5 and metadata HDF5 file. The
+\code{.segments.json} collection records their paths and the split reasons.
+The segments still represent the same experimental condition. Use
+\emph{Use latest dump} in Ion TOF to load the collection.
+
 Expand \emph{Inspect HDF5 files} below the console to inspect a saved file.
 Completed jobs provide \emph{Inspect output} and, when acquisition metadata
 is available, \emph{Inspect metadata} shortcuts. The
@@ -2164,6 +2173,64 @@ summary shows counts, time spans, and statistics for recognized datasets.
 Expand \emph{HDF5 structure} for groups, dataset shapes and data types,
 compound fields, and attributes. The inspection reads the file without
 changing it.
+
+\subsubsection{Build a common timewalk calibration across recordings}
+\label{sec:timewalk-accumulation}
+
+LUNA can accumulate timewalk statistics across similar experiments.
+See ASI's \href{https://amsterdam-scientific-instruments.github.io/luna-docs/3_examples/ex15_accumulate_timewalk_statistics.html}{accumulation example}
+and \href{https://amsterdam-scientific-instruments.github.io/luna-docs/3_examples/ex14_apply_timewalk_correction.html}{correction example}.
+Use recordings with consistent detector, readout, and clustering settings.
+The workflow below builds the master calibration from uninterrupted recordings.
+Recordings with acquisition restarts remain target datasets for analysis.
+
+\paragraph{Accumulate the master calibration.}
+\begin{enumerate}[leftmargin=*]
+  \item Select the first uninterrupted recording in \emph{Dump TPX3}.
+        Enable clustering and \emph{Calculate timewalk statistics}.
+        Leave \emph{Seed with existing statistics HDF5 (optional)} blank.
+        Select a separate output, such as \code{calibration\_01.h5}, and run.
+  \item Select the next uninterrupted recording. Keep statistics calculation
+        enabled. Set the seed field to \code{calibration\_01.h5}.
+        Write a new output, such as \code{calibration\_02.h5}.
+  \item Repeat for the remaining calibration recordings. Each run must use
+        the preceding accumulated output as its seed. Include each recording
+        once to avoid extra weighting from repeated data.
+  \item Keep the final output as the master calibration. Record the input
+        recordings, settings, and cluster ToT cut. The panel default is 500 ns.
+\end{enumerate}
+
+The seed supplies \code{TimewalkMatrix}. Each dump adds the new recording's
+statistics and produces an updated \code{TimewalkLookupTable}.
+Its pixel hits and clusters belong to the new recording only.
+Earlier recordings' events are not copied into that output.
+Statistics calculation leaves arrival times uncorrected in the tested LUNA build.
+Keep the complete final HDF5 file for subsequent seeded dumps.
+
+\paragraph{Correct a target recording.}
+\begin{enumerate}[leftmargin=*]
+  \item Dump the target with \emph{Calculate timewalk statistics} enabled
+        and the master calibration selected as the seed.
+        Use a separate output path.
+  \item Open \emph{Apply timewalk correction}. Select that target dump in
+        \emph{Statistics HDF5}, or leave the field blank to use the dump output.
+        For segmented output, select the \code{.segments.json} collection.
+  \item Use the same cluster ToT cut. Run the correction and load the
+        corrected output in Ion TOF. The panel preserves the uncorrected output.
+\end{enumerate}
+
+The correction command reads events and calibration statistics from the same
+input HDF5. It has no separate input for an external LUT.
+The seeded target dump puts both into one file. It also adds the target's
+statistics, so its LUT can differ from the master LUT.
+If the target already contributed to the master, this step adds its contribution
+again. This workflow does not apply one frozen LUT unchanged to every target.
+
+For segmented targets, each segment starts from the same selected master.
+The panel does not pass one segment's updated statistics to the next segment.
+Correction then uses each segment's own HDF5 file.
+Keep the master calibration unchanged and exclude these target outputs from
+the master accumulation sequence. A separate output path preserves the seed file.
 
 \section{Output files}
 \label{sec:outputs}
