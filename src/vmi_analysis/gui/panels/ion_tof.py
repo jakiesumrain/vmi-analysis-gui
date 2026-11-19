@@ -24,6 +24,7 @@ from .common import JobView, action_bar, field_grid, num_input, path_input, pers
 JOB_NAME = "Ion TOF"
 FILTER_JOB_NAME = "GMD-filtered TOF"
 FIT_JOB_NAME = "TOF peak fit"
+UNFILTERED_FIT_JOB_NAME = "Unfiltered TOF peak fit"
 SOURCES = {"pixels": "Raw pixel hits", "clusters": "Clustered events", "both": "Both"}
 REFERENCE_LABELS = {name: name.replace("Rising", " rising").replace("Falling", " falling")
                     for name in REFERENCES}
@@ -337,6 +338,9 @@ def _gmd_section(jobs, view, save):
             spectra = {source: result[source] for source in ("pixels", "clusters") if source in result}
             selected = int(result["selected_triggers"])
             total = int(result["triggers"])
+        original_path = shared.checked_path(loaded_job.extra["histogram"])
+        with np.load(original_path, allow_pickle=False) as original:
+            unfiltered_spectra = {source: original[source] for source in spectra}
         filtered_display.clear()
         with filtered_display:
             theme.form_section("GMD2-filtered TOF")
@@ -348,6 +352,16 @@ def _gmd_section(jobs, view, save):
                 ui.plotly(plot_options(fig)).classes("w-full")
             else:
                 _peak_fitting(jobs, job, edges, spectra)
+            with ui.expansion("Unfiltered TOF", icon="show_chart", value=False).classes("w-full gap-4").props(
+                    'data-tof-fit-source="unfiltered"'):
+                ui.label("Fits the unfiltered spectrum to define peak windows. Counting and normalization "
+                         f"still use the {selected:,} GMD2-selected triggers above.").classes("vmi-subtitle")
+                if selected and any(counts.any() for counts in unfiltered_spectra.values()):
+                    _peak_fitting(jobs, job, edges, unfiltered_spectra, unfiltered_result=original_path)
+                else:
+                    ui.plotly(plot_options(_tof_figure(edges, unfiltered_spectra,
+                                                       "Unfiltered time-of-flight spectra"))).classes("w-full")
+                    ui.label("Select triggers with TOF data before fitting peak yields.").classes("vmi-caption")
 
     filter_view = JobView(jobs, job_name=FILTER_JOB_NAME, results_builder=show_filtered)
     with theme.panel_card() as filter_card:
@@ -377,14 +391,16 @@ def _gmd_section(jobs, view, save):
     return reset_gmd, set_metadata
 
 
-def _peak_fitting(jobs, filtered_job, edges, spectra):
+def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None):
     peak_rows = []
+    fit_job_name = UNFILTERED_FIT_JOB_NAME if unfiltered_result is not None else FIT_JOB_NAME
+    title = "Unfiltered time-of-flight spectra" if unfiltered_result is not None else "GMD2-filtered time-of-flight spectra"
 
     def refresh_plot():
         selecting = mode.value == "Select fit range"
-        fig = _tof_figure(edges, spectra, "GMD2-filtered time-of-flight spectra", selecting=selecting)
+        fig = _tof_figure(edges, spectra, title, selecting=selecting)
         _mark_interval(fig, fit_low.value, fit_high.value, selecting)
-        fig.update_layout(uirevision="filtered-tof")
+        fig.update_layout(uirevision=fit_job_name)
         plot.update_figure(plot_options(fig))
 
     def select_fit_range(event):
@@ -429,11 +445,13 @@ def _peak_fitting(jobs, filtered_job, edges, spectra):
             source = shared.checked_path(filtered_job.extra["source_file"])
             filtered = shared.checked_path(filtered_job.extra["histogram"])
             spec = dict(sources=targets.value, region=region, estimates=estimates, baseline=baseline.value)
-            job = Job(FIT_JOB_NAME, cwd=str(shared.workspace_root()))
+            job = Job(fit_job_name, cwd=str(shared.workspace_root()))
             output = shared.generated_dir() / f"ion-tof-peaks-{job.id}.npz"
             job.cmd = [sys.executable, "-m", "vmi_analysis.ion_tof", "--input", str(source),
                        "--filtered-result", str(filtered), "--output", str(output),
                        "--reference", filtered_job.extra["reference"], "--fit-spec", json.dumps(spec)]
+            if unfiltered_result is not None:
+                job.cmd += ["--tof-result", str(shared.checked_path(unfiltered_result))]
             job.extra.update(peak_result=str(output), filtered_id=filtered_job.id, baseline=baseline.value,
                              fit_range=region)
             fit_view.attach(jobs.submit(job))
@@ -458,7 +476,7 @@ def _peak_fitting(jobs, filtered_job, edges, spectra):
     plot = ui.plotly(go.Figure()).classes("w-full")
     plot.on("plotly_selected", select_fit_range, js_handler="event => emit(event?.range ?? null)")
     theme.form_section("Gaussian TOF peak fitting")
-    ui.label("Drag a fit range on a filtered spectrum or enter the limits. Leave peak estimates blank "
+    ui.label("Drag a fit range on the spectrum above or enter the limits. Leave peak estimates blank "
              "for automatic detection.").classes("vmi-subtitle")
     with field_grid():
         fit_low = num_input("Fit TOF min (ns)", None, step="any")
@@ -469,7 +487,7 @@ def _peak_fitting(jobs, filtered_job, edges, spectra):
     for field in (fit_low, fit_high):
         field.on_value_change(lambda _: refresh_plot())
     peak_list = ui.column().classes("w-full")
-    fit_view = JobView(jobs, job_name=FIT_JOB_NAME, results_builder=show_fits)
+    fit_view = JobView(jobs, job_name=fit_job_name, results_builder=show_fits)
     with ui.row().classes("gap-2"):
         ui.button("Add peak estimate", icon="add", on_click=add_peak).props("flat")
         fit_view.run_button("Fit TOF peaks", on_click=fit)

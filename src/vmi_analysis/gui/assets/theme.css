@@ -70,7 +70,8 @@ html, body {
   font-family: var(--vmi-font-body);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  overflow-x: hidden;
+  /* Clip horizontal overflow without creating a scroll ancestor for sticky navigation. */
+  overflow-x: clip;
 }
 
 ::selection { background: var(--vmi-primary); color: #ffffff; }
@@ -107,14 +108,15 @@ html, body {
   display: flex;
   flex-direction: column;
   align-self: flex-start;
-  height: calc(100vh - var(--vmi-header-h) - var(--vmi-footer-h));
+  height: calc(100dvh - var(--vmi-header-h) - var(--vmi-footer-h) - var(--vmi-space-4));
   position: sticky;
-  top: 0;
+  top: calc(var(--vmi-header-h) + var(--vmi-space-4));
   overflow-y: auto;
   padding: var(--vmi-space-4) var(--vmi-space-2) var(--vmi-space-4);
   background: var(--vmi-surface-soft);
   border-right: 1px solid var(--vmi-hairline);
 }
+.vmi-sidebar > * { flex-shrink: 0; }
 .vmi-sidebar-title {
   padding: 0 var(--vmi-space-3) var(--vmi-space-3);
   color: var(--vmi-ink);

@@ -251,8 +251,8 @@ def filtered_histogram(path, tof_result, metadata, reference, low, high, shift):
         print(f"{source}: {int(counts.sum()):,} selected counts in the TOF range.")
     return result
 
-def fit_filtered_peaks(path, filtered_result, reference, sources, region, estimates, baseline):
-    """Fit Gaussian peaks and count exact arrivals in each fitted ±3σ window."""
+def fit_filtered_peaks(path, filtered_result, reference, sources, region, estimates, baseline, tof_result=None):
+    """Fit either histogram and count selected arrivals in each fitted ±3σ window."""
     from vmi_analysis.pes import PeakGuess, fit_peaks
 
     guesses = [PeakGuess("Gaussian", center, width) for center, width in estimates]
@@ -265,14 +265,27 @@ def fit_filtered_peaks(path, filtered_result, reference, sources, region, estima
         centers = (edges[:-1] + edges[1:]) / 2
         selected = filtered["selected_mask"]
         selected_count = int(filtered["selected_triggers"])
+        if selected_count < 1:
+            raise ValueError("Select at least one GMD2-gated trigger before fitting peak yields.")
         triggers = filtered["trigger_times"]
         boundaries = filtered["segment_offsets"] if "segment_offsets" in filtered else np.array([0, len(triggers)])
+        fit_counts = {source: filtered[source] for source in sources if source in filtered}
+        if tof_result is not None:
+            with np.load(tof_result, allow_pickle=False) as unfiltered:
+                for key in ("edges", "trigger_times"):
+                    if not np.array_equal(unfiltered[key], filtered[key]):
+                        raise ValueError("The unfiltered and GMD2-filtered TOF results do not match. Plot TOF again.")
+                original_boundaries = (unfiltered["segment_offsets"] if "segment_offsets" in unfiltered
+                                       else np.array([0, len(triggers)]))
+                if not np.array_equal(original_boundaries, boundaries):
+                    raise ValueError("The unfiltered and GMD2-filtered acquisition segments do not match.")
+                fit_counts = {source: unfiltered[source] for source in sources if source in unfiltered}
         for source in sources:
-            if source not in ARRIVALS or source not in filtered:
+            if source not in ARRIVALS or source not in filtered or source not in fit_counts:
                 raise ValueError("Choose a count source from the filtered TOF result.")
             try:
                 x, fitted, background, _, residual, peaks = fit_peaks(
-                    centers, filtered[source], region, guesses, baseline,
+                    centers, fit_counts[source], region, guesses, baseline,
                 )
             except (RuntimeError, ValueError, FloatingPointError) as exc:
                 errors[source] = str(exc)
@@ -320,7 +333,8 @@ def main():
             if args.filtered_result is None or not isinstance(args.fit_spec, dict):
                 raise ValueError("Peak fitting requires the filtered TOF result and fit settings.")
             try:
-                result = fit_filtered_peaks(args.input, args.filtered_result, args.reference, **args.fit_spec)
+                result = fit_filtered_peaks(args.input, args.filtered_result, args.reference,
+                                            **args.fit_spec, tof_result=args.tof_result)
             except TypeError as exc:
                 raise ValueError(f"Invalid TOF peak fit settings. {exc}") from exc
         elif any(value is not None for value in (args.tof_result, args.gmd_min, args.gmd_max, args.gmd_shift)):

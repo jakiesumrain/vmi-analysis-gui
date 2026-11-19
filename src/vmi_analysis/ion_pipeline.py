@@ -69,6 +69,8 @@ def validate_settings(options):
         raise ValueError("The count-window half-width must be a positive number of standard deviations.")
     if not isinstance(shift, int):
         raise ValueError("Use a whole-number GMD shift.")
+    if options.get("fit_tof", "gated") not in ("ungated", "gated"):
+        raise ValueError("Choose gated or ungated TOF for peak-window fitting.")
     workers = options.get("workers", 1)
     if not isinstance(workers, int) or not 1 <= workers <= 8:
         raise ValueError("Choose between 1 and 8 delay positions to process at once.")
@@ -81,13 +83,14 @@ def validate_settings(options):
 def measure(position, options, selected, fit_peak):
     selected_count = int(np.count_nonzero(selected))
     gated_tof = position.tof_ns[selected[position.frame_index]]
+    fit_tof = gated_tof if options.get("fit_tof", "gated") == "gated" else position.tof_ns
     for peak in options["peaks"]:
         row = dict(peak=peak["name"], delay_mm=position.delay_mm, frames=len(selected),
                    selected_frames=selected_count, segments=len(position.segment_lengths))
         if not selected_count:
             yield dict(row, status="No frames pass the GMD2 gate.")
             continue
-        fit = fit_peak(position.tof_ns, peak["low"], peak["high"], peak["center"], options["fit_bins"])
+        fit = fit_peak(fit_tof, peak["low"], peak["high"], peak["center"], options["fit_bins"])
         if fit is None:
             yield dict(row, status="Gaussian fit unavailable in the requested range.")
             continue

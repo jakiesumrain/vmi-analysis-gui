@@ -116,7 +116,7 @@ class IonTofTests(unittest.TestCase):
 
     def test_peak_yield_counts_exact_arrivals_on_selected_triggers(self):
         with TemporaryDirectory() as directory:
-            path, filtered = [Path(directory) / name for name in ("luna.h5", "filtered.npz")]
+            path, filtered, original = [Path(directory) / name for name in ("luna.h5", "filtered.npz", "original.npz")]
             triggers = np.array([100_000, 200_000, 300_000], dtype="u8")
             with h5py.File(path, "w") as file:
                 file["TDCEvents"] = np.array([(1, t) for t in triggers],
@@ -126,10 +126,25 @@ class IonTofTests(unittest.TestCase):
             # The newest selected trigger has zero hits. The count window extends beyond the TOF plot.
             np.savez(filtered, edges=[2.0, 3.0, 4.0, 5.0, 6.0], pixels=[0, 0, 1, 0],
                      trigger_times=triggers, selected_mask=[True, False, True], selected_triggers=2)
+            np.savez(original, edges=[2.0, 3.0, 4.0, 5.0, 6.0], pixels=[2, 3, 4, 5], trigger_times=triggers)
             x = np.array([2.5, 3.5, 4.5, 5.5])
             peak = {"center": 4.0, "gaussian_fwhm": 2 * np.sqrt(2 * np.log(2))}
-            with patch("vmi_analysis.pes.fit_peaks", return_value=(x, x, x, None, x, [peak])):
+            with patch("vmi_analysis.pes.fit_peaks", return_value=(x, x, x, None, x, [peak])) as fitter:
                 result = fit_filtered_peaks(path, filtered, "TDC1Rising", ["pixels"], (2, 6), [], "Constant")
+                np.testing.assert_array_equal(fitter.call_args.args[1], [0, 0, 1, 0])
+                unfiltered_fit = fit_filtered_peaks(path, filtered, "TDC1Rising", ["pixels"], (2, 6), [],
+                                                     "Constant", tof_result=original)
+                np.testing.assert_array_equal(fitter.call_args.args[1], [2, 3, 4, 5])
+            # Both fitted windows use the same exact gated arrivals and denominator.
+            self.assertEqual(json.loads(unfiltered_fit["pixels_peaks"]), json.loads(result["pixels_peaks"]))
+            for key, changed in (("edges", [1., 2., 3., 4., 5.]), ("trigger_times", triggers + 1),
+                                 ("segment_offsets", [0, 1, 3])):
+                values = dict(edges=[2., 3., 4., 5., 6.], pixels=[2, 3, 4, 5], trigger_times=triggers)
+                values[key] = changed
+                np.savez(original, **values)
+                with self.subTest(mismatch=key), self.assertRaisesRegex(ValueError, "do not match"):
+                    fit_filtered_peaks(path, filtered, "TDC1Rising", ["pixels"], (2, 6), [],
+                                       "Constant", tof_result=original)
         counted = json.loads(result["pixels_peaks"])[0]
         self.assertEqual((counted["low"], counted["high"]), (1.0, 7.0))
         self.assertEqual(counted["counts"], 3)
