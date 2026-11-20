@@ -22,6 +22,7 @@ from pathlib import Path
 from contextlib import contextmanager
 
 from .resources import Access, canonical_path, job_access
+from . import shared
 
 TERMINAL = {"done", "failed", "cancelled"}
 _PROGRESS_RE = re.compile(r"(\d{1,3})%\s*\|")
@@ -61,6 +62,7 @@ class Job:
     exclusive: list[str] = field(default_factory=list)
     wait_reason: str = ""
     consume_output: Callable[[Job, str], bool] | None = field(default=None, repr=False)
+    owner: str | None = None
     _access: Access = field(default_factory=Access, repr=False)
     _proc: subprocess.Popen | None = field(default=None, repr=False)
     _cancel_requested: bool = field(default=False, repr=False)
@@ -91,7 +93,30 @@ class JobManager:
     # ------------------------------------------------------------------ API
 
     def submit(self, job: Job) -> Job:
+        account = shared.current_account()
+        if account:
+            job.owner = account.name
+            job.cwd = job.cwd or str(account.root)
+            for stage in job.stages or ():
+                stage.cwd = stage.cwd or job.cwd
+            job.env = {**(job.env or {}), 'VMI_WORKSPACE_DIR': str(account.root),
+                       'VMI_CACHE_DIR': str(account.root / '.cache'),
+                       'XDG_CACHE_HOME': str(account.root / '.cache'),
+                       'MPLCONFIGDIR': str(account.root / '.cache' / 'matplotlib'),
+                       'PYTHONSAFEPATH': '1', 'VMI_SHARED_CONFIG': ''}
+            for cmd in [job.cmd, *(stage.cmd for stage in job.stages or ())]:
+                shared.check_command(cmd)
         access = job_access(job)
+        if account:
+            for path in access.reads:
+                shared.SERVER.path(account, path)
+                shared.SERVER.check_directory_entries(account, path)
+            for path in access.writes:
+                shared.SERVER.path(account, path, write=True)
+                shared.SERVER.check_directory_entries(account, path, write=True)
+            for cwd in [job.cwd, *(stage.cwd for stage in job.stages or ())]:
+                if cwd:
+                    shared.SERVER.path(account, cwd, write=True)
         with self._lock:
             if self._stopping:
                 raise RuntimeError("The job manager is shutting down")
@@ -104,15 +129,22 @@ class JobManager:
         return job
 
     def get(self, job_id: str) -> Job | None:
-        return self._jobs.get(job_id)
+        account = shared.current_account()
+        owner = account.name if account else None
+        job = self._jobs.get(job_id)
+        return job if job is None or job.owner == owner else None
 
     def jobs(self) -> list[Job]:
+        account = shared.current_account()
         with self._lock:
-            return sorted(self._jobs.values(), key=lambda j: j.created)
+            return sorted((job for job in self._jobs.values() if not account or job.owner == account.name),
+                          key=lambda job: job.created)
 
     def running(self) -> list[Job]:
+        account = shared.current_account()
         with self._lock:
-            return [self._jobs[job_id] for job_id in self._workers]
+            return [self._jobs[job_id] for job_id in self._workers
+                    if not account or self._jobs[job_id].owner == account.name]
 
     def has_active(self) -> bool:
         """True while any job is running or waiting in the queue."""
@@ -140,7 +172,7 @@ class JobManager:
     @contextmanager
     def write_access(self, paths):
         """Keep GUI output deletion atomic with job submission and scheduling."""
-        access = Access(writes=frozenset(canonical_path(p) for p in paths))
+        access = Access(writes=frozenset(shared.checked_path(p, write=True) for p in paths))
         with self._lock:
             self._check_active_access_locked(access)
             yield
@@ -148,7 +180,10 @@ class JobManager:
     @contextmanager
     def preview_read_access(self, paths):
         """Protect preview inputs without occupying a subprocess job slot."""
-        access = Access(reads=frozenset(canonical_path(p) for p in paths))
+        access = Access(reads=frozenset(shared.checked_path(p) for p in paths))
+        if account := shared.current_account():
+            for path in access.reads:
+                shared.SERVER.check_directory_entries(account, path)
         token = object()
         with self._lock:
             if self._stopping:
@@ -163,9 +198,10 @@ class JobManager:
                 self._schedule_locked()
 
     def cancel(self, job_id: str) -> None:
+        account = shared.current_account()
         with self._lock:
             job = self._jobs.get(job_id)
-            if job is None or job.status in TERMINAL:
+            if job is None or job.status in TERMINAL or (account and job.owner != account.name):
                 return
             self._cancel_locked(job)
             self._schedule_locked()

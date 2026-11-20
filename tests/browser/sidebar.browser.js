@@ -12,6 +12,7 @@ async page => {
   await page.evaluate(() => {
     localStorage.removeItem('vmi-workspace.Electron.open');
     localStorage.removeItem('vmi-workspace.Ion.open');
+    localStorage.removeItem('vmi-workspace.sidebar.collapsed');
   });
   await page.reload();
   await electron.locator('summary').waitFor();
@@ -38,7 +39,43 @@ async page => {
   await tab('Circularize').click();
   await panel('Circularize').waitFor();
 
+  const sidebar = page.locator('.vmi-sidebar');
+  const settings = sidebar.getByRole('button', {name: 'Settings', exact: true});
+  if (await page.locator('.vmi-header').getByRole('button', {name: 'Settings', exact: true}).count()) {
+    throw new Error('Settings is still in the header');
+  }
+  if (await sidebar.getByText(/Local workspace|Private workspace|13 tools/).count()) {
+    throw new Error('The old sidebar footer is still shown');
+  }
+  await sidebar.getByRole('button', {name: 'Collapse sidebar', exact: true}).press('Enter');
+  await page.waitForFunction(() => document.querySelector('.vmi-sidebar--collapsed'));
+  const width = (await sidebar.boundingBox()).width;
+  if (width > 80) throw new Error('Icon rail is not narrow');
+  if (await settings.locator('.block').isVisible()) {
+    throw new Error('Settings label text is shown in the icon rail');
+  }
+  for (const name of ['Circularize', 'TPX3 Dump', 'Ion Pipeline']) {
+    await tab(name).click();
+    await panel(name).waitFor();
+  }
+  if (!await settings.isVisible()) throw new Error('Settings is hidden in the icon rail');
+  await settings.click();
+  await page.getByRole('dialog').waitFor();
+  await page.getByRole('dialog').getByRole('button', {name: 'Close', exact: true}).click();
+  await page.reload();
+  await page.locator('[data-workspace-ready]').last().waitFor();
+  if (!(await sidebar.getAttribute('class')).includes('vmi-sidebar--collapsed')) {
+    throw new Error('Collapsed rail preference was lost on reload');
+  }
+  await sidebar.getByRole('button', {name: 'Expand sidebar', exact: true}).press('Space');
+  await page.waitForFunction(() => !document.querySelector('.vmi-sidebar--collapsed'));
+  if ((await sidebar.boundingBox()).width <= width) throw new Error('Sidebar did not expand');
+  if (!await settings.locator('.block').isVisible()) {
+    throw new Error('Settings label text did not return when the sidebar expanded');
+  }
+
   await page.setViewportSize({width: 390, height: 844});
+  if (!await settings.isVisible()) throw new Error('Settings is hidden on narrow screens');
   if (!await ion.locator('summary').isVisible()) throw new Error('Ion heading is hidden on narrow screens');
   const strip = electron.getByRole('tablist');
   if (!await strip.evaluate(element => element.scrollWidth > element.clientWidth)) {

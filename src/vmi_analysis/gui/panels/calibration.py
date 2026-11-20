@@ -18,7 +18,7 @@ from importlib.resources import files
 from pathlib import Path
 
 import numpy as np
-from nicegui import app, ui
+from nicegui import ui
 import plotly.graph_objects as go
 from plotly.colors import qualitative
 from plotly.subplots import make_subplots
@@ -26,7 +26,8 @@ from plotly.subplots import make_subplots
 from vmi_analysis.circularization import polar_fit as pf
 from vmi_analysis.imaging.centering import brightest_pixel
 
-from .. import theme
+from ..shared import circularization_dir, settings_store
+from .. import shared, theme
 from ..centroid_plots import _style, plot_options
 from ..jobs import MANAGER
 from ..settings import centroid_settings, output_dir
@@ -42,6 +43,11 @@ SELECTION_SCRIPT = (files("vmi_analysis.gui.assets") / "polar_selection.js").rea
 
 def _image_folder(value):
     path = Path((value or "").strip()).expanduser()
+    if shared.SERVER and path.suffix.lower() == ".npy":
+        try:
+            path = shared.checked_path(path, write=True)
+        except shared.WorkspaceDenied:
+            return None
     return path.parent if path.suffix.lower() == ".npy" else None
 
 
@@ -522,11 +528,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
         image_folder = _image_folder(widgets["image"].value)
         widgets["output"] = persist(path_input(
             "Extracted trig-fit file",
-            str((image_folder or CIRC_DIR) / "extracted.txt"),
+            str((image_folder or circularization_dir(CIRC_DIR)) / "extracted.txt"),
             browse="save", filters=[".txt"],
             default_name="extracted.txt"), "calibration.output")
         saved_output = widgets["output"].value
-        if ("calibration.image" in app.storage.general and image_folder is not None
+        if ("calibration.image" in settings_store() and image_folder is not None
                 and (not saved_output or Path(saved_output).expanduser().parent != image_folder)):
             widgets["output"].value = str(image_folder / "extracted.txt")
 
@@ -563,7 +569,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         theme.form_section("Session")
         widgets["session"] = persist(path_input(
             "Session file (.json)",
-            str(CIRC_DIR / "trig-calibration.session.json"),
+            str(circularization_dir(CIRC_DIR) / "trig-calibration.session.json"),
             browse="save", filters=[".json"],
             default_name="trig-calibration.session.json"),
             "calibration.session")
@@ -860,7 +866,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         try:
             if not path:
                 raise ValueError("Choose an image.")
-            path = Path(path).expanduser().resolve()
+            path = shared.checked_path(path)
             auto_center = bool(widgets["brightest_center"].value)
             center = saved_center
             if center is None and not auto_center:
@@ -1004,7 +1010,8 @@ def build(jobs=None, *, use_calibration=None) -> None:
             path = (widgets["session"].value or "").strip()
             if not path:
                 raise ValueError("Choose a session file ending in .json.")
-            with MANAGER.write_access([Path(path).expanduser()]):
+            path = shared.checked_path(path, write=True)
+            with MANAGER.write_access([path]):
                 pf.save_session(path, _session_payload())
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             _notify_error(exc)
@@ -1013,7 +1020,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
 
     async def _load_session():
         try:
-            payload = pf.load_session(widgets["session"].value)
+            payload = pf.load_session(shared.checked_path(widgets["session"].value))
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             _notify_error(exc)
             return
@@ -1143,11 +1150,11 @@ def build(jobs=None, *, use_calibration=None) -> None:
         value = (widgets["output"].value or "").strip()
         if not value or Path(value).suffix.lower() != ".txt":
             raise ValueError("Choose an extracted trig-fit .txt file.")
-        return Path(value).expanduser().absolute()
+        return shared.checked_path(value)
 
     def _check_loaded_image():
         selected = widgets["image"].value
-        if state["image"] and (not selected or Path(selected).expanduser().resolve() != Path(state["image"]["path"])):
+        if state["image"] and (not selected or shared.checked_path(selected) != Path(state["image"]["path"])):
             raise ValueError("Load image & remap before saving fits for the newly selected image.")
 
     async def _refresh_rings_from_file():
@@ -1164,7 +1171,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
 
     def _confirm_clear_session():
         try:
-            path = pf.session_output_path(widgets["session"].value,
+            path = pf.session_output_path(shared.checked_path(widgets["session"].value, write=True),
                                           image=widgets["image"].value, calibration=widgets["output"].value)
             if path.is_file():
                 pf.load_session(path)
@@ -1259,6 +1266,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
     def _export_to_circularize():
         try:
             _check_loaded_image()
+            path = _calibration_path()
         except (OSError, ValueError) as exc:
             _notify_error(exc)
             return
@@ -1270,7 +1278,6 @@ def build(jobs=None, *, use_calibration=None) -> None:
         manual_center = image["center"] if image and not image["brightest_center"] else None
         if use_calibration is None:
             return
-        path = Path(widgets["output"].value).expanduser().resolve()
         max_trig_n = use_calibration(
             str(path), raw_path, manual_center, radial_model_value=radial_model.value,
             poly_order_value=int(poly_order.value or 1) if radial_model.value == "poly" else None)

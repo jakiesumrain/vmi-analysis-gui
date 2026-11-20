@@ -3,9 +3,10 @@
 import sys
 from pathlib import Path
 
-from nicegui import app, ui
+from nicegui import ui
 from vmi_analysis.centroiding.options import centroid_cli_args
 
+from ..shared import centroid_dir, circularization_dir, settings_store, workspace_root, workspace_timer
 from ..jobs import Job, JobManager, Stage
 from .. import theme
 from ..settings import centroid_settings, output_dir as centroid_output_dir, binning_cli_args
@@ -47,7 +48,7 @@ def build(jobs: JobManager) -> None:
         for badge, stage in zip(stage_badges, job.stages):
             theme.set_badge(badge, stage.status)
 
-    ui.timer(0.7, refresh_badges)
+    workspace_timer(0.7, refresh_badges)
 
     with theme.panel_card():
         h5_dir = persist(path_input(
@@ -63,7 +64,7 @@ def build(jobs: JobManager) -> None:
             "GMD timestamp file", "", browse="file", filters=[".txt"],
             placeholder="current-time-both.txt"), "pipeline.gmd_path")
         map_out = persist(path_input(
-            "GMD map output", str(REPO_ROOT / "gmd_map_all.txt"),
+            "GMD map output", str(workspace_root(REPO_ROOT) / "gmd_map_all.txt"),
             browse="save", filters=[".txt"],
             default_name="gmd_map_all.txt"), "pipeline.map_out")
         with field_grid(3):
@@ -112,27 +113,27 @@ def build(jobs: JobManager) -> None:
                          "--h5-pattern", h5_pattern,
                          "--gmd-path", gmd_path.value,
                          "--output-path", map_out.value],
-                    cwd=str(REPO_ROOT),
+                    cwd=str(workspace_root(REPO_ROOT)),
                     outputs=[map_out.value],
                 ),
                 Stage(
                     name="Centroiding",
                     cmd=[py, "-m", "vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch",
                          *centroid_args],
-                    cwd=str(CENTROID_DIR),
+                    cwd=str(centroid_dir(CENTROID_DIR)),
                     outputs=[str(checkpoint)],
                 ),
                 Stage(
                     name="Binning",
                     cmd=[py, "-m", "vmi_analysis.centroiding.vmi_histogram_gmd_bins",
                          *binning_cli_args(cfg),
-                         "--thresholds", str(app.storage.general.get("binning.thresholds", "3.75e-8,5.5e-8,7.25e-8")),
-                         "--gmd-col", str(app.storage.general.get("binning.gmd_col", 4)),
-                         "--gmd-floor", str(app.storage.general.get("binning.gmd_floor", 1e-12)),
+                         "--thresholds", str(settings_store().get("binning.thresholds", "3.75e-8,5.5e-8,7.25e-8")),
+                         "--gmd-col", str(settings_store().get("binning.gmd_col", 4)),
+                         "--gmd-floor", str(settings_store().get("binning.gmd_floor", 1e-12)),
                          "--weight-mode", weight_mode.value,
                          "--weight-power", str(power),
                          "--no-show"],
-                    cwd=str(CENTROID_DIR),
+                    cwd=str(centroid_dir(CENTROID_DIR)),
                     outputs=[str(out_dir / f"vmi_2d_gmd_all{suffix}.npy")],
                 ),
                 Stage(
@@ -142,7 +143,7 @@ def build(jobs: JobManager) -> None:
                          "--bin-dir", str(out_dir),
                          "--inversion-backend", "pyabel",
                          "--no-show"],
-                    cwd=str(CIRC_DIR),
+                    cwd=str(circularization_dir(CIRC_DIR)),
                     outputs=[str(default_output_dir(suffix, "pyabel", "daun")
                                  / "gmd_bins_results.npz")],
                 ),
@@ -179,7 +180,7 @@ def _written_outputs(job):
     for stage in job.stages:
         if stage.started is None or stage.finished is None:
             continue
-        candidates = [Path(stage.cwd or REPO_ROOT) / path for path in stage.outputs]
+        candidates = [Path(stage.cwd or workspace_root(REPO_ROOT)) / path for path in stage.outputs]
         if stage.name == "Centroiding":
             candidates.extend(directory / name for name in CENTROID_OUTPUTS)
         elif stage.name == "Binning":

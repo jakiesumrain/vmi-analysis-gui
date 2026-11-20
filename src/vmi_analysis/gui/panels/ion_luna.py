@@ -1,5 +1,6 @@
 """Workbench panel for Timepix3 conversion with ASI LUNA."""
 
+import json
 from pathlib import Path
 import sys
 
@@ -7,7 +8,9 @@ from nicegui import ui
 
 from vmi_analysis.ion_luna import LUNA_COMMAND_PREFIX, PROCESS_OPTIONS, process_arguments
 from vmi_analysis.paths import validate_distinct_output
+from vmi_analysis.ion_acquisition import manifest_path, segment_files
 
+from ..shared import workspace_root
 from .. import theme
 from ..jobs import Job, JobManager
 from .common import (REPO_ROOT, JobView, action_bar, check_grid, field_grid, num_input,
@@ -24,6 +27,10 @@ COMMAND_KEY = "luna_command"
 
 
 def capture_command(job, line):
+    prefix = "Acquisition collection ready: "
+    if line.startswith(prefix):
+        job.extra["collection"] = line[len(prefix):].strip()
+        return False
     if line.startswith(LUNA_COMMAND_PREFIX):
         job.extra[COMMAND_KEY] = line
         return True
@@ -33,10 +40,21 @@ def capture_command(job, line):
 def build(jobs: JobManager):
     def results(job):
         if job.status == "done":
-            path = Path(job.extra["output"])
+            collection = job.extra.get("collection")
+            path = Path(collection or job.extra["output"])
+            if collection:
+                ui.label("Each acquisition is an independent LUNA stream at the same experimental condition."
+                         ).classes("vmi-subtitle")
+                for index, (data, meta) in enumerate(segment_files(path), 1):
+                    ui.label(f"Segment {index} · {data}").classes("vmi-caption break-all")
+                    ui.button(f"Inspect segment {index}", on_click=lambda data=data: inspect_output(data)).props("flat")
+                document = json.loads(path.read_text(encoding="utf-8"))
+                for index, segment in enumerate(document["segments"], 1):
+                    ui.label(f"Segment {index} · {segment['reason']}").classes("vmi-subtitle")
             label = "Corrected HDF5" if job.extra.get("corrected") else "LUNA output"
             ui.label(f"{label}: {path}").classes("break-all")
-            if metadata := job.extra.get("metadata"):
+            metadata = None if collection else job.extra.get("metadata")
+            if metadata:
                 ui.label(f"Acquisition metadata: {metadata}").classes("break-all")
             with ui.row().classes("w-full items-center"):
                 async def inspect_data():
@@ -45,7 +63,8 @@ def build(jobs: JobManager):
                 async def inspect_metadata():
                     await inspect_output(metadata)
 
-                ui.button("Inspect output", on_click=inspect_data).props("flat")
+                if not collection:
+                    ui.button("Inspect output", on_click=inspect_data).props("flat")
                 if metadata:
                     ui.button("Inspect metadata", on_click=inspect_metadata).props("flat")
                 open_folder_button(path.parent, "Open output folder")
@@ -94,7 +113,7 @@ def build(jobs: JobManager):
                 cmd += ["--wsl-distribution", distro.value.strip()]
             if executable.value.strip():
                 cmd += ["--wsl-executable", executable.value.strip()]
-        view.attach(jobs.submit(Job(JOB_NAME, cmd=cmd, cwd=str(REPO_ROOT), extra=extra,
+        view.attach(jobs.submit(Job(JOB_NAME, cmd=cmd, cwd=str(workspace_root(REPO_ROOT)), extra=extra,
                                     consume_output=capture_command)))
 
     def run():
@@ -104,21 +123,23 @@ def build(jobs: JobManager):
                 input_value = correction_input.value.strip() or output.value.strip()
                 if not input_value:
                     raise ValueError("Choose the HDF5 file with timewalk statistics.")
-                selected = (REPO_ROOT / Path(input_value).expanduser()).resolve()
+                selected = (workspace_root(REPO_ROOT) / Path(input_value).expanduser()).resolve()
+                if not correction_input.value.strip() and manifest_path(selected).is_file():
+                    selected = manifest_path(selected)
                 target = corrected_output.value.strip() or selected.with_name(f"{selected.stem}_corrected.h5")
                 target = validate_distinct_output(target, [("timewalk input", selected)],
-                                                  cwd=REPO_ROOT, output_label="corrected HDF5 output")
-                submit([*command, "--apply-timewalk-correction", "--input", str(selected), "--output", str(target),
-                        "--ctot-cut", str(option_value("ctot-cut"))],
-                       {"output": str(target), "corrected": True})
+                                                  cwd=workspace_root(REPO_ROOT), output_label="corrected HDF5 output")
+                cmd = [*command, "--apply-timewalk-correction", "--input", str(selected), "--output", str(target),
+                       "--ctot-cut", str(option_value("ctot-cut"))]
+                submit(cmd, {"output": str(target), "corrected": True})
                 return
             if not source.value.strip() or not output.value.strip():
                 raise ValueError("Choose a TPX3 input and an HDF5 output.")
-            selected = (REPO_ROOT / Path(source.value.strip()).expanduser()).resolve()
+            selected = (workspace_root(REPO_ROOT) / Path(source.value.strip()).expanduser()).resolve()
             stats = calculate_stats()
-            matrix = (REPO_ROOT / Path(timewalk.value.strip()).expanduser()).resolve() if stats and timewalk.value.strip() else None
+            matrix = (workspace_root(REPO_ROOT) / Path(timewalk.value.strip()).expanduser()).resolve() if stats and timewalk.value.strip() else None
             target = validate_distinct_output(output.value.strip(), [("TPX3 input", selected), ("timewalk file", matrix)],
-                                              cwd=REPO_ROOT, output_label="HDF5 output")
+                                              cwd=workspace_root(REPO_ROOT), output_label="HDF5 output")
             arguments = {flag: option_value(flag) for flag in ("layout", "raw-only", "disable-clustering")}
             if not arguments["raw-only"]:
                 arguments["tof-tdc-reference"] = option_value("tof-tdc-reference")
@@ -136,6 +157,7 @@ def build(jobs: JobManager):
                 metadata = target.with_name(f"{target.stem}_metadata.h5")
                 cmd += ["--metadata-output", str(metadata)]
                 extra["metadata"] = str(metadata)
+                cmd.append("--split-acquisitions")
             if matrix:
                 cmd += ["--timewalk-file", str(matrix)]
         except (OSError, TypeError, ValueError) as exc:
@@ -161,10 +183,18 @@ def build(jobs: JobManager):
             with source.add_slot("append"):
                 ui.button(icon="folder_open", on_click=browse_input).classes("vmi-browse-icon") \
                     .props('flat dense round aria-label="Browse TPX3 input"')
-            output = save(path_input("HDF5 output", str(REPO_ROOT / "ions.h5"), browse="save",
+            output = save(path_input("HDF5 output", str(workspace_root(REPO_ROOT) / "ions.h5"), browse="save",
                                      filters=HDF5_TYPES, default_name="ions.h5"), "output")
+            ui.label("For split acquisitions, this name sets the collection name and segment folder. "
+                     "For example, ions.h5 creates ions.segments.json and separate HDF5 files in ions_segments."
+                     ).classes("vmi-subtitle")
             prefixed = save(ui.checkbox("Strip 32-byte acquisition prefix", value=True), "acquisition_prefix")
             prefixed.tooltip("For single-chip recordings with timestamp and GMD metadata. Clear for standard ASI Serval files.")
+            ui.label("Prefixed data are checked for acquisition restarts. A backward TDC clock jump starts "
+                     "a new LUNA stream when the rollover interval disagrees with wall time by more than 1 s. "
+                     "Each segment is saved as a separate HDF5 with matching metadata. Open the saved "
+                     ".segments.json collection in Ion TOF, or use its latest-dump button."
+                     ).classes("vmi-subtitle").bind_visibility_from(prefixed, "value")
             theme.form_section("Detector and timing")
             with field_grid():
                 option_field("layout")
@@ -192,7 +222,7 @@ def build(jobs: JobManager):
         with ui.column().classes("w-full").bind_visibility_from(stage, "value", lambda value: value == CORRECT):
             theme.form_section("Timewalk correction input and output")
             correction_input = save(path_input("Statistics HDF5 (blank = dump output)", browse="file",
-                                               filters=HDF5_TYPES), "correction_input")
+                                               filters=[*HDF5_TYPES, ".json"]), "correction_input")
             corrected_output = save(path_input("Corrected HDF5 (blank = append _corrected)", browse="save",
                                                filters=HDF5_TYPES, default_name="ions_corrected.h5"), "corrected_output")
         with field_grid() as cut_options:

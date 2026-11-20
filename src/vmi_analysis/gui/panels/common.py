@@ -13,7 +13,7 @@ import numpy as np
 from nicegui import app, ui
 
 from ..jobs import Job, JobManager, MANAGER, ResourceBusyError
-from .. import theme
+from .. import shared, theme
 from ..workflow import register_field
 
 from importlib.resources import files
@@ -30,6 +30,8 @@ _SERVED: dict[str, str] = {}
 
 def serve_dir(path) -> str:
     """Serve a directory over HTTP once; return its URL prefix."""
+    if shared.SERVER:
+        raise RuntimeError("Use an authorized file URL in shared mode.")
     key = str(Path(path).resolve())
     if key not in _SERVED:
         url = f"/files/{len(_SERVED)}"
@@ -44,11 +46,18 @@ def file_url(path) -> str:
     Appends the file's mtime as a cache-buster so the browser refetches
     when a job rewrites the same filename (e.g. tuning check, result PNGs).
     """
-    p = Path(path)
+    p = shared.checked_path(path) if shared.SERVER else Path(path)
     try:
         stamp = p.stat().st_mtime_ns
     except OSError:
         stamp = 0
+    if shared.SERVER:
+        from urllib.parse import quote
+
+        root = shared.workspace_root()
+        area = "private" if p.is_relative_to(root) else "datasets"
+        relative = p.relative_to(root if area == "private" else shared.SERVER.datasets)
+        return f"/workspace-file/{area}/{quote(relative.as_posix())}?t={stamp}"
     return f"{serve_dir(p.parent)}/{p.name}?t={stamp}"
 
 
@@ -104,6 +113,9 @@ def _open_windows_folder(folder: Path) -> None:
 async def open_folder(path) -> None:
     """Open a file's containing folder (or the folder itself) in the OS
     file manager on the machine running the server."""
+    if shared.SERVER:
+        ui.notify("Use the file picker to browse folders on the server.")
+        return
     p = Path(path)
     folder = (p if p.is_dir() else p.parent).resolve()
     try:
@@ -255,12 +267,8 @@ def num_input(label: str, value, fmt: str | None = None, **kw) -> ui.number:
 
 
 def persist(widget, key: str):
-    """Restore the widget's value from server-side storage and save every
-    later change. Values live in app.storage.general
-    (.nicegui/storage-general.json), so they survive server restarts and
-    are shared across browsers. Keys are '<panel>.<field>'.
-    """
-    store = app.storage.general
+    """Restore and save settings in the active workspace."""
+    store = shared.settings_store()
     register_field(key, widget)
     if key in store:
         widget.value = store[key]
@@ -287,7 +295,7 @@ def delete_outputs(paths, *, expected=None):
                 except OSError as exc:
                     failed.append(f"{path}: {exc}")
             return failed
-    except ResourceBusyError as exc:
+    except (ResourceBusyError, shared.WorkspaceDenied) as exc:
         ui.notify(str(exc), type="warning")
         return None
 
@@ -296,6 +304,12 @@ def confirm_clear_outputs(paths, title, *, on_cleared=None):
     """Confirm the exact files to remove, leaving folders and other files alone."""
     targets = {}
     for path in dict.fromkeys(map(Path, paths)):
+        if shared.SERVER:
+            try:
+                path = shared.checked_path(path, write=True)
+            except shared.WorkspaceDenied as exc:
+                ui.notify(str(exc), type="warning")
+                return
         if path.is_file():
             try:
                 targets[path] = path.lstat()
@@ -413,7 +427,10 @@ class JobView:
             else:
                 self.refresh()
                 if self.job is None or self.job.status not in ("running", "queued"):
-                    on_click()
+                    try:
+                        on_click()
+                    except shared.WorkspaceDenied as exc:
+                        ui.notify(str(exc), type="warning")
         self.action_button = theme.run_button(label, on_click=toggle)
         self._sync_button()
         return self.action_button
@@ -430,7 +447,7 @@ class JobView:
         self.action_button.props("color=negative" if active else "color=primary")
         self.action_button.set_enabled(not stopping)
 
-    def place_console(self) -> None:
+    def place_console(self, title: str = "Console") -> None:
         """Create the collapsible log console and results area; call at panel bottom."""
         with ui.column().classes("vmi-console w-full gap-2"):
             head = ui.row().classes(
@@ -440,7 +457,7 @@ class JobView:
             with head:
                 self._chevron = ui.icon("chevron_right") \
                     .classes("vmi-console-chevron")
-                ui.label("Console").classes("vmi-console-title")
+                ui.label(title).classes("vmi-console-title")
                 self.console_hint = ui.label("Output appears here after a run.") \
                     .classes("vmi-caption vmi-console-hint")
             head.on("click", self.toggle_console)
@@ -451,7 +468,7 @@ class JobView:
             self.results = ui.column().classes("w-full gap-4 vmi-results")
         self._reset_results()
         self._sync_console()
-        ui.timer(self._interval, self.refresh)
+        shared.workspace_timer(self._interval, self.refresh)
         self.refresh()
 
     def toggle_console(self) -> None:
@@ -528,10 +545,13 @@ class JobView:
     def refresh(self) -> None:
         # Reconnect the new page's controls to a job still owned by the server.
         if self.job_name and (self.job is None or self.job.status in ("done", "failed", "cancelled")):
-            active = [j for j in self.jobs.jobs() if j.name == self.job_name
-                      and j.status in ("running", "queued")]
+            owned = [j for j in self.jobs.jobs() if j.name == self.job_name]
+            active = [j for j in owned if j.status in ("running", "queued")]
             if active:
                 self.attach(next((j for j in active if j.status == "running"), active[-1]))
+                return
+            if shared.SERVER and self.job is None and owned:
+                self.attach(owned[-1])
                 return
         j = self.job
         self._sync_button()

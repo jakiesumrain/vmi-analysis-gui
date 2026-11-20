@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 from nicegui import ui
 
+from ..shared import generated_dir, workspace_root
 from ..jobs import Job, JobManager
 from .. import theme
 from .common import (GENERATED, JobView, REPO_ROOT, action_bar, field_grid,
@@ -38,7 +39,7 @@ def build(jobs: JobManager) -> None:
             frames = persist(num_input("Dark frame count (0 = all)", 2000,
                                        step=100), "dark.frames")
         out_dir = persist(path_input("Output directory",
-                                     str(REPO_ROOT / "centroiding"),
+                                     str(workspace_root(REPO_ROOT) / "centroiding"),
                                      browse="dir"), "dark.out_dir")
 
         def run():
@@ -53,7 +54,7 @@ def build(jobs: JobManager) -> None:
                    "--frames", str(int(frames.value if frames.value is not None else 2000)),
                    "--output-dir", out_dir.value]
             job = jobs.submit(Job(name="Dark frame", cmd=cmd,
-                                  cwd=str(REPO_ROOT),
+                                  cwd=str(workspace_root(REPO_ROOT)),
                                   extra={"dark_npy": npy, "info": info}))
             view.attach(job)
 
@@ -67,7 +68,7 @@ def build(jobs: JobManager) -> None:
 
 def _clear_output(out_dir, method, view) -> None:
     """Delete dark_{method}.npy (+ info) so the next run recomputes."""
-    folder = REPO_ROOT / (out_dir.value or "").strip()
+    folder = workspace_root(REPO_ROOT) / (out_dir.value or "").strip()
     if not out_dir.value or not folder.is_dir():
         ui.notify("Set an output directory first.", type="warning")
         return
@@ -75,15 +76,15 @@ def _clear_output(out_dir, method, view) -> None:
                folder / f"dark_{method.value}_info.txt"]
     for job in view.jobs.jobs():
         if (job.name == "Dark frame" and job.extra.get("dark_npy")
-                and (Path(job.cwd or REPO_ROOT) / job.extra["dark_npy"]).resolve() == targets[0].resolve()):
-            targets.append(GENERATED / f"dark_frame_{job.id}.png")
+                and (Path(job.cwd or workspace_root(REPO_ROOT)) / job.extra["dark_npy"]).resolve() == targets[0].resolve()):
+            targets.append(generated_dir(GENERATED) / f"dark_frame_{job.id}.png")
     confirm_clear_outputs(targets, "Delete dark frame outputs?", on_cleared=view.clear_results)
 
 
 def _results(job: Job):
     if job.status != "done":
         return
-    npy = Path(job.cwd or REPO_ROOT) / job.extra["dark_npy"]
+    npy = Path(job.cwd or workspace_root(REPO_ROOT)) / job.extra["dark_npy"]
     if not npy.exists():
         return
     data = np.load(npy)
@@ -91,10 +92,10 @@ def _results(job: Job):
              f"std={data.std():.1f}, min={data.min():.0f}, "
              f"max={data.max():.0f}").classes("vmi-subtitle")
     open_folder_button(npy)
-    png = render_image(data, GENERATED / f"dark_frame_{job.id}.png",
+    png = render_image(data, generated_dir(GENERATED) / f"dark_frame_{job.id}.png",
                        cmap="gray", log=False, vmin_pct=0, vmax_pct=99.9)
     zoomable_image(file_url(png)).classes("w-full max-w-2xl")
-    info = Path(job.cwd or REPO_ROOT) / job.extra["info"]
+    info = Path(job.cwd or workspace_root(REPO_ROOT)) / job.extra["info"]
     if info.exists():
         ui.label(info.read_text(encoding="utf-8").strip()) \
             .classes("vmi-caption")

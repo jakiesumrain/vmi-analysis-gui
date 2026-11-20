@@ -26,6 +26,8 @@ session separately to preserve its band, masks, and ring fits.
 
 ## Documentation
 
+- [Shared server setup](docs/shared-server.md) for independent workspaces
+  and SSH access from Linux and Windows.
 - [User manual (PDF)](docs/manual.pdf) for installation, data formats, panel
   settings, the full pipeline, CLI commands, and troubleshooting.
 - [Architecture](docs/architecture.md) and [contributing guide](CONTRIBUTING.md)

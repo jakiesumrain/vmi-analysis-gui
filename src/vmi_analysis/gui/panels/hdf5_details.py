@@ -7,6 +7,7 @@ from nicegui import ui
 
 from vmi_analysis.hdf5_details import inspect_hdf5
 
+from ..shared import workspace_root
 from ..jobs import ResourceBusyError
 from .common import REPO_ROOT, path_input
 
@@ -25,7 +26,7 @@ def file_details(jobs):
         inspect_button.disable()
         status.text = "Inspecting HDF5 file…"
         try:
-            path = (REPO_ROOT / Path(selected).expanduser()).resolve()
+            path = (workspace_root(REPO_ROOT) / Path(selected).expanduser()).resolve()
             rows, structure = await asyncio.to_thread(read, path)
             status.text = str(path)
             with output:

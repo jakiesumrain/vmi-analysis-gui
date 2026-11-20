@@ -13,6 +13,7 @@ from vmi_analysis.paths import validate_distinct_output
 from nicegui import ui
 from plotly.colors import get_colorscale
 
+from ..shared import WorkspaceDenied, checked_path, generated_dir, workspace_root
 from ..accumulate_plot import (ACCUMULATE_HEIGHT, COLORMAPS,
                                FRAME_HISTOGRAM_HEIGHT, accumulation_figure,
                                frame_histogram_figure)
@@ -176,8 +177,8 @@ def build(jobs: JobManager) -> None:
                 limits = dict(x_min=histogram_x_min.value, x_max=histogram_x_max.value,
                               bin_width=histogram_bin_width.value)
                 figure, caption = await asyncio.to_thread(
-                    histogram_data, REPO_ROOT / Path(folder).expanduser(),
-                    REPO_ROOT / Path(dark).expanduser() if dark else None,
+                    histogram_data, workspace_root(REPO_ROOT) / Path(folder).expanduser(),
+                    workspace_root(REPO_ROOT) / Path(dark).expanduser() if dark else None,
                     selection, average, limits)
             except (OSError, ValueError, KeyError, IndexError, ResourceBusyError) as exc:
                 view.log.push(f"[{preview}] Error: {exc}")
@@ -205,7 +206,7 @@ def build(jobs: JobManager) -> None:
             enable_gmd = persist(ui.checkbox("GMD weighting", value=False),
                                  "accumulate.enable_gmd")
         gmd_map_path = persist(path_input(
-            "GMD map file", str(REPO_ROOT / "gmd_map_all.txt"),
+            "GMD map file", str(workspace_root(REPO_ROOT) / "gmd_map_all.txt"),
             browse="file", filters=[".txt"]), "accumulate.gmd_map_path")
         with field_grid():
             gmd_w_min = persist(num_input("Weight min", 0.0, step=0.5),
@@ -219,7 +220,7 @@ def build(jobs: JobManager) -> None:
                 ui.notify("Frame limit must be zero or a positive integer.", type="negative")
                 return
             job_id_hint = str(time.time_ns())[-8:]
-            live_path = GENERATED / f"accum_live_{job_id_hint}.npy"
+            live_path = generated_dir(GENERATED) / f"accum_live_{job_id_hint}.npy"
             if live_path.exists():
                 live_path.unlink()
             live_state["stamp"] = 0.0
@@ -242,7 +243,7 @@ def build(jobs: JobManager) -> None:
                 cmd.append("--do-denoise" if do_denoise.value else "--no-do-denoise")
             if enable_gmd.value:
                 cmd.append("--enable-gmd")
-            job = jobs.submit(Job(name="Accumulate", cmd=cmd, cwd=str(REPO_ROOT),
+            job = jobs.submit(Job(name="Accumulate", cmd=cmd, cwd=str(workspace_root(REPO_ROOT)),
                                   extra={"live_path": str(live_path),
                                          "output_path": output_path.value}))
             view.attach(job)
@@ -253,7 +254,7 @@ def build(jobs: JobManager) -> None:
                 return
             view.results.clear()
             with view.results:
-                _result_file(str(REPO_ROOT / output_path.value) if output_path.value else "")
+                _result_file(str(workspace_root(REPO_ROOT) / output_path.value) if output_path.value else "")
             view.open_console()
         with action_bar(view, on_click=run):
             ui.button("View saved result", icon="analytics",
@@ -277,17 +278,17 @@ def _clear_output(output_path, view, inputs) -> None:
     if not txt:
         ui.notify("Set an output path first.", type="warning")
         return
-    target = REPO_ROOT / txt
+    target = workspace_root(REPO_ROOT) / txt
     targets = [target, target.with_suffix(".png")]
     try:
         for path in targets:
-            validate_distinct_output(path, zip(("dark frame", "GMD map"), inputs), cwd=REPO_ROOT)
+            validate_distinct_output(path, zip(("dark frame", "GMD map"), inputs), cwd=workspace_root(REPO_ROOT))
     except (OSError, ValueError) as exc:
         ui.notify(str(exc), type="warning")
         return
     for job in view.jobs.jobs():
         if (job.name == "Accumulate" and job.extra.get("live_path")
-                and (Path(job.cwd or REPO_ROOT) / job.extra["output_path"]).resolve() == target.resolve()):
+                and (Path(job.cwd or workspace_root(REPO_ROOT)) / job.extra["output_path"]).resolve() == target.resolve()):
             targets.append(Path(job.extra["live_path"]))
     confirm_clear_outputs(targets, "Delete accumulated outputs?", on_cleared=view.clear_results)
 
@@ -296,7 +297,7 @@ def _results(job: Job):
     if job.status == "done":
         output = job.extra.get("output_path")
         if output:
-            _result_file(str(Path(job.cwd or REPO_ROOT) / output))
+            _result_file(str(Path(job.cwd or workspace_root(REPO_ROOT)) / output))
 
 
 def _interactive_plot(figure=None):
@@ -325,7 +326,12 @@ def _result_file(out: str):
     if not out:
         ui.label("Set an output path to view a saved result.").classes("vmi-subtitle")
         return
-    png = os.path.splitext(out)[0] + ".png"
+    try:
+        png = checked_path(os.path.splitext(out)[0] + ".png")
+        out = checked_path(out)
+    except WorkspaceDenied as exc:
+        ui.label(str(exc)).classes("text-negative")
+        return
     if Path(out).is_file():
         ui.label(f"Result: {out}").classes("vmi-subtitle")
         open_folder_button(out)

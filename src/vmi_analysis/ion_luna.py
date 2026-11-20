@@ -1,7 +1,8 @@
 """Run ASI LUNA's TPX3 processor and publish a completed HDF5 result."""
 
 import argparse
-from contextlib import ExitStack
+import json
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 import os
 from pathlib import Path, PureWindowsPath
@@ -12,10 +13,13 @@ import struct
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from uuid import uuid4
 
 import h5py
+import numpy as np
 
 from .paths import validate_distinct_output
+from .ion_acquisition import SCHEMA, acquisition_splits, manifest_path, read_timing, segment_files
 
 ACQUISITION_PREFIX = struct.Struct("<qqdd")
 SERVAL_HEADER = struct.Struct("<4sBBH")
@@ -100,39 +104,48 @@ def frame_order(paths):
     return [path for _, path in sorted(numbered, key=lambda item: (int(item[0][1]), item[1].name))]
 
 
-def preprocess_acquisition(paths, destination, metadata, *, numbered):
+def _write_chunks(source, framed, body, path):
+    while body:
+        if len(body) % 8:
+            raise ValueError(f"{path.name} ends with an incomplete 8-byte Timepix3 packet.")
+        framed.write(SERVAL_HEADER.pack(b"TPX3", 0, 0, len(body)))
+        framed.write(body)
+        body = source.read(MAX_CHUNK_BYTES)
+
+
+def preprocess_acquisition(paths, destination, metadata, *, numbered, combined=False):
     """Preserve each file's acquisition metadata and frame its single-chip packets."""
     destination.mkdir()
     records = []
     prepared = {}
-    for index, path in enumerate(paths):
-        with path.open("rb") as source:
-            prefix = source.read(ACQUISITION_PREFIX.size)
-            if prefix.startswith(b"TPX3"):
-                raise ValueError(f"{path.name} already has a Serval header. Select ASI Serval input.")
-            if len(prefix) != ACQUISITION_PREFIX.size:
-                raise ValueError(f"{path.name} has an incomplete 32-byte acquisition prefix.")
-            seconds, nanoseconds, gmd1, gmd2 = ACQUISITION_PREFIX.unpack(prefix)
-            if not 0 <= nanoseconds < 1_000_000_000:
-                raise ValueError(f"{path.name} has an invalid acquisition timestamp nanosecond field.")
-            timestamp_ns = seconds * 1_000_000_000 + nanoseconds
-            if not -(2**63) <= timestamp_ns < 2**63:
-                raise ValueError(f"{path.name} has an acquisition timestamp outside the 64-bit nanosecond range.")
-            records.append((path.name, timestamp_ns, gmd1, gmd2))
-            body = source.read(MAX_CHUNK_BYTES)
-            if not body:
-                continue
-            # Fixed-width names preserve the chosen order in LUNA's filename sort.
-            order = index if numbered else timestamp_ns + 2**63
-            target = destination / f"{order:020d}_{index:09d}.tpx3"
-            with target.open("wb") as framed:
-                while body:
-                    if len(body) % 8:
-                        raise ValueError(f"{path.name} ends with an incomplete 8-byte Timepix3 packet.")
-                    framed.write(SERVAL_HEADER.pack(b"TPX3", 0, 0, len(body)))
-                    framed.write(body)
-                    body = source.read(MAX_CHUNK_BYTES)
-            prepared[target] = path
+    combined_path = destination / "acquisition.tpx3"
+    with combined_path.open("wb") if combined else nullcontext() as combined_stream:
+        for index, path in enumerate(paths):
+            with path.open("rb") as source:
+                prefix = source.read(ACQUISITION_PREFIX.size)
+                if prefix.startswith(b"TPX3"):
+                    raise ValueError(f"{path.name} already has a Serval header. Select ASI Serval input.")
+                if len(prefix) != ACQUISITION_PREFIX.size:
+                    raise ValueError(f"{path.name} has an incomplete 32-byte acquisition prefix.")
+                seconds, nanoseconds, gmd1, gmd2 = ACQUISITION_PREFIX.unpack(prefix)
+                if not 0 <= nanoseconds < 1_000_000_000:
+                    raise ValueError(f"{path.name} has an invalid acquisition timestamp nanosecond field.")
+                timestamp_ns = seconds * 1_000_000_000 + nanoseconds
+                if not -(2**63) <= timestamp_ns < 2**63:
+                    raise ValueError(f"{path.name} has an acquisition timestamp outside the 64-bit nanosecond range.")
+                records.append((path.name, timestamp_ns, gmd1, gmd2))
+                body = source.read(MAX_CHUNK_BYTES)
+                if not body:
+                    continue
+                if combined_stream is not None:
+                    _write_chunks(source, combined_stream, body, path)
+                    continue
+                # Fixed-width names preserve the chosen order in LUNA's filename sort.
+                order = index if numbered else timestamp_ns + 2**63
+                target = destination / f"{order:020d}_{index:09d}.tpx3"
+                with target.open("wb") as framed:
+                    _write_chunks(source, framed, body, path)
+                prepared[target] = path
     with h5py.File(metadata, "w") as result:
         frames = result.create_dataset("frames", data=records if numbered else sorted(records, key=lambda row: row[1]), dtype=[
             ("filename", h5py.string_dtype("utf-8")), ("timestamp_ns", "<i8"),
@@ -200,16 +213,16 @@ def display_input_path(line, original_paths):
     return line
 
 
-def _run_luna(command, *, windows, original_paths=None):
+def _run_luna(command, *, windows, original_paths=None, log=None):
     if not windows:
         command = [which(command[0]) or command[0], *command[1:]]
-        print(f"{LUNA_COMMAND_PREFIX}{shlex.join(command)}", flush=True)
+        print(f"{LUNA_COMMAND_PREFIX}{shlex.join(command)}", file=log, flush=True)
     with subprocess.Popen(command, stdin=subprocess.PIPE if windows else subprocess.DEVNULL,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                           encoding="utf-8", errors="replace", env={**os.environ, "WSL_UTF8": "1"},
                           creationflags=subprocess.CREATE_NO_WINDOW if windows else 0) as process:
         for line in process.stdout:
-            print(display_input_path(line, original_paths), end="", flush=True)
+            print(display_input_path(line, original_paths), end="", file=log, flush=True)
             if "panicked at" in line:
                 if windows:
                     process.stdin.close()
@@ -224,18 +237,18 @@ def _run_luna(command, *, windows, original_paths=None):
             raise ValueError(f"LUNA exited with status {code}. See the console above.")
 
 
-def publish_result(command, pending, output, *, windows, staged_paths=None):
+def publish_result(command, pending, output, *, windows, staged_paths=None, log=None):
     originals = {staged.name: original for staged, original in (staged_paths or {}).items()}
-    _run_luna(command, windows=windows, original_paths=originals)
+    _run_luna(command, windows=windows, original_paths=originals, log=log)
     with h5py.File(pending, "r") as result:
         for name in ("PixelHits", "Clusters", "TDCEvents", "TimewalkMatrix", "TimewalkLookupTable"):
             if name in result:
-                print(f"{name}: {len(result[name]):,}", flush=True)
+                print(f"{name}: {len(result[name]):,}", file=log, flush=True)
     pending.replace(output)
-    print(f"HDF5 ready: {output}", flush=True)
+    print(f"HDF5 ready: {output}", file=log, flush=True)
 
 
-def apply_timewalk(source, output, options, *, windows):
+def apply_timewalk(source, output, options, *, windows, log=None):
     with h5py.File(source, "r") as data:
         for name in ("TimewalkMatrix", "PixelHits", "Clusters"):
             if name not in data or len(data[name]) == 0:
@@ -247,7 +260,70 @@ def apply_timewalk(source, output, options, *, windows):
         pending = Path(staging) / output.name
         command = luna_command(source, pending, None, args, options.wsl_distribution,
                                options.wsl_executable, windows=windows, correction=True)
-        publish_result(command, pending, output, windows=windows)
+        publish_result(command, pending, output, windows=windows, log=log)
+
+
+def dump_acquisitions(paths, output, matrix, values, options, *, windows):
+    """Publish each independent LUNA stream and its source-frame metadata."""
+    if not paths:
+        raise ValueError("No TPX3 frames to process.")
+    timing = [read_timing(path) for path in paths]
+    wall = np.array([row[0] for row in timing], dtype=np.int64)
+    boundaries = [0, *acquisition_splits(wall, np.array([row[1] for row in timing])), len(paths)]
+    output.parent.mkdir(parents=True, exist_ok=True)
+    collection = manifest_path(output)
+    destination = output.parent / (output.stem + "_segments") / uuid4().hex
+    destination.mkdir(parents=True)
+    segments = []
+    print(f"Detected {len(boundaries) - 1} independent acquisition stream(s).", flush=True)
+    for i, (start, end) in enumerate(zip(boundaries, boundaries[1:]), 1):
+        reason = "Start of selected data."
+        if start:
+            reason = (f"TDC clock moved backward between {paths[start - 1].name} and {paths[start].name}. "
+                      f"Wall-clock gap {(wall[start] - wall[start - 1]) / 1e9:.9f} s. "
+                      "The rollover-derived interval differs from wall time by more than 1 s.")
+        print(f"Segment {i}: {end - start:,} frames. {reason}", flush=True)
+        target = destination / f"segment-{i:03d}.h5"
+        metadata = destination / f"segment-{i:03d}-metadata.h5"
+        with TemporaryDirectory(dir=destination, prefix=".luna-") as temp:
+            temp = Path(temp)
+            framed = temp / "framed"
+            preprocess_acquisition(paths[start:end], framed, metadata, numbered=True, combined=True)
+            command = luna_command(framed / "acquisition.tpx3", temp / "pending.h5", matrix,
+                                   process_arguments(values), options.wsl_distribution,
+                                   options.wsl_executable, windows=windows)
+            publish_result(command, temp / "pending.h5", target, windows=windows)
+        segments.append(dict(data=target.relative_to(output.parent).as_posix(),
+                             metadata=metadata.relative_to(output.parent).as_posix(),
+                             first_frame=paths[start].name, last_frame=paths[end - 1].name,
+                             frames=int(end-start), reason=reason))
+    doc = dict(schema=SCHEMA, segments=segments)
+    pending = destination / "collection.json"
+    pending.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    pending.replace(collection)
+    print(f"Acquisition collection ready: {collection}", flush=True)
+
+
+def correct_collection(source, output, options, *, windows):
+    collection = manifest_path(output)
+    files = segment_files(source)
+    inputs = [("input collection", source), *((str(p), p) for pair in files for p in pair)]
+    validate_distinct_output(collection, inputs, output_label="corrected collection")
+    destination = output.parent / (output.stem + "_segments") / uuid4().hex
+    destination.mkdir(parents=True)
+    segments = []
+    original = json.loads(source.read_text(encoding="utf-8"))["segments"]
+    for index, (data, metadata) in enumerate(files, 1):
+        target = destination / f"segment-{index:03d}.h5"
+        meta_target = destination / f"segment-{index:03d}-metadata.h5"
+        apply_timewalk(data, target, options, windows=windows)
+        copyfile(metadata, meta_target)
+        segments.append(dict(original[index - 1], data=target.relative_to(output.parent).as_posix(),
+                             metadata=meta_target.relative_to(output.parent).as_posix(), timewalk_corrected=True))
+    pending = destination / "collection.json"
+    pending.write_text(json.dumps(dict(schema=SCHEMA, segments=segments), indent=2), encoding="utf-8")
+    pending.replace(collection)
+    print(f"Acquisition collection ready: {collection}", flush=True)
 
 
 def main(argv=None):
@@ -259,6 +335,8 @@ def main(argv=None):
     parser.add_argument("--metadata-output", type=Path,
                         help="Read 32-byte acquisition prefixes and save them to this separate HDF5 file.")
     parser.add_argument("--timewalk-file", type=Path)
+    parser.add_argument("--split-acquisitions", action="store_true",
+                        help="Detect acquisition restarts and publish separate HDF5 segments and a .segments.json collection.")
     parser.add_argument("--wsl-distribution", default="")
     parser.add_argument("--wsl-executable", default="")
     for option in PROCESS_OPTIONS:
@@ -277,7 +355,10 @@ def main(argv=None):
             output = validate_distinct_output(options.output, [("timewalk input", source)], output_label="corrected HDF5 output")
             if output.suffix.lower() not in (".h5", ".hdf5"):
                 raise ValueError("Choose an output ending in .h5 or .hdf5.")
-            apply_timewalk(source, output, options, windows=windows)
+            if source.suffix.lower() == ".json":
+                correct_collection(source, output, options, windows=windows)
+            else:
+                apply_timewalk(source, output, options, windows=windows)
             return
         if matrix and (not options.calculate_timewalk_statistics or not matrix.is_file()):
             raise ValueError("An existing timewalk file requires Calculate timewalk statistics.")
@@ -295,6 +376,14 @@ def main(argv=None):
                 raise ValueError("The 32-byte acquisition format requires a single-chip layout.")
         paths = input_files(source)
         numbered_paths = frame_order(paths)
+        if options.split_acquisitions:
+            if metadata is None or options.layout not in (None, "single"):
+                raise ValueError("Acquisition splitting requires single-chip data with a 32-byte acquisition prefix.")
+            if numbered_paths is None:
+                raise ValueError("Acquisition splitting requires frame numbers in the source filenames.")
+            validate_distinct_output(manifest_path(output), inputs, output_label="acquisition collection")
+            dump_acquisitions(numbered_paths, output, matrix, values, options, windows=windows)
+            return
         if metadata is None:
             check_headers(paths)
         print(f"Processing {len(paths)} TPX3 file(s).", flush=True)

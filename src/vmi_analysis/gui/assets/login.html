@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · VMI Analysis</title>
+  <link rel="stylesheet" href="/login-assets/theme.css">
+  <link rel="stylesheet" href="/login-assets/login.css">
+</head>
+<body>
+  <main class="login-card">
+    <div class="login-art">
+      <img class="login-logo" src="/login-assets/electron-spectrum-measured.svg" alt="">
+    </div>
+    <div class="login-content">
+      <h1>VMI Analysis</h1>
+      {message}
+      <form class="login-form" method="post" action="/login">
+        <label for="username">Account</label>
+        <input id="username" name="username" autocomplete="username" required maxlength="32"
+               autocapitalize="none" spellcheck="false">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password"
+               required maxlength="1024">
+        <button type="submit">Sign in</button>
+      </form>
+    </div>
+  </main>
+</body>
+</html>

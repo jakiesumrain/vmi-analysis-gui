@@ -1,0 +1,103 @@
+body {
+  min-height: 100vh;
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: var(--vmi-space-6);
+}
+
+.login-card {
+  display: grid;
+  grid-template-columns: 5fr 6fr;
+  width: min(100%, 49rem);
+  background: var(--vmi-surface-card);
+  border: 1px solid var(--vmi-hairline);
+  border-radius: var(--vmi-radius-lg);
+  box-shadow: var(--vmi-shadow-1);
+  overflow: hidden;
+}
+
+.login-art {
+  display: grid;
+  place-items: center;
+  padding: var(--vmi-space-4);
+  background: linear-gradient(145deg, var(--vmi-spectrum-ground-start),
+                              var(--vmi-spectrum-ground-mid) 47%, var(--vmi-spectrum-ground-end));
+}
+
+.login-logo {
+  display: block;
+  width: min(100%, 20rem);
+  height: auto;
+  /* Preserve the measured rings, then fade out before the SVG's tile edge. */
+  mask-image: radial-gradient(circle closest-side, var(--vmi-ink) 83%, transparent 94%);
+}
+
+.login-content {
+  min-width: 0;
+  align-self: center;
+  padding: clamp(var(--vmi-space-6), 5vw, 3rem);
+}
+
+.login-content h1 {
+  margin: 0 0 var(--vmi-space-6);
+  color: var(--vmi-ink);
+  font: 650 clamp(1.32rem, 3.6vw, 1.75rem)/1.25 var(--vmi-font-display);
+}
+
+.login-form {
+  display: grid;
+  gap: var(--vmi-space-2);
+}
+
+.login-form label {
+  font-weight: 600;
+  color: var(--vmi-body);
+}
+
+.login-form input,
+.login-form button {
+  min-width: 0;
+  width: 100%;
+  min-height: 3rem;
+  border-radius: var(--vmi-radius-md);
+  padding: var(--vmi-space-2) var(--vmi-space-3);
+  font: inherit;
+}
+
+.login-form input {
+  margin-bottom: var(--vmi-space-3);
+  border: 1px solid var(--vmi-hairline-strong);
+  color: var(--vmi-body);
+  background: var(--vmi-surface-card);
+}
+
+.login-form button {
+  margin-top: var(--vmi-space-2);
+  border: 1px solid transparent;
+  background: var(--vmi-primary);
+  color: var(--vmi-on-dark);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.login-form button:hover { background: var(--vmi-primary-active); }
+
+.login-form :focus-visible {
+  outline: 2px solid var(--vmi-primary);
+  outline-offset: 2px;
+}
+
+.login-error {
+  margin: 0 0 var(--vmi-space-4);
+  padding: var(--vmi-space-2) var(--vmi-space-3);
+  border-left: 3px solid var(--vmi-error);
+  background: var(--vmi-surface-soft);
+}
+
+@media (max-width: 36rem) {
+  body { padding: var(--vmi-space-4); }
+  .login-card { grid-template-columns: minmax(0, 1fr); }
+  .login-art { padding: var(--vmi-space-3); }
+  .login-logo { width: 10rem; }
+}

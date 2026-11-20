@@ -9,6 +9,7 @@ from nicegui import ui
 from plotly.subplots import make_subplots
 from vmi_analysis.paths import validate_distinct_output
 
+from ..shared import circularization_dir, generated_dir
 from ..centroid_plots import _heatmap, _image_axes, _style, plot_options
 from ..jobs import Job, JobManager
 from .. import theme
@@ -42,7 +43,7 @@ def build(jobs: JobManager):
                                  browse="file", filters=[".npy", ".txt"]),
                       "circularize.inp")
         out = persist(path_input("Output image (.txt)",
-                                 str(CIRC_DIR / "image_circularized.txt"),
+                                 str(circularization_dir(CIRC_DIR) / "image_circularized.txt"),
                                  browse="save", filters=[".txt"],
                                  default_name="image_circularized.txt"),
                       "circularize.out")
@@ -60,7 +61,7 @@ def build(jobs: JobManager):
                                        "circularize.brightest_center")
         extracted = persist(path_input(
             "Extracted trig-fit file",
-            str(CIRC_DIR / "extracted-FOC100eV-20260710.txt"),
+            str(circularization_dir(CIRC_DIR) / "extracted-FOC100eV-20260710.txt"),
             browse="file", filters=[".txt"]), "circularize.extracted")
         reassign = persist(path_input(
             "Reassignment file (optional)",
@@ -88,7 +89,7 @@ def build(jobs: JobManager):
             summary_only = persist(ui.checkbox("Summary only", value=False),
                                    "circularize.summary_only")
         plot_dir = persist(path_input(
-            "Plot output dir", str(CIRC_DIR / "trig_fit_plots"),
+            "Plot output dir", str(circularization_dir(CIRC_DIR) / "trig_fit_plots"),
             browse="dir"), "circularize.plot_dir")
 
         ui.label("NumPy input keeps its original grid. Use the same center as Trig Calibration.") \
@@ -115,7 +116,7 @@ def build(jobs: JobManager):
                     validate_distinct_output(out.value, (
                         ("input image", inp.value), ("extracted calibration file", extracted.value),
                         ("radial reassignment file", reassign.value),
-                    ), cwd=CIRC_DIR)
+                    ), cwd=circularization_dir(CIRC_DIR))
                 except (OSError, ValueError) as exc:
                     ui.notify(str(exc), type="warning")
                     return
@@ -146,12 +147,12 @@ def build(jobs: JobManager):
                 cmd.append("--no-plots")
             if summary_only.value:
                 cmd.append("--summary-only")
-            job = Job(name="Circularize", cmd=cmd, cwd=str(CIRC_DIR),
+            job = Job(name="Circularize", cmd=cmd, cwd=str(circularization_dir(CIRC_DIR)),
                       extra={"output": out.value, "plot_dir": plot_dir.value,
                              "reassignment": bool(reassign.value),
                              "summary_only": summary_only.value})
             if not summary_only.value:
-                preview_path = GENERATED / f"circ_{job.id}_polar.npz"
+                preview_path = generated_dir(GENERATED) / f"circ_{job.id}_polar.npz"
                 cmd += ["--polar-preview", str(preview_path)]
                 job.extra["polar_preview"] = str(preview_path)
             polar_data.clear()
@@ -165,11 +166,11 @@ def build(jobs: JobManager):
             inputs = (("input image", inp.value), ("extracted calibration file", extracted.value),
                       ("radial reassignment file", reassign.value))
             try:
-                target = validate_distinct_output(out.value, inputs, cwd=CIRC_DIR)
-                directory = canonical_path(plot_dir.value, CIRC_DIR)
+                target = validate_distinct_output(out.value, inputs, cwd=circularization_dir(CIRC_DIR))
+                directory = canonical_path(plot_dir.value, circularization_dir(CIRC_DIR))
                 diagnostics = [path for path in _diagnostic_files(directory) if path.is_file()]
                 for path in diagnostics:
-                    validate_distinct_output(path, inputs, cwd=CIRC_DIR)
+                    validate_distinct_output(path, inputs, cwd=circularization_dir(CIRC_DIR))
             except (OSError, ValueError) as exc:
                 ui.notify(str(exc), type="warning")
                 return
@@ -253,7 +254,7 @@ def _diagnostic_files(directory):
 def _results(job: Job):
     if job.status != "done" or job.extra.get("summary_only"):
         return
-    cwd = Path(job.cwd or CIRC_DIR)
+    cwd = Path(job.cwd or circularization_dir(CIRC_DIR))
     out = cwd / job.extra["output"]
     open_folder_button(out)
     if out.exists():
