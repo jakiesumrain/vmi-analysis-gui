@@ -113,9 +113,12 @@ class AgentBackendTests(unittest.TestCase):
     def test_subprocess_receives_key_only_in_environment(self):
         request = self.request()
         process = FakeProcess()
-        with patch("vmi_analysis.agent_backend.subprocess.Popen", return_value=process) as popen:
+        with patch("vmi_analysis.agent_backend.subprocess.Popen", return_value=process) as popen, \
+                patch("vmi_analysis.agent_backend.shutil.which", return_value="pi-test.CMD") as which:
             SubprocessLauncher(executable="pi-test").launch(request, self.root / "session", "abc123")
         args, kwargs = popen.call_args
+        which.assert_called_once_with("pi-test")
+        self.assertEqual(args[0][0], "pi-test.CMD")
         self.assertNotIn(request.api_key, " ".join(args[0]))
         self.assertEqual(kwargs["env"]["VMI_AGENT_API_KEY"], request.api_key)
         self.assertEqual(kwargs["env"]["PI_CODING_AGENT_DIR"], str(self.root / "session"))

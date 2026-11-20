@@ -106,12 +106,16 @@ class SubprocessLauncher:
         self.executable = executable or os.environ.get("VMI_AGENT_COMMAND", "pi")
 
     def launch(self, request: AgentRequest, config_dir: Path, session_id: str) -> subprocess.Popen:
+        executable = shutil.which(self.executable)
+        if executable is None:
+            raise RuntimeError(f"Agent executable '{self.executable}' was not found. "
+                               "Install pi or set VMI_AGENT_COMMAND.")
         env = os.environ.copy()
         env["VMI_AGENT_API_KEY"] = request.api_key
         env["PI_CODING_AGENT_DIR"] = str(config_dir)
         try:
             return subprocess.Popen(
-                [self.executable, *agent_arguments(request.model)],
+                [executable, *agent_arguments(request.model)],
                 cwd=request.workspace,
                 env=env,
                 stdin=subprocess.PIPE,
