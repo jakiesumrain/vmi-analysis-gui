@@ -122,6 +122,8 @@ The shell is a persistent workbench with four regions, and only four:
   The rail can collapse to icons on desktop, with tooltips and accessible
   names for every tool. Its bottom action is Settings, with a stronger blue
   treatment than the tool entries. Keep Settings available on narrow screens.
+  The Ion group includes a nested Fallback disclosure. It starts closed and
+  contains the standalone TPX3 tools.
 - **Workspace** — exactly one active panel. Panels switch; they do not
   stack, scroll into each other, or open side by side.
 - **Status footer** — one compact line of global state: active jobs, queued

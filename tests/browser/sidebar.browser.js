@@ -5,6 +5,8 @@ async page => {
   const group = name => page.locator(`[data-workspace-group="${name}"]`);
   const electron = group('Electron');
   const ion = group('Ion');
+  const ionSummary = ion.locator(':scope > summary');
+  const fallback = ion.locator('[data-workspace-group="Fallback"]');
   const tab = name => page.getByRole('tab', {name, exact: true});
   const panel = title => page.getByRole('tabpanel').getByText(title, {exact: true});
   const isOpen = section => section.evaluate(element => element.open);
@@ -12,28 +14,40 @@ async page => {
   await page.evaluate(() => {
     localStorage.removeItem('vmi-workspace.Electron.open');
     localStorage.removeItem('vmi-workspace.Ion.open');
+    localStorage.removeItem('vmi-workspace.Fallback.open');
     localStorage.removeItem('vmi-workspace.sidebar.collapsed');
   });
   await page.reload();
   await electron.locator('summary').waitFor();
-  await page.locator('[data-workspace-ready]').last().waitFor();
+  await page.locator('[data-sidebar-ready]').waitFor();
   if (await isOpen(electron) || await isOpen(ion)) throw new Error('Both groups should start collapsed');
   await electron.locator('summary').press('Enter');
-  await ion.locator('summary').press('Enter');
+  await ionSummary.press('Enter');
+
+  await fallback.locator('summary').waitFor();
+  if (await isOpen(fallback)) throw new Error('Fallback tools should start collapsed');
+  await fallback.locator('summary').press('Enter');
+  for (const name of ['TPX3 Dump (fallback)', 'Ion TOF (fallback)', 'Ion Pipeline (fallback)']) {
+    await tab(name).click();
+    await panel(name).waitFor();
+  }
+  if (await tab('TPX3 Analysis').count()) throw new Error('Temporary tool is still present');
+  await fallback.locator('summary').press('Space');
+  await tab('Ion Pipeline (fallback)').waitFor({state: 'hidden'});
 
   await tab('TPX3 Dump').click();
   await panel('TPX3 Dump').waitFor();
-  await ion.locator('summary').press('Space');
+  await ionSummary.press('Space');
   await tab('TPX3 Dump').waitFor({state: 'hidden'});
   await panel('TPX3 Dump').waitFor();
   if (!await isOpen(electron)) throw new Error('Collapsing Ion also collapsed Electron');
 
   await page.waitForFunction(() => localStorage.getItem('vmi-workspace.Ion.open') === 'false');
   await page.reload();
-  await page.locator('[data-workspace-ready]').last().waitFor();
+  await page.locator('[data-sidebar-ready]').waitFor();
   if (await isOpen(ion)) throw new Error('Ion collapse state was lost on reload');
   if (!await isOpen(electron)) throw new Error('Electron open state was lost on reload');
-  await ion.locator('summary').press('Enter');
+  await ionSummary.press('Enter');
   await tab('TPX3 Dump').click();
   await panel('TPX3 Dump').waitFor();
   await tab('Circularize').click();
@@ -63,7 +77,7 @@ async page => {
   await page.getByRole('dialog').waitFor();
   await page.getByRole('dialog').getByRole('button', {name: 'Close', exact: true}).click();
   await page.reload();
-  await page.locator('[data-workspace-ready]').last().waitFor();
+  await page.locator('[data-sidebar-ready]').waitFor();
   if (!(await sidebar.getAttribute('class')).includes('vmi-sidebar--collapsed')) {
     throw new Error('Collapsed rail preference was lost on reload');
   }
@@ -76,7 +90,7 @@ async page => {
 
   await page.setViewportSize({width: 390, height: 844});
   if (!await settings.isVisible()) throw new Error('Settings is hidden on narrow screens');
-  if (!await ion.locator('summary').isVisible()) throw new Error('Ion heading is hidden on narrow screens');
+  if (!await ionSummary.isVisible()) throw new Error('Ion heading is hidden on narrow screens');
   const strip = electron.getByRole('tablist');
   if (!await strip.evaluate(element => element.scrollWidth > element.clientWidth)) {
     throw new Error('Electron tools do not have their own horizontal scroll area');

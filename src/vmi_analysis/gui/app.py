@@ -16,7 +16,8 @@ from . import shared, theme, workflow
 from .jobs import MANAGER, ResourceBusyError
 from .startup import startup_port
 from .panels import (accumulate, binning, calibration, centroid, circularize,
-                     dark, gmd_map, ion_luna, ion_pipeline, ion_tof, movie, pes, pipeline)
+                     dark, gmd_map, ion_luna, ion_pipeline, ion_tof, ion_tof_fallback, ion_unpack,
+                     movie, pes, pipeline)
 from .panels.common import file_url, init_zoom_overlay
 from .panels.picker import LocalFilePicker
 
@@ -106,6 +107,9 @@ TABS = [
     ("TPX3 Dump", ion_luna),
     (ion_tof.JOB_NAME, ion_tof),
     (ion_pipeline.JOB_NAME, ion_pipeline),
+    (ion_unpack.JOB_NAME, ion_unpack),
+    (ion_tof_fallback.JOB_NAME, ion_tof_fallback),
+    (ion_pipeline.FALLBACK_JOB_NAME, ion_pipeline),
 ]
 TAB_ICONS = {
     "GMD Map": "link",
@@ -121,7 +125,11 @@ TAB_ICONS = {
     "TPX3 Dump": "memory",
     ion_tof.JOB_NAME: "timer",
     ion_pipeline.JOB_NAME: "schema",
+    ion_unpack.JOB_NAME: "memory",
+    ion_tof_fallback.JOB_NAME: "timer",
+    ion_pipeline.FALLBACK_JOB_NAME: "schema",
 }
+FALLBACK_TABS = (ion_unpack.JOB_NAME, ion_tof_fallback.JOB_NAME, ion_pipeline.FALLBACK_JOB_NAME)
 SIDEBAR_GROUPS = (
     ("Electron", (
         ("Acquire", ("GMD Map", "Movie", "Dark Frame", "Accumulate")),
@@ -299,7 +307,30 @@ def index() -> None:
 
     def reveal_active_group(event):
         if disclosure := panel_disclosures.get(event.value):
-            ui.run_javascript(f"getHtmlElement({disclosure.id}).open = true")
+            ui.run_javascript(f"""
+                for (let group = getHtmlElement({disclosure.id}); group;
+                     group = group.parentElement.closest('.vmi-sidebar-disclosure')) {{
+                    group.open = true;
+                }}
+            """)
+
+    def sidebar_group(group, sections):
+        with ui.element("details").classes("vmi-sidebar-disclosure").props(
+                f'data-workspace-group="{group}"') as disclosure:
+            with ui.element("summary"):
+                ui.label(group)
+                ui.icon("expand_more").props('aria-hidden="true"')
+            with ui.tabs().props(f'inline-label aria-label="{group} tools"') as tabs:
+                tab_groups.append(tabs)
+                for index, (section, names) in enumerate(sections):
+                    if section:
+                        ui.label(section).classes(
+                            "vmi-sidebar-group" + (" vmi-sidebar-group-first" if index == 0 else ""))
+                    for name in names:
+                        ui.tab(name, icon=TAB_ICONS[name]).props(
+                            f'aria-label="{name}"').tooltip(name)
+                        panel_disclosures[name] = disclosure
+        return disclosure
 
     with ui.row().classes("vmi-workbench w-full no-wrap"):
         with ui.column().classes("vmi-sidebar"):
@@ -309,21 +340,10 @@ def index() -> None:
                     'flat round dense data-sidebar-toggle aria-label="Collapse sidebar" aria-expanded="true"'
                 ).classes("vmi-sidebar-toggle")
             for group, sections in SIDEBAR_GROUPS:
-                with ui.element("details").classes("vmi-sidebar-disclosure").props(
-                        f'data-workspace-group="{group}"') as disclosure:
-                    with ui.element("summary"):
-                        ui.label(group)
-                        ui.icon("expand_more").props('aria-hidden="true"')
-                    with ui.tabs().props(f'inline-label aria-label="{group} tools"') as tabs:
-                        tab_groups.append(tabs)
-                        for index, (section, names) in enumerate(sections):
-                            if section:
-                                ui.label(section).classes(
-                                    "vmi-sidebar-group"
-                                    + (" vmi-sidebar-group-first" if index == 0 else ""))
-                            for name in names:
-                                ui.tab(name, icon=TAB_ICONS[name]).props(f'aria-label="{name}"').tooltip(name)
-                                panel_disclosures[name] = disclosure
+                disclosure = sidebar_group(group, sections)
+                if group == "Ion":
+                    with disclosure:
+                        sidebar_group("Fallback", ((None, FALLBACK_TABS),)).classes("vmi-sidebar-fallback")
             with ui.column().classes("vmi-sidebar-foot"):
                 settings_button = ui.button("Settings", icon="settings", on_click=settings_dialog.open).props(
                     'flat no-caps aria-label="Settings"').classes("vmi-sidebar-settings")
@@ -343,6 +363,8 @@ def index() -> None:
                                 use_calibration = module.build(MANAGER)
                             elif module is calibration:
                                 module.build(MANAGER, use_calibration=export_calibration)
+                            elif name == ion_pipeline.FALLBACK_JOB_NAME:
+                                module.build(MANAGER, fallback=True)
                             else:
                                 module.build(MANAGER)
 
