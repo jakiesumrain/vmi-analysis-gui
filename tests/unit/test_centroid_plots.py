@@ -108,7 +108,7 @@ class CentroidPlotTests(unittest.TestCase):
             self.assertEqual(info.x, fig.layout.xaxis4.domain[0])
             self.assertGreater(info.x, fig.layout.xaxis3.domain[1])
             self.assertLess(info.y, .5)
-            self.assertTrue(plot_options(fig)["config"]["scrollZoom"])
+            self.assertFalse(plot_options(fig)["config"]["scrollZoom"])
             self.assertIn("Counts: %{customdata", fig.data[0].hovertemplate)
 
     def test_absent_abel_spectrum_and_uncalibrated_units(self):

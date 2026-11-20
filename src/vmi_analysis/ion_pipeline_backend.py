@@ -16,7 +16,7 @@ from vmi_analysis.ion_tof import ARRIVALS, DEFAULT_REFERENCE, _table, _tof_block
 
 
 NAME = "LUNA"
-DEFAULT_SHIFT = 1
+DEFAULT_SHIFT = -1
 SHIFT_HELP = "GMD2 row j selects frame j + shift within the same acquisition."
 def _decode_segment(paths, raw_tdc, target, options, log):
     windows = sys.platform == "win32"
