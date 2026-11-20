@@ -49,6 +49,26 @@ only need the browser, ask the SSH administrator to restrict forwarding to
 this port and disable shell access. See the OpenSSH
 [server configuration manual](https://man.openbsd.org/sshd_config#PermitOpen).
 
+## Enable Live TPX3 on the acquisition computer
+
+From the checkout, run `uv sync --extra live`. Enable the acquisition
+application's ZeroMQ publisher. Set the publisher address in the server's
+environment before startup. For a publisher on the same host using port 5556,
+launch the shared server as follows.
+
+```sh
+export VMI_SHARED_CONFIG=/etc/vmi/shared.json
+export VMI_TPX3_LIVE_ENDPOINT=tcp://127.0.0.1:5556
+uv run --extra live vmi-analysis
+```
+
+Set both variables in the service configuration if a service manager starts
+the app. Remote users use their existing web tunnel. In **Ion → Live TPX3**,
+click **Start preview** and check that the received frame count increases.
+Each active preview decodes its own copy of the frames. Before deploying,
+compare the saved frame count and recording rate with and without one preview
+at the highest planned acquisition rate.
+
 ## Connect from Linux or Windows
 
 - **Linux:** Keep this [OpenSSH](https://man.openbsd.org/ssh#L) command running.
