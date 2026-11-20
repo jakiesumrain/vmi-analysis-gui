@@ -13,6 +13,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, replace
+from importlib.resources import files
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -26,6 +27,9 @@ API_FORMATS = {
 ACTIVE = {"starting", "ready", "running", "stopping"}
 MAX_RECORD_BYTES = 4 * 1024 * 1024
 PROVIDER = "vmi-custom"
+PANEL_REQUEST_TITLE = "VMI panel operation"
+PANEL_REQUEST_TIMEOUT = 300
+PANEL_EXTENSION = files("vmi_analysis.gui.assets") / "agent_panels.js"
 
 
 @dataclass(frozen=True)
@@ -88,9 +92,9 @@ def write_models_config(config_dir: Path, request: AgentRequest) -> Path:
     return path
 
 
-def agent_arguments(model: str) -> list[str]:
-    return ["--mode", "rpc", "--no-session", "--provider", PROVIDER,
-            "--model", model]
+def agent_arguments(model: str, extension: str) -> list[str]:
+    return ["--mode", "rpc", "--no-session", "--no-extensions", "--extension", extension,
+            "--provider", PROVIDER, "--model", model]
 
 
 def process_options() -> dict:
@@ -115,7 +119,7 @@ class SubprocessLauncher:
         env["PI_CODING_AGENT_DIR"] = str(config_dir)
         try:
             return subprocess.Popen(
-                [executable, *agent_arguments(request.model)],
+                [executable, *agent_arguments(request.model, str(PANEL_EXTENSION))],
                 cwd=request.workspace,
                 env=env,
                 stdin=subprocess.PIPE,
@@ -143,7 +147,8 @@ class ContainerLauncher:
     def container_name(session_id: str) -> str:
         return f"vmi-agent-{session_id}"
 
-    def command(self, request: AgentRequest, config_dir: Path, session_id: str) -> list[str]:
+    def command(self, request: AgentRequest, config_dir: Path, session_id: str,
+                *, rootless: bool = False) -> list[str]:
         command = [
             self.runtime, "run", "--rm", "--interactive",
             "--name", self.container_name(session_id),
@@ -155,18 +160,19 @@ class ContainerLauncher:
             "--memory", "1g",
             "--cpus", "1",
             "--env", "VMI_AGENT_API_KEY",
-            "--env", "PI_CODING_AGENT_DIR=/agent",
             "--volume", f"{config_dir}:/agent:ro",
             "--volume", f"{request.workspace}:/workspace:rw",
         ]
         if request.datasets is not None:
             command.extend(["--volume", f"{request.datasets}:/datasets:ro"])
-        if sys.platform != "win32" and hasattr(os, "getuid"):
+        if rootless and Path(self.runtime).stem == "podman":
+            command.append("--userns=keep-id")
+        elif not rootless and sys.platform != "win32" and hasattr(os, "getuid"):
             command.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
         command.extend([
             "--workdir", "/workspace",
             self.image,
-            *agent_arguments(request.model),
+            *agent_arguments(request.model, "/opt/vmi-agent/src/vmi_analysis/gui/assets/agent_panels.js"),
         ])
         return command
 
@@ -174,8 +180,17 @@ class ContainerLauncher:
         env = os.environ.copy()
         env["VMI_AGENT_API_KEY"] = request.api_key
         try:
+            rootless = False
+            if sys.platform == "linux":
+                podman = Path(self.runtime).stem == "podman"
+                template = "{{.Host.Security.Rootless}}" if podman else "{{json .SecurityOptions}}"
+                info = subprocess.run([self.runtime, "info", "--format", template],
+                                      capture_output=True, text=True, timeout=10, check=False)
+                if info.returncode:
+                    raise RuntimeError(f"Could not query the {self.runtime} service: {info.stderr.strip()}")
+                rootless = info.stdout.strip() == "true" if podman else "rootless" in info.stdout
             return subprocess.Popen(
-                self.command(request, config_dir, session_id),
+                self.command(request, config_dir, session_id, rootless=rootless),
                 env=env,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -253,6 +268,7 @@ class AgentSession:
         self._run_started = False
         self._stop_thread: threading.Thread | None = None
         self._command_counter = 0
+        self._panel_requests = {}
 
     @property
     def active(self) -> bool:
@@ -332,6 +348,7 @@ class AgentSession:
         with self._lock:
             if self.status != "running":
                 return
+            self._panel_requests.clear()
         self.send({"type": "abort"})
         self._append("status", "Abort requested; waiting for the current run to stop.")
 
@@ -342,19 +359,67 @@ class AgentSession:
                 raise RuntimeError("The agent process is not available.")
             self._command_counter += 1
             request_id = f"{self.id[:8]}-{self._command_counter}"
-        record = dict(command, id=request_id)
-        payload = json.dumps(record, ensure_ascii=False).encode("utf-8") + b"\n"
+        self._write_record(process, dict(command, id=request_id))
+        return request_id
+
+    def _write_record(self, process, record):
+        payload = memoryview(json.dumps(record, ensure_ascii=False).encode("utf-8") + b"\n")
         with self._write_lock:
             assert process.stdin is not None
             try:
-                process.stdin.write(payload)
+                while payload:
+                    written = process.stdin.write(payload)
+                    if not written:
+                        raise BrokenPipeError()
+                    payload = payload[written:]
                 process.stdin.flush()
-            except (BrokenPipeError, OSError) as exc:
+            except (OSError, ValueError) as exc:
                 raise RuntimeError("The agent process closed its input.") from exc
-        return request_id
+
+    def panel_request(self):
+        with self._lock:
+            now = self.clock()
+            expired = [key for key, (_, deadline) in self._panel_requests.items() if deadline <= now]
+            for key in expired:
+                del self._panel_requests[key]
+            if self.running and self._panel_requests:
+                key = next(iter(self._panel_requests))
+                return key, self._panel_requests[key][0]
+            return None
+
+    def take_panel_request(self, key):
+        with self._lock:
+            request = self._panel_requests.pop(key, None)
+            return (request is not None and self.running and request[1] > self.clock()
+                    and not self._stop_requested.is_set())
+
+    def answer_panel_request(self, key, value):
+        with self._lock:
+            process = self.process
+            if process is None or process.poll() is not None or self._stop_requested.is_set():
+                return
+        self._write_record(process, {"type": "extension_ui_response", "id": key,
+                                     "value": json.dumps(value, ensure_ascii=False)})
+
+    def _record_panel_request(self, record):
+        if record.get("method") != "input" or record.get("title") != PANEL_REQUEST_TITLE:
+            return
+        key, value = record.get("id"), record.get("placeholder")
+        if not isinstance(key, str) or len(key) > 128 or not isinstance(value, str) or len(value) > 8192:
+            return
+        try:
+            request = json.loads(value)
+        except ValueError:
+            return
+        with self._lock:
+            if isinstance(request, dict) and self.running and len(self._panel_requests) < 8:
+                self._panel_requests.setdefault(key, (request, self.clock() + PANEL_REQUEST_TIMEOUT))
 
     def handle_record(self, record: dict) -> None:
         kind = record.get("type")
+        if kind == "extension_ui_request":
+            self._record_panel_request(record)
+            return
         if kind == "response":
             if record.get("success") is False:
                 if record.get("command") == "prompt":
@@ -377,6 +442,7 @@ class AgentSession:
         elif kind == "agent_settled":
             with self._lock:
                 self._run_started = False
+                self._panel_requests.clear()
                 if not self._stop_requested.is_set():
                     self.status = "ready"
             self._assistant_index = None
@@ -461,6 +527,7 @@ class AgentSession:
                 return
             self._finalized = True
             self.status = status
+            self._panel_requests.clear()
             self.error = self._redact(error)
             self._assistant_index = None
         if error:

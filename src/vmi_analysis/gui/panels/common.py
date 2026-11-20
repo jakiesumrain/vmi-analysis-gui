@@ -550,6 +550,9 @@ class JobView:
             if active:
                 self.attach(next((j for j in active if j.status == "running"), active[-1]))
                 return
+            if owned and owned[-1].extra.get("agent_panel") and self.job is not owned[-1]:
+                self.attach(owned[-1])
+                return
             if shared.SERVER and self.job is None and owned:
                 self.attach(owned[-1])
                 return

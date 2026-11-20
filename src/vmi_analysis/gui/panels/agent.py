@@ -7,7 +7,8 @@ from nicegui import ui
 from vmi_analysis.agent_backend import AGENTS, API_FORMATS, AgentRequest
 from vmi_analysis.paths import GENERATED_DIR
 
-from .. import shared, theme
+from .. import agent_panels, shared, theme
+from ..jobs import TERMINAL
 from .common import field_grid
 
 
@@ -42,7 +43,6 @@ class AgentStatus:
 
 
 def build(jobs):
-    del jobs  # Interactive sessions do not occupy a finite analysis-job slot.
     account = shared.current_account()
     owner = account.name if account else "local"
     status = AgentStatus()
@@ -86,6 +86,7 @@ def build(jobs):
         theme.form_section("Conversation")
         with ui.scroll_area().classes("vmi-agent-transcript w-full") as transcript:
             entries_column = ui.column().classes("w-full gap-3")
+        approval_view = ui.column().classes("w-full gap-2")
         prompt = ui.textarea("Instruction", placeholder="Describe the analysis or file operation to perform.") \
             .classes("w-full").props("outlined autogrow rows=3")
         with ui.row().classes("w-full justify-between items-center gap-3"):
@@ -101,6 +102,78 @@ def build(jobs):
     rendered_session = None
     diagnostics_cursor = 0
     empty_state = None
+    approval = None
+
+    async def answer(session, key, value):
+        try:
+            await asyncio.to_thread(session.answer_panel_request, key, value)
+        except RuntimeError as exc:
+            show_error(exc)
+
+    async def decide(session, key, job, approved):
+        nonlocal approval
+        with approval_view:
+            if AGENTS.current(owner) is not session or not session.take_panel_request(key):
+                show_error("This approval request is no longer pending.")
+                return
+            approval = None
+            approval_view.clear()
+            if not approved:
+                await answer(session, key, {"status": "declined"})
+                return
+            try:
+                submitted = jobs.submit(job)
+            except (OSError, RuntimeError, ValueError) as exc:
+                show_error(exc)
+                await answer(session, key, {"error": str(exc)})
+                return
+            ui.notify(f"{submitted.name} submitted · {submitted.id}", type="positive")
+            await answer(session, key, {"job_id": submitted.id, "panel": submitted.name, "status": submitted.status})
+
+    async def refresh_panel():
+        nonlocal approval
+        session = AGENTS.current(owner)
+        pending = session.panel_request() if session else None
+        if pending is None:
+            if approval is not None:
+                approval = None
+                approval_view.clear()
+            return
+        key, request = pending
+        if approval == (session.id, key):
+            return
+        approval = None
+        approval_view.clear()
+        try:
+            match request.get("action"):
+                case "describe":
+                    value = agent_panels.describe(request.get("operation"))
+                case "status" | "wait":
+                    value = agent_panels.status(jobs, request.get("job_id"))
+                    if request["action"] == "wait" and value["status"] not in TERMINAL:
+                        return
+                case "propose":
+                    job, inputs = agent_panels.prepare(jobs, request.get("operation"),
+                                                       request.get("parameters", {}))
+                    approval = (session.id, key)
+                    with approval_view, theme.panel_card():
+                        theme.form_section(f"Review {job.name} run")
+                        for label, value in inputs.items():
+                            if value is not None:
+                                ui.label(f"{label} · {value}").classes("w-full break-all")
+                        with ui.row().classes("items-center gap-2"):
+                            ui.button("Approve and run", icon="play_arrow",
+                                      on_click=lambda: decide(session, key, job, True))
+                            ui.button("Decline", on_click=lambda: decide(session, key, job, False)).props("flat")
+                    return
+                case _:
+                    raise ValueError("Choose describe, propose, status, or wait.")
+        except KeyError as exc:
+            value = {"error": f"Unknown operation or missing parameter {exc.args[0]}."}
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            value = {"error": str(exc)}
+        if session.take_panel_request(key):
+            await answer(session, key, value)
 
     def show_error(error):
         error_label.text = str(error)
@@ -209,7 +282,7 @@ def build(jobs):
         request = AgentRequest(
             owner=owner,
             workspace=shared.workspace_root(),
-            config_root=account.root / ".cache" / "agent" if account else GENERATED_DIR / "agent",
+            config_root=account.root.parent / ".agent" if account else GENERATED_DIR / "agent",
             datasets=shared.SERVER.datasets if shared.SERVER else None,
             base_url=base_url.value.strip(),
             model=model.value.strip(),
@@ -227,24 +300,26 @@ def build(jobs):
         finally:
             refresh()
 
-    def send():
+    async def send():
         clear_error()
         session = AGENTS.current(owner)
         try:
             if session is None:
                 raise RuntimeError("Start an agent session first.")
-            session.prompt(prompt.value or "")
-            prompt.value = ""
+            message = prompt.value or ""
+            await asyncio.to_thread(session.prompt, message)
+            if prompt.value == message:
+                prompt.value = ""
         except (RuntimeError, ValueError) as exc:
             show_error(exc)
         refresh()
 
-    def abort():
+    async def abort():
         clear_error()
         session = AGENTS.current(owner)
         try:
             if session is not None:
-                session.abort()
+                await asyncio.to_thread(session.abort)
         except RuntimeError as exc:
             show_error(exc)
         refresh()
@@ -260,3 +335,4 @@ def build(jobs):
     reset_transcript(None)
     refresh()
     shared.workspace_timer(0.4, refresh)
+    shared.workspace_timer(0.4, refresh_panel)

@@ -10,7 +10,7 @@ from vmi_analysis.ion_luna import LUNA_COMMAND_PREFIX, PROCESS_OPTIONS, process_
 from vmi_analysis.paths import validate_distinct_output
 from vmi_analysis.ion_acquisition import manifest_path, segment_files
 
-from ..shared import workspace_root
+from ..shared import checked_path, workspace_root
 from .. import theme
 from ..jobs import Job, JobManager
 from .common import (REPO_ROOT, JobView, action_bar, check_grid, field_grid, num_input,
@@ -35,6 +35,28 @@ def capture_command(job, line):
         job.extra[COMMAND_KEY] = line
         return True
     return False
+
+
+def dump_job(source, output, *, prefixed=True, options=None, timewalk=None, wsl=()):
+    cwd = workspace_root(REPO_ROOT)
+    selected = checked_path(source, cwd=cwd)
+    matrix = checked_path(timewalk, cwd=cwd) if timewalk else None
+    target = validate_distinct_output(output, [("TPX3 input", selected), ("timewalk file", matrix)],
+                                      cwd=cwd, output_label="HDF5 output")
+    target = checked_path(target, write=True, cwd=cwd)
+    options = options or {}
+    cmd = [sys.executable, "-m", "vmi_analysis.ion_luna", "--input", str(selected),
+           "--output", str(target), *process_arguments(options)]
+    extra = {"output": str(target)}
+    if prefixed:
+        if options.get("layout", "single") != "single":
+            raise ValueError("The 32-byte acquisition format requires a single-chip layout.")
+        metadata = target.with_name(f"{target.stem}_metadata.h5")
+        cmd += ["--metadata-output", str(metadata), "--split-acquisitions"]
+        extra["metadata"] = str(metadata)
+    if matrix:
+        cmd += ["--timewalk-file", str(matrix)]
+    return Job(JOB_NAME, cmd=[*cmd, *wsl], cwd=str(cwd), extra=extra, consume_output=capture_command)
 
 
 def build(jobs: JobManager):
@@ -107,14 +129,14 @@ def build(jobs: JobManager):
             return int(value)
         return value
 
-    def submit(cmd, extra):
+    def wsl_options():
+        cmd = []
         if sys.platform == "win32":
             if distro.value.strip():
                 cmd += ["--wsl-distribution", distro.value.strip()]
             if executable.value.strip():
                 cmd += ["--wsl-executable", executable.value.strip()]
-        view.attach(jobs.submit(Job(JOB_NAME, cmd=cmd, cwd=str(workspace_root(REPO_ROOT)), extra=extra,
-                                    consume_output=capture_command)))
+        return cmd
 
     def run():
         command = [sys.executable, "-m", "vmi_analysis.ion_luna"]
@@ -131,15 +153,14 @@ def build(jobs: JobManager):
                                                   cwd=workspace_root(REPO_ROOT), output_label="corrected HDF5 output")
                 cmd = [*command, "--apply-timewalk-correction", "--input", str(selected), "--output", str(target),
                        "--ctot-cut", str(option_value("ctot-cut"))]
-                submit(cmd, {"output": str(target), "corrected": True})
+                view.attach(jobs.submit(Job(JOB_NAME, cmd=[*cmd, *wsl_options()],
+                                            cwd=str(workspace_root(REPO_ROOT)),
+                                            extra={"output": str(target), "corrected": True},
+                                            consume_output=capture_command)))
                 return
             if not source.value.strip() or not output.value.strip():
                 raise ValueError("Choose a TPX3 input and an HDF5 output.")
-            selected = (workspace_root(REPO_ROOT) / Path(source.value.strip()).expanduser()).resolve()
             stats = calculate_stats()
-            matrix = (workspace_root(REPO_ROOT) / Path(timewalk.value.strip()).expanduser()).resolve() if stats and timewalk.value.strip() else None
-            target = validate_distinct_output(output.value.strip(), [("TPX3 input", selected), ("timewalk file", matrix)],
-                                              cwd=workspace_root(REPO_ROOT), output_label="HDF5 output")
             arguments = {flag: option_value(flag) for flag in ("layout", "raw-only", "disable-clustering")}
             if not arguments["raw-only"]:
                 arguments["tof-tdc-reference"] = option_value("tof-tdc-reference")
@@ -149,21 +170,13 @@ def build(jobs: JobManager):
                     arguments["kuttruff-buffer-size"] = option_value("kuttruff-buffer-size")
             if stats:
                 arguments.update({"calculate-timewalk-statistics": True, "ctot-cut": option_value("ctot-cut")})
-            cmd = [*command, "--input", str(selected), "--output", str(target), *process_arguments(arguments)]
-            extra = {"output": str(target)}
-            if prefixed.value:
-                if arguments["layout"] != "single":
-                    raise ValueError("The 32-byte acquisition format requires a single-chip layout.")
-                metadata = target.with_name(f"{target.stem}_metadata.h5")
-                cmd += ["--metadata-output", str(metadata)]
-                extra["metadata"] = str(metadata)
-                cmd.append("--split-acquisitions")
-            if matrix:
-                cmd += ["--timewalk-file", str(matrix)]
+            job = dump_job(source.value.strip(), output.value.strip(), prefixed=prefixed.value,
+                           options=arguments, timewalk=timewalk.value.strip() if stats else None,
+                           wsl=wsl_options())
+            view.attach(jobs.submit(job))
         except (OSError, TypeError, ValueError) as exc:
             ui.notify(str(exc), type="warning")
             return
-        submit(cmd, extra)
 
     async def browse_input():
         from .picker import LocalFilePicker

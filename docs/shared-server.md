@@ -23,7 +23,7 @@ selects the person's workspace.
    preferably in rootless mode, and build the bundled image from the checkout:
 
    ```sh
-   docker build -t vmi-analysis-agent:latest packaging/agent
+   docker build -f packaging/agent/Dockerfile -t vmi-analysis-agent:latest .
    ```
 
    Use `podman build` instead when Podman is the selected runtime, then set
@@ -33,6 +33,12 @@ selects the person's workspace.
    outbound network access to each user's chosen model endpoint, but no inbound
    ports. Docker group membership is host-root-equivalent; use rootless Docker
    or Podman where possible.
+
+   Build from the same checkout the app runs. The image installs VMI Analysis
+   and the dependencies in its `uv.lock`. It defaults to Python 3.13. Use
+   `--build-arg VMI_PYTHON_VERSION=<version>` to match the app's Python version
+   if needed. Rebuild when the app or lockfile changes. Keep the runtime's
+   outbound access limited to services the Agent is authorized to use.
 
 4. Save a JSON file outside the shared data and workspace directories.
    Replace each sample path and password hash. Keep the file readable only by
@@ -121,6 +127,22 @@ endpoint they trust with the data they ask the agent to inspect. The endpoint
 and model must be compatible with the selected API format. Connection settings
 start collapsed. Assistant replies render as Markdown. In the instruction box,
 **Enter** sends the instruction and **Shift+Enter** inserts a new line.
+
+The container's `python` can import `vmi_analysis`, `h5py`, and the other
+locked Python dependencies for scripts. For standard panel work, ask the
+Agent to explain or prepare a run. It supports **TPX3 Dump**, **Ion TOF**,
+**GMD2 gating**, and **Gaussian TOF peak fitting**. Review the resolved
+inputs, parameters, and output paths in the approval card, then choose
+**Approve and run** or **Decline**. Approved jobs run through the regular
+VMI job queue and use the host's configured analysis tools, including LUNA.
+
+For example, ask the Agent to prepare a dump of a specific shared folder,
+then use that dump to plot raw pixel hits with a specified TOF bin width.
+Each stage has its own approval. The Agent can follow the job status and
+report the output paths. For a gated fit, supply the GMD2 limits and
+alignment shift after checking the Ion TOF diagnostics, then supply the
+fit range and whether to fit the gated or unfiltered spectrum. Both fit
+modes count and normalize using the GMD2-gated frames.
 
 ## Security boundary
 

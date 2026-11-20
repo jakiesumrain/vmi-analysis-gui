@@ -151,8 +151,97 @@ def _results(job):
         ui.plotly(plot_options(fig)).classes("w-full")
 
 
+def spectrum_job(path, *, source="pixels", reference=DEFAULT_REFERENCE, width=DEFAULT_BIN_SIZE_NS,
+                 low=0, high=None):
+    if not path:
+        raise ValueError("Choose a LUNA HDF5 file or acquisition collection.")
+    source_file = shared.checked_path(path)
+    if not source_file.is_file():
+        raise ValueError("The selected HDF5 file or collection does not exist.")
+    for member in collection_reads(source_file):
+        shared.checked_path(member)
+    if source not in SOURCES or reference not in REFERENCES:
+        raise ValueError("Choose a valid count source and trigger reference.")
+    if width is None or not isfinite(width) or width <= 0:
+        raise ValueError("TOF bin size must be finite and greater than zero.")
+    if low is None or not isfinite(low) or low < 0:
+        raise ValueError("TOF minimum must be finite and at least zero.")
+    if high is not None and (not isfinite(high) or high <= low):
+        raise ValueError("TOF maximum must be greater than the minimum.")
+    job = Job(JOB_NAME, cwd=str(shared.workspace_root()))
+    result = shared.generated_dir() / f"ion-tof-{job.id}.npz"
+    job.cmd = [sys.executable, "-m", "vmi_analysis.ion_tof", "--input", str(source_file),
+               "--output", str(result), "--source", source, "--reference", reference,
+               "--bin-size", str(width), "--minimum", str(low)]
+    if high is not None:
+        job.cmd += ["--maximum", str(high)]
+    job.extra.update(histogram=str(result), reference=reference, input_name=source_file.name,
+                     source_file=str(source_file), source=source)
+    return job
+
+
+def filtered_job(original_job, metadata, low, high, shift):
+    if "source_file" not in original_job.extra:
+        raise ValueError("Plot TOF again before filtering this older result.")
+    source = shared.checked_path(original_job.extra["source_file"])
+    original = shared.checked_path(original_job.extra["histogram"])
+    metadata = shared.checked_path(metadata)
+    if not metadata.is_file():
+        raise ValueError("Choose an existing acquisition metadata file or collection.")
+    if (not isfinite(low) or not isfinite(high) or low > high or type(shift) is not int
+            or shift not in GMD_SHIFTS):
+        raise ValueError("Enter increasing GMD2 limits and a valid alignment shift.")
+    job = Job(FILTER_JOB_NAME, cwd=str(shared.workspace_root()))
+    result = shared.generated_dir() / f"ion-tof-filtered-{job.id}.npz"
+    reference = original_job.extra["reference"]
+    job.cmd = [sys.executable, "-m", "vmi_analysis.ion_tof", "--input", str(source),
+               "--output", str(result), "--tof-result", str(original), "--metadata", str(metadata),
+               "--reference", reference, f"--gmd-min={low}", f"--gmd-max={high}", "--gmd-shift", str(shift)]
+    job.extra.update(histogram=str(result), parent_id=original_job.id, metadata=str(metadata),
+                     gmd_min=low, gmd_max=high, gmd_shift=shift, source_file=str(source), reference=reference)
+    return job
+
+
+def peak_fit_job(gated_job, targets, region, estimates, baseline, *, unfiltered_result=None):
+    if len(region) != 2 or None in region or not np.isfinite(region).all() or region[0] >= region[1]:
+        raise ValueError("Select a fit range or enter increasing, finite TOF limits.")
+    if not targets or any(target not in ("pixels", "clusters") for target in targets):
+        raise ValueError("Choose at least one TOF spectrum.")
+    if baseline not in BASELINE_PARAMETERS:
+        raise ValueError("Choose a supported baseline.")
+    if any(len(peak) != 2 or not np.isfinite(peak).all() or peak[1] <= 0 for peak in estimates):
+        raise ValueError("Enter a finite center and positive Gaussian FWHM for each peak.")
+    if "source_file" not in gated_job.extra:
+        raise ValueError("Apply the GMD2 range again before fitting this older spectrum.")
+    source = shared.checked_path(gated_job.extra["source_file"])
+    filtered = shared.checked_path(gated_job.extra["histogram"])
+    spec = dict(sources=targets, region=region, estimates=estimates, baseline=baseline)
+    name = UNFILTERED_FIT_JOB_NAME if unfiltered_result is not None else FIT_JOB_NAME
+    job = Job(name, cwd=str(shared.workspace_root()))
+    output = shared.generated_dir() / f"ion-tof-peaks-{job.id}.npz"
+    job.cmd = [sys.executable, "-m", "vmi_analysis.ion_tof", "--input", str(source),
+               "--filtered-result", str(filtered), "--output", str(output),
+               "--reference", gated_job.extra["reference"], "--fit-spec", json.dumps(spec)]
+    if unfiltered_result is not None:
+        job.cmd += ["--tof-result", str(shared.checked_path(unfiltered_result))]
+    job.extra.update(peak_result=str(output), filtered_id=gated_job.id, baseline=baseline, fit_range=region)
+    return job
+
+
 def build(jobs):
-    view = JobView(jobs, job_name=JOB_NAME, results_builder=_results)
+    def show_job(job):
+        if job.status == "done" and job.extra.get("agent_panel"):
+            reset_gmd()
+            metadata = job.extra.get("metadata")
+            if not metadata and job.extra["source_file"].lower().endswith(".json"):
+                metadata = job.extra["source_file"]
+            if metadata:
+                set_metadata(metadata)
+        _results(job)
+        if job.status == "done":
+            restore_agent_gate(job)
+
+    view = JobView(jobs, job_name=JOB_NAME, results_builder=show_job)
     theme.panel_header(JOB_NAME, "Plot unfiltered time-of-flight spectra from a Timepix3 dump.", view=view)
 
     def save(widget, key):
@@ -169,36 +258,12 @@ def build(jobs):
 
     def run():
         try:
-            if not input_file.value.strip():
-                raise ValueError("Choose a LUNA HDF5 file or acquisition collection.")
-            source_file = shared.checked_path(input_file.value.strip())
-            if not source_file.is_file():
-                raise ValueError("The selected HDF5 file does not exist.")
-            for path in collection_reads(source_file):
-                shared.checked_path(path)
-            width = bin_size.value
-            if width is None or not isfinite(width) or width <= 0:
-                raise ValueError("TOF bin size must be finite and greater than zero.")
-            low = minimum.value
-            high = maximum.value
-            if low is None or not isfinite(low) or low < 0:
-                raise ValueError("TOF minimum must be finite and at least zero.")
-            if high is not None and (not isfinite(high) or high <= low):
-                raise ValueError("TOF maximum must be greater than the minimum.")
-            job = Job(JOB_NAME, cwd=str(shared.workspace_root()))
-            result = shared.generated_dir() / f"ion-tof-{job.id}.npz"
-            job.cmd = [sys.executable, "-m", "vmi_analysis.ion_tof",
-                       "--input", str(source_file), "--output", str(result),
-                       "--source", source.value, "--reference", reference.value,
-                       "--bin-size", str(width), "--minimum", str(low)]
-            if high is not None:
-                job.cmd += ["--maximum", str(high)]
-            job.extra.update(histogram=str(result), reference=reference.value, input_name=source_file.name,
-                             source_file=str(source_file))
+            job = spectrum_job(input_file.value.strip(), source=source.value, reference=reference.value,
+                               width=bin_size.value, low=minimum.value, high=maximum.value)
             view.attach(jobs.submit(job))
             reset_gmd()
-            if source_file.suffix.lower() == ".json":
-                set_metadata(str(source_file))
+            if job.extra["source_file"].lower().endswith(".json"):
+                set_metadata(job.extra["source_file"])
         except (OSError, ValueError) as exc:
             ui.notify(str(exc), type="warning")
 
@@ -218,7 +283,7 @@ def build(jobs):
         with action_bar(view, "Plot TOF", on_click=run):
             pass
     view.place_console()
-    reset_gmd, set_metadata = _gmd_section(jobs, view, save)
+    reset_gmd, set_metadata, restore_agent_gate = _gmd_section(jobs, view, save)
 
 
 def _gmd_section(jobs, view, save):
@@ -309,36 +374,25 @@ def _gmd_section(jobs, view, save):
             low, high = gmd_limits(readings, gmd_low.value, gmd_high.value)
             if shift.value is None:
                 raise ValueError("Select an alignment shift before filtering.")
-            if "source_file" not in loaded_job.extra:
-                raise ValueError("Plot TOF again before filtering this older result.")
-            source_file = shared.checked_path(loaded_job.extra["source_file"])
-            original = shared.checked_path(loaded_job.extra["histogram"])
-            metadata = shared.checked_path(loaded_metadata)
-            job = Job(FILTER_JOB_NAME, cwd=str(shared.workspace_root()))
-            result = shared.generated_dir() / f"ion-tof-filtered-{job.id}.npz"
-            job.cmd = [sys.executable, "-m", "vmi_analysis.ion_tof", "--input", str(source_file),
-                       "--output", str(result), "--tof-result", str(original), "--metadata", str(metadata),
-                       "--reference", loaded_job.extra["reference"], f"--gmd-min={low}", f"--gmd-max={high}",
-                       "--gmd-shift", str(shift.value)]
-            job.extra.update(histogram=str(result), parent_id=loaded_job.id, metadata=str(metadata),
-                             gmd_min=low, gmd_max=high, gmd_shift=shift.value,
-                             source_file=str(source_file), reference=loaded_job.extra["reference"])
-            job = jobs.submit(job)
+            job = jobs.submit(filtered_job(loaded_job, loaded_metadata, low, high, shift.value))
             filtered_display.clear()
             filter_view.attach(job)
         except (OSError, ValueError, ResourceBusyError) as exc:
             ui.notify(str(exc), type="warning")
 
     def show_filtered(job):
-        if (job.status != "done" or loaded_job is None or loaded_job is not view.job
-                or job.extra["parent_id"] != loaded_job.id or job.extra["metadata"] != str(loaded_metadata)):
+        original_job = view.job
+        if job.status != "done" or original_job is None or job.extra["parent_id"] != original_job.id:
+            return
+        if (not job.extra.get("agent_panel") and
+                (loaded_job is not original_job or job.extra["metadata"] != str(loaded_metadata))):
             return
         with np.load(shared.checked_path(job.extra["histogram"]), allow_pickle=False) as result:
             edges = result["edges"]
             spectra = {source: result[source] for source in ("pixels", "clusters") if source in result}
             selected = int(result["selected_triggers"])
             total = int(result["triggers"])
-        original_path = shared.checked_path(loaded_job.extra["histogram"])
+        original_path = shared.checked_path(original_job.extra["histogram"])
         with np.load(original_path, allow_pickle=False) as original:
             unfiltered_spectra = {source: original[source] for source in spectra}
         filtered_display.clear()
@@ -383,12 +437,18 @@ def _gmd_section(jobs, view, save):
                  ).classes("vmi-subtitle")
         filter_view.run_button("Apply GMD2 range", on_click=run_filter)
         filter_view.place_console("Filtered TOF console")
-        filtered_display = ui.column().classes("w-full gap-4")
+    filtered_display = ui.column().classes("w-full gap-4")
     metadata_file.on_value_change(lambda _: reset_gmd())
     def set_metadata(value):
         metadata_file.value = value
 
-    return reset_gmd, set_metadata
+    def restore_agent_gate(parent):
+        filtered = filter_view.job
+        if (filtered is not None and filtered.extra.get("agent_panel")
+                and filtered.extra.get("parent_id") == parent.id):
+            show_filtered(filtered)
+
+    return reset_gmd, set_metadata, restore_agent_gate
 
 
 def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None):
@@ -426,34 +486,15 @@ def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None)
 
     def fit():
         try:
-            region = fit_low.value, fit_high.value
-            if None in region or not np.isfinite(region).all() or region[0] >= region[1]:
-                raise ValueError("Select a fit range or enter increasing, finite TOF limits.")
-            if not targets.value:
-                raise ValueError("Choose at least one TOF spectrum.")
             estimates = []
             for center, gaussian in peak_rows:
                 if center.value is None and gaussian.value is None:
                     continue
                 if center.value is None or gaussian.value is None:
                     raise ValueError("Enter a center and Gaussian FWHM for each peak.")
-                if not np.isfinite([center.value, gaussian.value]).all():
-                    raise ValueError("Use finite peak centers and widths.")
                 estimates.append((center.value, gaussian.value))
-            if "source_file" not in filtered_job.extra:
-                raise ValueError("Apply the GMD2 range again before fitting this older spectrum.")
-            source = shared.checked_path(filtered_job.extra["source_file"])
-            filtered = shared.checked_path(filtered_job.extra["histogram"])
-            spec = dict(sources=targets.value, region=region, estimates=estimates, baseline=baseline.value)
-            job = Job(fit_job_name, cwd=str(shared.workspace_root()))
-            output = shared.generated_dir() / f"ion-tof-peaks-{job.id}.npz"
-            job.cmd = [sys.executable, "-m", "vmi_analysis.ion_tof", "--input", str(source),
-                       "--filtered-result", str(filtered), "--output", str(output),
-                       "--reference", filtered_job.extra["reference"], "--fit-spec", json.dumps(spec)]
-            if unfiltered_result is not None:
-                job.cmd += ["--tof-result", str(shared.checked_path(unfiltered_result))]
-            job.extra.update(peak_result=str(output), filtered_id=filtered_job.id, baseline=baseline.value,
-                             fit_range=region)
+            job = peak_fit_job(filtered_job, targets.value, (fit_low.value, fit_high.value),
+                               estimates, baseline.value, unfiltered_result=unfiltered_result)
             fit_view.attach(jobs.submit(job))
         except (OSError, ValueError, ResourceBusyError) as exc:
             ui.notify(str(exc), type="warning")

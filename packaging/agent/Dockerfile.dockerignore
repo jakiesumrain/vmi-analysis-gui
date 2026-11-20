@@ -1,0 +1,14 @@
+**
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!NOTICE
+!vendor/
+!vendor/pbasex-matlab/
+!vendor/pbasex-matlab/LICENSE.txt
+!src/
+!src/**
+!packaging/
+!packaging/agent/
+!packaging/agent/entrypoint.sh
