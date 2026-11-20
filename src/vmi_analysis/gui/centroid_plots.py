@@ -17,7 +17,7 @@ RESULT_COLORMAP_DEFAULTS = {
     "centroid.abel_colormap": "Turbo",
 }
 
-PLOT_CONFIG = {"scrollZoom": True, "displaylogo": False, "responsive": True,
+PLOT_CONFIG = {"scrollZoom": False, "displaylogo": False, "responsive": True,
                "doubleClick": "reset", "toImageButtonOptions": {"format": "png", "scale": 2}}
 
 SERIES_COLORS = ("#1e40af", "#d97706", "#15803d", "#dc2626", "#7c3aed", "#0284c7")
