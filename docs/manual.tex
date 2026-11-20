@@ -532,6 +532,9 @@ On Linux, use Linux paths such as \code{/srv/vmi/datasets} and
 
 \subsubsection{Start the shared server}
 
+Run \code{uv sync} from the repository checkout on the host.
+Give the server account read access to the datasets and write access to the workspaces.
+Use a service manager if the server must stay available after the administrator signs out of SSH.
 From the repository checkout, set the path to the JSON file and start
 the app. In Windows PowerShell, use the following commands if you saved
 the file in your user folder.
@@ -548,6 +551,49 @@ Open \url{http://127.0.0.1:13517} and sign in. For remote access to a Linux
 host, open the SSH tunnel described in Section~\ref{sec:linux-mobaxterm}
 first. To test two accounts on one computer, use a regular browser window
 and a private window.
+
+\subsubsection{Enable Live TPX3 on the acquisition computer}
+\label{sec:live-tpx3-shared}
+
+Install the optional receiver on the computer that runs the shared server.
+\begin{verbatim}
+uv sync --extra live
+\end{verbatim}
+
+Enable the acquisition application's ZeroMQ publisher and check its port.
+When the acquisition application and VMI Analysis run on the same computer,
+set \code{VMI\_TPX3\_LIVE\_ENDPOINT} to \code{tcp://127.0.0.1:5556}.
+Replace \code{5556} if the publisher uses a different port.
+The server reads this setting at startup. Set it in the service environment
+if a service manager starts the app.
+
+In Windows PowerShell, use these commands if the JSON file is in your user folder.
+\begin{verbatim}
+$env:VMI_SHARED_CONFIG = "$env:USERPROFILE\vmi-shared.json"
+$env:VMI_TPX3_LIVE_ENDPOINT = "tcp://127.0.0.1:5556"
+uv run --extra live vmi-analysis
+\end{verbatim}
+On Linux, replace the JSON path with the location of your file.
+\begin{verbatim}
+export VMI_SHARED_CONFIG=/etc/vmi/vmi-shared.json
+export VMI_TPX3_LIVE_ENDPOINT=tcp://127.0.0.1:5556
+uv run --extra live vmi-analysis
+\end{verbatim}
+
+Connect to the web server through the same SSH tunnel as for offline analysis.
+Sign in, open \emph{Ion} $\rightarrow$ \emph{Live TPX3}, and click
+\emph{Start preview}. Check that the received frame count increases
+and the detector map, TOF, and GMD plots update. The VMI server receives
+the camera frames on port 5556 in this example. The browser receives plot
+updates through the web port, 13517 by default.
+
+Go4 can remain subscribed while VMI Analysis receives the stream.
+Each active preview decodes its own copy of the frames on the acquisition computer.
+To check the load, compare the saved frame count and recording rate for equal
+test runs with and without one active preview. Use the highest planned
+acquisition rate. If you plan to run offline analysis during recording,
+repeat the check with that workload. Use the acquisition application's saved
+files for offline analysis.
 
 \subsubsection{Add users or change account access}
 

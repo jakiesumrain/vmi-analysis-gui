@@ -16,7 +16,7 @@ from . import shared, theme, workflow
 from .jobs import MANAGER, ResourceBusyError
 from .startup import startup_port
 from .panels import (accumulate, binning, calibration, centroid, circularize,
-                     dark, gmd_map, ion_luna, ion_pipeline, ion_tof, ion_tof_fallback, ion_unpack,
+                     dark, gmd_map, ion_live, ion_luna, ion_pipeline, ion_tof, ion_tof_fallback, ion_unpack,
                      movie, pes, pipeline)
 from .panels.common import file_url, init_zoom_overlay
 from .panels.picker import LocalFilePicker
@@ -107,6 +107,7 @@ TABS = [
     ("TPX3 Dump", ion_luna),
     (ion_tof.JOB_NAME, ion_tof),
     (ion_pipeline.JOB_NAME, ion_pipeline),
+    (ion_live.JOB_NAME, ion_live),
     (ion_unpack.JOB_NAME, ion_unpack),
     (ion_tof_fallback.JOB_NAME, ion_tof_fallback),
     (ion_pipeline.FALLBACK_JOB_NAME, ion_pipeline),
@@ -125,6 +126,7 @@ TAB_ICONS = {
     "TPX3 Dump": "memory",
     ion_tof.JOB_NAME: "timer",
     ion_pipeline.JOB_NAME: "schema",
+    ion_live.JOB_NAME: "sensors",
     ion_unpack.JOB_NAME: "memory",
     ion_tof_fallback.JOB_NAME: "timer",
     ion_pipeline.FALLBACK_JOB_NAME: "schema",
@@ -136,7 +138,7 @@ SIDEBAR_GROUPS = (
         ("Analyze", ("Centroiding", "Binning", "Trig Calibration", "Circularize", "PES")),
         ("Automate", ("Pipeline",)),
     )),
-    ("Ion", ((None, ("TPX3 Dump", ion_tof.JOB_NAME, ion_pipeline.JOB_NAME)),)),
+    ("Ion", ((None, ("TPX3 Dump", ion_tof.JOB_NAME, ion_pipeline.JOB_NAME, ion_live.JOB_NAME)),)),
 )
 SIDEBAR_JS = files("vmi_analysis.gui.assets") / "sidebar.js"
 
