@@ -350,6 +350,10 @@ html, body {
   user-select: text;
   white-space: pre-wrap;
 }
+.vmi-agent-message.nicegui-markdown { white-space: normal; }
+.vmi-agent-message.nicegui-markdown p { margin: 0 0 var(--vmi-space-3); }
+.vmi-agent-message.nicegui-markdown > :last-child { margin-bottom: 0; }
+.vmi-agent-message.nicegui-markdown pre { overflow-x: auto; }
 .vmi-agent-user {
   padding: var(--vmi-space-3);
   background: var(--vmi-surface-soft);

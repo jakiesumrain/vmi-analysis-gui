@@ -53,31 +53,32 @@ def build(jobs):
     )
 
     with theme.panel_card():
-        theme.form_section("Connection")
-        with field_grid():
-            base_url = ui.input("Base URL", placeholder="https://provider.example/v1") \
-                .classes("w-full").props("outlined dense autocomplete=off")
-            model = ui.input("Model ID", placeholder="provider-model-name") \
-                .classes("w-full").props("outlined dense autocomplete=off")
-        with field_grid():
-            api = ui.select(API_FORMATS, value="openai-completions", label="API format") \
-                .classes("w-full").props("outlined dense")
-            api_key = ui.input("API key", password=True, password_toggle_button=True) \
-                .classes("w-full").props("outlined dense autocomplete=off")
-        ui.label("The key is used only for this session and is never saved or included in workflows. "
-                 "Stopping the session removes its temporary configuration.").classes("vmi-subtitle")
-        if shared.SERVER:
-            ui.label("The isolated agent can read Shared datasets and change files only in My workspace. "
-                     "Prompts and data content are sent to the endpoint you choose.").classes("vmi-subtitle")
-        else:
-            ui.label("Local development starts pi directly unless VMI_AGENT_BACKEND=container is set. "
-                     "The agent can change files in this workspace.").classes("vmi-subtitle")
+        with ui.expansion("Connection", icon="tune", value=False) \
+                .classes("w-full vmi-agent-connection") as connection:
+            with field_grid():
+                base_url = ui.input("Base URL", placeholder="https://provider.example/v1") \
+                    .classes("w-full").props("outlined dense autocomplete=off")
+                model = ui.input("Model ID", placeholder="provider-model-name") \
+                    .classes("w-full").props("outlined dense autocomplete=off")
+            with field_grid():
+                api = ui.select(API_FORMATS, value="openai-completions", label="API format") \
+                    .classes("w-full").props("outlined dense")
+                api_key = ui.input("API key", password=True, password_toggle_button=True) \
+                    .classes("w-full").props("outlined dense autocomplete=off")
+            ui.label("The key is used only for this session and is never saved or included in workflows. "
+                     "Stopping the session removes its temporary configuration.").classes("vmi-subtitle")
+            if shared.SERVER:
+                ui.label("The isolated agent can read Shared datasets and change files only in My workspace. "
+                         "Prompts and data content are sent to the endpoint you choose.").classes("vmi-subtitle")
+            else:
+                ui.label("Local development starts pi directly unless VMI_AGENT_BACKEND=container is set. "
+                         "The agent can change files in this workspace.").classes("vmi-subtitle")
 
-        with ui.row().classes("vmi-action-bar w-full items-center gap-2"):
-            session_button = theme.run_button("Start session")
-            abort_button = ui.button("Abort run", icon="stop") \
-                .props("flat color=negative")
-            abort_button.visible = False
+            with ui.row().classes("vmi-action-bar w-full items-center gap-2"):
+                session_button = theme.run_button("Start session")
+                abort_button = ui.button("Abort run", icon="stop") \
+                    .props("flat color=negative")
+                abort_button.visible = False
         error_label = ui.label("").classes("vmi-agent-error w-full") \
             .props('role="alert" tabindex="-1"')
         error_label.visible = False
@@ -87,7 +88,8 @@ def build(jobs):
             entries_column = ui.column().classes("w-full gap-3")
         prompt = ui.textarea("Instruction", placeholder="Describe the analysis or file operation to perform.") \
             .classes("w-full").props("outlined autogrow rows=3")
-        with ui.row().classes("w-full justify-end"):
+        with ui.row().classes("w-full justify-between items-center gap-3"):
+            ui.label("Enter to send · Shift+Enter for a new line").classes("vmi-caption")
             send_button = ui.button("Send", icon="send").props("color=primary unelevated")
 
     with ui.expansion("Diagnostics", icon="terminal", value=False).classes("w-full vmi-console"):
@@ -129,7 +131,7 @@ def build(jobs):
                 element = ui.label(entry["text"]).classes("vmi-agent-message vmi-agent-user")
             elif entry["kind"] == "assistant":
                 ui.label("Agent").classes("vmi-overline")
-                element = ui.label(entry["text"]).classes("vmi-agent-message")
+                element = ui.markdown(entry["text"]).classes("vmi-agent-message")
             elif entry["kind"] == "tool":
                 with ui.row().classes("items-center gap-2"):
                     ui.icon("construction").props('aria-hidden="true"')
@@ -172,8 +174,12 @@ def build(jobs):
                 changed = True
             elif entry["kind"] in ("assistant", "user"):
                 kind, element = rendered[index]
-                if kind == entry["kind"] and element.text != entry["text"]:
-                    element.text = entry["text"]
+                content = element.content if kind == "assistant" else element.text
+                if kind == entry["kind"] and content != entry["text"]:
+                    if kind == "assistant":
+                        element.content = entry["text"]
+                    else:
+                        element.text = entry["text"]
                     changed = True
         if changed:
             ui.run_javascript(
@@ -245,6 +251,11 @@ def build(jobs):
 
     session_button.on_click(toggle_session)
     send_button.on_click(send)
+    prompt.on(
+        "keydown", send,
+        js_handler="(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) "
+                   "{ event.preventDefault(); emit(event); } }",
+    )
     abort_button.on_click(abort)
     reset_transcript(None)
     refresh()

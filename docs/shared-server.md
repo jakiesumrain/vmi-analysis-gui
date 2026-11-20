@@ -118,7 +118,9 @@ workspace. It runs without Linux capabilities, with a read-only root filesystem,
 a 1 GiB memory limit, and one CPU. Prompts, file excerpts, command output, and
 other context may be sent to the chosen model endpoint. Users should select an
 endpoint they trust with the data they ask the agent to inspect. The endpoint
-and model must be compatible with the selected API format.
+and model must be compatible with the selected API format. Connection settings
+start collapsed. Assistant replies render as Markdown. In the instruction box,
+**Enter** sends the instruction and **Shift+Enter** inserts a new line.
 
 ## Security boundary
 

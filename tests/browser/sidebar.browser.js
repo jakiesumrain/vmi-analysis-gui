@@ -48,6 +48,13 @@ async page => {
   await agent.click();
   await panel('Agent').waitFor();
   await page.getByRole('tab', {name: 'Agent', exact: true, selected: true}).waitFor();
+  const connection = page.locator('.vmi-agent-connection');
+  const baseUrl = connection.getByRole('textbox', {name: 'Base URL', exact: true});
+  if (await baseUrl.isVisible()) throw new Error('Agent connection settings should start collapsed');
+  await connection.locator('.q-expansion-item__container > .q-item').click();
+  await baseUrl.waitFor({state: 'visible'});
+  await connection.locator('.q-expansion-item__container > .q-item').click();
+  await baseUrl.waitFor({state: 'hidden'});
   if (await page.locator('.vmi-header').getByRole('button', {name: 'Settings', exact: true}).count()) {
     throw new Error('Settings is still in the header');
   }
