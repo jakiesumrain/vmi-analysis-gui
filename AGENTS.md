@@ -41,6 +41,12 @@ and [GUI design](docs/DESIGN.md) for implementation context.
 - Use the shared `image_zoom.js` overlay. Pan, zoom, and cropping affect the
   preview only. Reset restores the original image. Browser regression checks
   are in `tests/browser/`.
+- Agent sessions are per account and use the container launcher in shared mode.
+  Mount only the account workspace read-write and shared datasets read-only.
+  Pass API keys only through the child environment; never save them in settings,
+  workflows, model configuration, arguments, or logs. Clear key copies and remove
+  temporary configuration on startup failure, process exit, stop, and shutdown.
+  Agent is an interactive session panel, not a finite `JobView` job.
 - Follow the workbench patterns in [GUI design](docs/DESIGN.md) and use the
   UI/UX Pro Max skill for UI design. Keep panel summaries short. Describe
   the task without naming the Python module. Binning and Pipeline are

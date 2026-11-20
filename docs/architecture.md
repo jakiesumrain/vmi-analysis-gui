@@ -51,6 +51,10 @@ Pipeline are immature and need restructuring.
 - PES generates spectra in a subprocess from NumPy images or text matrices.
   It overlays the spectra in Plotly and fits peaks to the selected interval
   in the web process. It reserves each input and its generated spectrum bundle.
+- Agent provides an interactive pi RPC session under **Electron → Automate**.
+  Each account supplies its own endpoint and temporary API key. Shared-server
+  sessions run in Docker or Podman with the account workspace writable and
+  shared datasets read-only. The conversation and diagnostics remain separate.
 
 The [design reference](DESIGN.md) describes the visual tokens.
 `gui/theme.py` loads the palette and `gui/assets/theme.css`.
@@ -78,6 +82,13 @@ Relative paths resolve from the subprocess working directory.
   the panel job. A browser reload can reattach to an active job by name.
 - Cancel and shutdown stop subprocess trees. On Windows the manager uses
   `taskkill /T /F`. On POSIX it signals the process group.
+- `agent_backend.py` owns one interactive session per account rather than a
+  queued analysis job. It correlates RPC commands, reconstructs streamed text,
+  and stops containers or process trees during shutdown. The API key is passed
+  only through the child environment; `models.json` references that variable.
+  Stopping or losing the process deletes the temporary configuration and clears
+  the session's in-memory key copies. Agent connection fields are excluded from
+  saved settings and workflow files.
 
 **Keep running on disconnect** defaults to off. When enabled, it leaves the
 server available after all browsers disconnect. When it is off, the server

@@ -12,10 +12,12 @@ from nicegui import app, background_tasks, ui
 
 from vmi_analysis.paths import WORKSPACE_ROOT
 
+from vmi_analysis.agent_backend import AGENTS
+
 from . import shared, theme, workflow
 from .jobs import MANAGER, ResourceBusyError
 from .startup import startup_port
-from .panels import (accumulate, binning, calibration, centroid, circularize,
+from .panels import (accumulate, agent, binning, calibration, centroid, circularize,
                      dark, gmd_map, ion_luna, ion_pipeline, ion_tof, movie, pes, pipeline)
 from .panels.common import file_url, init_zoom_overlay
 from .panels.picker import LocalFilePicker
@@ -59,13 +61,17 @@ app.on_connect(_cancel_shutdown_check)
 
 @app.on_shutdown
 async def _cleanup_jobs() -> None:
-    await asyncio.to_thread(MANAGER.shutdown)
+    await asyncio.gather(
+        asyncio.to_thread(MANAGER.shutdown),
+        asyncio.to_thread(AGENTS.shutdown),
+    )
 
 
 def _shutdown_now(reason: str) -> None:
     if app.is_stopping:
         return
     MANAGER.begin_shutdown()
+    AGENTS.begin_shutdown()
     print(f"[gui] {reason} — shutting down", flush=True)
     app.shutdown()
 
@@ -103,6 +109,7 @@ TABS = [
     ("Circularize", circularize),
     ("PES", pes),
     ("Pipeline", pipeline),
+    ("Agent", agent),
     ("TPX3 Dump", ion_luna),
     (ion_tof.JOB_NAME, ion_tof),
     (ion_pipeline.JOB_NAME, ion_pipeline),
@@ -118,6 +125,7 @@ TAB_ICONS = {
     "Circularize": "donut_large",
     "PES": "multiline_chart",
     "Pipeline": "account_tree",
+    "Agent": "smart_toy",
     "TPX3 Dump": "memory",
     ion_tof.JOB_NAME: "timer",
     ion_pipeline.JOB_NAME: "schema",
@@ -126,7 +134,7 @@ SIDEBAR_GROUPS = (
     ("Electron", (
         ("Acquire", ("GMD Map", "Movie", "Dark Frame", "Accumulate")),
         ("Analyze", ("Centroiding", "Binning", "Trig Calibration", "Circularize", "PES")),
-        ("Automate", ("Pipeline",)),
+        ("Automate", ("Pipeline", "Agent")),
     )),
     ("Ion", ((None, ("TPX3 Dump", ion_tof.JOB_NAME, ion_pipeline.JOB_NAME)),)),
 )

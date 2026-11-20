@@ -52,6 +52,7 @@
   --vmi-sidebar-w: 15.5rem;
   --vmi-sidebar-collapsed-w: 4rem;
   --vmi-log-h: 260px;
+  --vmi-agent-transcript-h: 24rem;
   /* small text sizes */
   --vmi-text-overline: 0.65rem;
   --vmi-text-xs: 0.72rem;
@@ -333,6 +334,40 @@ html, body {
 }
 .vmi-panel-head { min-height: 34px; }
 .vmi-panel-subtitle { margin-top: var(--vmi-space-1); }
+.vmi-agent-transcript {
+  height: var(--vmi-agent-transcript-h);
+  margin-bottom: var(--vmi-space-3);
+  padding: var(--vmi-space-4);
+  background: var(--vmi-canvas);
+  border: 1px solid var(--vmi-hairline);
+  border-radius: var(--vmi-radius-md);
+}
+.vmi-agent-message {
+  color: var(--vmi-body);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  user-select: text;
+  white-space: pre-wrap;
+}
+.vmi-agent-user {
+  padding: var(--vmi-space-3);
+  background: var(--vmi-surface-soft);
+  border-left: 3px solid var(--vmi-primary);
+  border-radius: var(--vmi-radius-sm);
+}
+.vmi-agent-tool-detail {
+  color: var(--vmi-muted);
+  font-family: var(--vmi-font-mono);
+  font-size: var(--vmi-text-xs);
+  overflow-wrap: anywhere;
+  user-select: text;
+  white-space: pre-wrap;
+}
+.vmi-agent-error {
+  color: var(--vmi-error);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 
 /* ---- form anatomy ---- */
 .vmi-form-section { margin-top: var(--vmi-space-4); }
