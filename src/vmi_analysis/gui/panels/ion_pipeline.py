@@ -20,6 +20,7 @@ from .ion_pipeline_options import options_form
 
 
 JOB_NAME = "Ion Pipeline"
+FALLBACK_JOB_NAME = "Ion Pipeline (fallback)"
 MM_PER_PS = 0.15
 Y_SCALES = {"linear": "Linear", "log": "Logarithmic"}
 
@@ -56,7 +57,8 @@ def yield_figure(rows, options, names, scales=("linear", "linear")):
                                       "<br>%{customdata[1]} counts / %{customdata[2]} frames<extra>%{fullData.name}</extra>")
     # An empty trace makes the matched, labelled bottom axis available to Plotly.
     fig.add_scatter(x=[None], y=[None], xaxis="x2", showlegend=False, hoverinfo="skip")
-    _style(fig, f"Ion yields · {NAME}")
+    decoder = "Standalone decoder" if options.get("backend") == "fallback" else NAME
+    _style(fig, f"Ion yields · {decoder}")
     positions_mm = [float(row["delay_mm"]) for row in rows]
     low, high = min(positions_mm), max(positions_mm)
     padding = (high - low) * 0.06 or MM_PER_PS
@@ -204,13 +206,17 @@ def show_results(job):
                  pagination=10).classes("w-full")
 
 
-def build(jobs):
+def build(jobs, *, fallback=False):
     peak_rows = []
-    view = JobView(jobs, job_name=JOB_NAME, results_builder=show_results)
-    theme.panel_header(JOB_NAME, "Decode a TPX3 delay scan and plot GMD-gated peak yields.", view=view)
+    job_name = FALLBACK_JOB_NAME if fallback else JOB_NAME
+    settings_key = "ion_pipeline_fallback" if fallback else "ion_pipeline"
+    output_folder = "ion-pipeline-fallback" if fallback else "ion-pipeline"
+    view = JobView(jobs, job_name=job_name, results_builder=show_results)
+    theme.panel_header(job_name, "Plot GMD-gated peak yields from a TPX3 delay scan.",
+                       view=view)
 
     def save(field, key):
-        return persist(field, f"ion_pipeline.{key}")
+        return persist(field, f"{settings_key}.{key}")
 
     def peak_values():
         return [dict(name=name.value.strip(), low=low.value, high=high.value, center=center.value)
@@ -255,9 +261,9 @@ def build(jobs):
                            window_sigma=width.value, fit_tof=fit_tof.value,
                            keep_dumps=keep.value, workers=int(workers.value))
             validate_settings(options)
-            job = Job(JOB_NAME, cwd=str(shared.workspace_root()))
+            job = Job(job_name, cwd=str(shared.workspace_root()))
             parent = shared.checked_path(output.value.strip(), write=True)
-            destination = shared.checked_path(parent / f"ion-pipeline-{job.id}", write=True)
+            destination = shared.checked_path(parent / f"{output_folder}-{job.id}", write=True)
             job.cmd = [sys.executable, "-m", "vmi_analysis.ion_pipeline", "--input", str(source),
                        "--output-dir", str(destination), "--settings", json.dumps(options, allow_nan=False)]
             job.reads = [str(path) for path in inputs]
@@ -269,12 +275,12 @@ def build(jobs):
     with theme.panel_card():
         theme.form_section("Delay scan")
         root = save(path_input("Dataset root (one subfolder per delay position)", browse="dir"), "input")
-        output = save(path_input("Output directory", str(Path(shared.workspace_root()) / "ion-pipeline"),
+        output = save(path_input("Output directory", str(Path(shared.workspace_root()) / output_folder),
                                  browse="dir"), "output")
         with field_grid():
             workers = save(num_input("Parallel delay positions", 1, min=1, max=8, step=1), "workers")
             keep = save(ui.checkbox("Keep intermediate HDF5 dumps"), "keep_dumps")
-        decode_options = options_form(save)
+        decode_options = options_form(save, fallback=fallback)
         theme.form_section("GMD2 gate")
         gate = save(ui.checkbox("Filter by GMD2", value=True), "gate")
         with field_grid(3):
@@ -283,8 +289,9 @@ def build(jobs):
             shift = save(num_input("GMD2 alignment shift d (frames)", DEFAULT_SHIFT, step=1), "gmd_shift")
         for field in (gmd_min, gmd_max, shift):
             field.bind_enabled_from(gate, "value")
+        tof_panel = "Ion TOF (fallback)" if fallback else "Ion TOF"
         ui.label(SHIFT_HELP + " The pipeline uses this shift for every delay position. "
-                 "Use the Ion TOF GMD diagnostic to check the shift for your data. "
+                 f"Use the {tof_panel} GMD diagnostic to check the shift for your data. "
                  "Both GMD2 limits are inclusive.").classes("vmi-subtitle")
         theme.form_section("Peak windows")
         ui.label("Fits each Gaussian separately using the selected TOF source for each dataset. "
@@ -294,7 +301,7 @@ def build(jobs):
         with field_grid(3):
             fit_tof = save(ui.select({"ungated": "Ungated TOF (all frames)",
                                       "gated": "GMD2-gated TOF (selected frames)"},
-                                     value="gated", label="TOF used to fit peak windows")
+                                     value="ungated" if fallback else "gated", label="TOF used to fit peak windows")
                            .props("outlined dense"), "fit_tof")
             fit_bins = save(num_input("Histogram bins per peak fit", 60, min=4, step=1), "fit_bins")
             width = save(num_input("Count-window half-width (σ)", 3, step="any"), "window_sigma")

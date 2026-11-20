@@ -51,6 +51,8 @@ def delay_from_files(paths, fallback):
 
 
 def validate_settings(options):
+    if options.get("backend", "luna") not in ("luna", "fallback"):
+        raise ValueError("Choose the LUNA or fallback decoder.")
     peaks = options["peaks"]
     if not peaks:
         raise ValueError("Add at least one peak.")
@@ -128,9 +130,11 @@ def save_plot(path, rows, names, ylabel):
 
 
 def run(root, output, options):
-    from vmi_analysis import ion_pipeline_backend as backend
-
     validate_settings(options)
+    if options.get("backend") == "fallback":
+        from vmi_analysis import ion_fallback_backend as backend
+    else:
+        from vmi_analysis import ion_pipeline_backend as backend
     points = positions(root)
     if not points:
         raise ValueError("No delay-position folders were found.")

@@ -182,6 +182,9 @@ def command_access(cmd, cwd=None):
     elif module == "vmi_analysis.ion_pipeline":
         read(value("--input"))
         write(value("--output-dir"))
+    elif module == "vmi_analysis.ion_verification":
+        read(value("--input"))
+        write(value("--output"))
     elif module == "vmi_analysis.ion_tof":
         read_collection(value("--input"))
         read_collection(value("--metadata"))

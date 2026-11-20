@@ -41,8 +41,10 @@
       groups.forEach(group => group.open = collapsed || states.get(group));
       // Reveal a tool selected while only icons were shown.
       if (!collapsed && active?.getAttribute('aria-label') !== activeBeforeCollapse) {
-        const group = active?.closest('.vmi-sidebar-disclosure');
-        if (group) group.open = true;
+        for (let group = active?.closest('.vmi-sidebar-disclosure'); group;
+             group = group.parentElement.closest('.vmi-sidebar-disclosure')) {
+          group.open = true;
+        }
       }
     }
     sidebar.classList.toggle('vmi-sidebar--collapsed', collapsed);
