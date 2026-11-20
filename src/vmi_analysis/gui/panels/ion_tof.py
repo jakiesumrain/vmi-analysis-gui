@@ -91,7 +91,7 @@ def _count_scatter(result, counts, shifts, boundaries, title):
         message = "Alignment unavailable" if result["gmd_alignment_issue"] else "No unique best Pearson shift"
         fig.add_annotation(text=message, x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
     _style(fig, title)
-    fig.update_layout(height=360, showlegend=bool(fig.data), legend=dict(orientation="h", y=-0.24),
+    fig.update_layout(height=520, showlegend=bool(fig.data), legend=dict(orientation="h", y=-0.24),
                       margin=dict(b=110))
     fig.update_xaxes(title_text="GMD2 (nA)")
     fig.update_yaxes(title_text="Counts per frame", rangemode="tozero")
