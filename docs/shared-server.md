@@ -101,7 +101,8 @@ accounts or change a password hash.
 
 ## Use the Agent panel
 
-Every signed-in account can open **Electron → Automate → Agent**. Enter the
+Every signed-in account can open **Agent** in the sidebar footer above
+**Settings**. Enter the
 model endpoint's base URL, model ID, API format, and API key, then choose
 **Start session**. The key is never saved in account settings or workflow files.
 It is passed only to that session's container through an environment variable;

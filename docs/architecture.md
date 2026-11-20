@@ -51,7 +51,8 @@ Pipeline are immature and need restructuring.
 - PES generates spectra in a subprocess from NumPy images or text matrices.
   It overlays the spectra in Plotly and fits peaks to the selected interval
   in the web process. It reserves each input and its generated spectrum bundle.
-- Agent provides an interactive pi RPC session under **Electron → Automate**.
+- Agent provides an interactive pi RPC session from the sidebar footer above
+  **Settings**, separately from the Electron and Ion tool groups.
   Each account supplies its own endpoint and temporary API key. Shared-server
   sessions run in Docker or Podman with the account workspace writable and
   shared datasets read-only. The conversation and diagnostics remain separate.

@@ -134,7 +134,7 @@ SIDEBAR_GROUPS = (
     ("Electron", (
         ("Acquire", ("GMD Map", "Movie", "Dark Frame", "Accumulate")),
         ("Analyze", ("Centroiding", "Binning", "Trig Calibration", "Circularize", "PES")),
-        ("Automate", ("Pipeline", "Agent")),
+        ("Automate", ("Pipeline",)),
     )),
     ("Ion", ((None, ("TPX3 Dump", ion_tof.JOB_NAME, ion_pipeline.JOB_NAME)),)),
 )
@@ -333,6 +333,9 @@ def index() -> None:
                                 ui.tab(name, icon=TAB_ICONS[name]).props(f'aria-label="{name}"').tooltip(name)
                                 panel_disclosures[name] = disclosure
             with ui.column().classes("vmi-sidebar-foot"):
+                with ui.tabs().props('inline-label aria-label="Agent session"') as tabs:
+                    tab_groups.append(tabs)
+                    ui.tab("Agent", icon=TAB_ICONS["Agent"]).props('aria-label="Agent"').tooltip("Agent")
                 settings_button = ui.button("Settings", icon="settings", on_click=settings_dialog.open).props(
                     'flat no-caps aria-label="Settings"').classes("vmi-sidebar-settings")
                 settings_button.tooltip("Server controls and workflow files" if administrator

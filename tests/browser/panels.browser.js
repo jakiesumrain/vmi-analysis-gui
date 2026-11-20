@@ -21,7 +21,7 @@ async page => {
   for (const group of await page.locator('.vmi-sidebar-disclosure').all()) {
     if (!await group.evaluate(el => el.open)) await group.locator('summary').click();
   }
-  const tabNames = await page.getByRole('tab').allTextContents();
+  const tabNames = await page.locator('.vmi-sidebar-disclosure').getByRole('tab').allTextContents();
   if (tabNames.length !== names.length || !names.every((name, i) => tabNames[i].endsWith(name)))
     throw new Error('Incorrect workspace navigation');
   for (const name of names) {

@@ -178,6 +178,7 @@ html, body {
 }
 .vmi-sidebar-foot {
   width: 100%;
+  gap: var(--vmi-space-2);
   margin-top: auto;
   padding: var(--vmi-space-3) 0 0;
   border-top: 1px solid var(--vmi-hairline);
