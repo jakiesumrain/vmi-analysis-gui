@@ -373,7 +373,9 @@ def build(jobs: JobManager) -> None:
         fields, spectrum = axis_controls(
             "Angular anisotropy (β)", "β plot", "beta_", "Apply β axes", lambda: redraw(update_axes=True),
             selector=lambda: ui.select(names, value=names[0], label="β spectrum").props("outlined dense").classes("max-w-full"),
-            note="β can be unreliable where the signal is weak. Bins with nonpositive isotropic intensity are omitted.",
+            note="Each β order is shown in its own panel with an independent vertical scale. "
+                 "Leave the Y limits blank to auto-range each panel; explicit Y limits apply to every panel. "
+                 "β can be unreliable where the signal is weak; bins with nonpositive isotropic intensity are omitted.",
         )
         chart = _scientific_plot()
         revision = 0
@@ -389,13 +391,24 @@ def build(jobs: JobManager) -> None:
                 else:
                     revision += 1
             x, moments = state["angular"][spectrum.value]
-            fig = go.Figure()
-            for order, values in zip(state["beta_orders"], anisotropy_values(moments)):
-                fig.add_scatter(x=x, y=values, mode="lines", name=f"β{order}")
-            _style_comparison_plot(fig, 347)
-            fig.update_layout(uirevision=f"{spectrum.value}:{revision}")
-            fig.update_xaxes(title_text=f"{state['x_label']} ({state['units']})", **x_axis)
-            fig.update_yaxes(title_text="β (dimensionless)", **y_axis)
+            orders = state["beta_orders"]
+            beta_values = anisotropy_values(moments)
+            rows = max(1, len(orders))
+            fig = make_subplots(rows=rows, cols=1, shared_xaxes=True,
+                                vertical_spacing=0.04 if rows > 1 else 0.0)
+            for row, (order, values) in enumerate(zip(orders, beta_values), start=1):
+                fig.add_scatter(x=x, y=values, mode="lines", name=f"β{order}",
+                                row=row, col=1)
+                fig.update_yaxes(title_text=f"β{order} (dimensionless)",
+                                 row=row, col=1, **y_axis)
+            _style_comparison_plot(fig, max(347, 210 * rows + 100))
+            fig.update_layout(uirevision=f"{spectrum.value}:{revision}", showlegend=False)
+            for row in range(1, rows + 1):
+                fig.update_xaxes(**x_axis, row=row, col=1)
+                if row < rows:
+                    fig.update_xaxes(showticklabels=False, title_text="", row=row, col=1)
+            fig.update_xaxes(title_text=f"{state['x_label']} ({state['units']})",
+                             row=rows, col=1)
             chart.update_figure(plot_options(fig))
 
         spectrum.on_value_change(lambda _: redraw())
