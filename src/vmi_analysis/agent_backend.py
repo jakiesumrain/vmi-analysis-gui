@@ -263,6 +263,8 @@ class AgentSession:
         self._write_lock = threading.Lock()
         self._stop_lock = threading.Lock()
         self._stop_requested = threading.Event()
+        self._stderr_done = threading.Event()
+        self._stderr_done.set()
         self._finalized = False
         self._assistant_index: int | None = None
         self._run_started = False
@@ -297,6 +299,7 @@ class AgentSession:
                 terminate_process_tree(process)
                 process.wait(timeout=5)
                 raise RuntimeError("The agent session stopped during startup.")
+            self._stderr_done.clear()
             threading.Thread(target=self._read_stdout, args=(process.stdout,),
                              name=f"agent-rpc-{self.id[:8]}", daemon=True).start()
             threading.Thread(target=self._read_stderr, args=(process.stderr,),
@@ -514,12 +517,15 @@ class AgentSession:
                         self.diagnostics.append(self._redact(text))
         except OSError as exc:
             with self._lock:
-                self.diagnostics.append(f"Could not read agent diagnostics: {exc}")
+                self.diagnostics.append(self._redact(f"Could not read agent diagnostics: {exc}"))
         finally:
             try:
                 stream.close()
             except OSError:
                 pass
+            self._stderr_done.set()
+            if self._finalized:
+                self._discard_credentials()
 
     def _finalize(self, status: str, error: str = "") -> None:
         with self._lock:
@@ -532,7 +538,8 @@ class AgentSession:
             self._assistant_index = None
         if error:
             self._append("error", error)
-        self._discard_credentials()
+        if self._stderr_done.is_set():
+            self._discard_credentials()
 
     def _discard_credentials(self) -> None:
         self._api_key = ""
@@ -551,7 +558,8 @@ class AgentSession:
         with self._stop_lock:
             with self._lock:
                 if self._finalized:
-                    self._discard_credentials()
+                    if self._stderr_done.is_set():
+                        self._discard_credentials()
                     return
                 self._stop_requested.set()
                 self.status = "stopping"
@@ -577,7 +585,8 @@ class AgentSession:
                 terminate_process_tree(process)
                 self._finalize("cancelled", str(exc))
             finally:
-                self._discard_credentials()
+                if self._stderr_done.is_set():
+                    self._discard_credentials()
 
     def join_stop(self, timeout: float) -> None:
         thread = self._stop_thread
