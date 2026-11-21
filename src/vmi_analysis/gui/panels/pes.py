@@ -428,7 +428,8 @@ def build(jobs: JobManager) -> None:
             beta_order = persist(ui.select({order: str(order) if order else "Off" for order in BETA_ORDERS},
                                            value=0, label="Maximum β order")
                                  .props("outlined dense"), "pes.beta_order")
-        with ui.expansion("Abel inversion options", icon="tune", value=False).classes("w-full").props(
+        with ui.expansion("Abel inversion options", icon="tune", value=False).classes(
+                "w-full vmi-abel-options").props(
                 'header-class="vmi-section-toggle text-primary" expand-icon-class="text-primary"'):
             ui.label("Choose the detector quadrants used by the inversion and optional symmetry averaging. "
                      "All four quadrants with no symmetry is the default full-image inversion.") \
