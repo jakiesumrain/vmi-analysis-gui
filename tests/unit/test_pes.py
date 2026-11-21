@@ -9,7 +9,7 @@ from scipy.special import voigt_profile
 
 from vmi_analysis.centroiding.plot_data import load_plot_data
 from vmi_analysis.pes import (ABEL_METHODS, Geometry, PeakGuess, anisotropy_values, average_anisotropy,
-                              evaluate_fit_for_plot, extract_spectrum, fit_peaks, main)
+                              evaluate_fit_for_plot, extract_spectrum, fit_peaks, main, parse_quadrants)
 
 
 class SpectrumTests(unittest.TestCase):
@@ -54,6 +54,27 @@ class SpectrumTests(unittest.TestCase):
         self.assertTrue(np.isnan(anisotropy_values(moments)[:, 1]).all())
         moments[:, 2] = np.nan
         self.assertEqual(average_anisotropy(x, moments, 4., 5.), [None, None])
+
+    def test_quadrant_selection_is_recorded_and_requires_symmetry(self):
+        self.assertEqual(parse_quadrants("ur, lr"), (True, False, False, True))
+        with self.assertRaisesRegex(ValueError, "at least one"):
+            parse_quadrants("")
+        with self.assertRaisesRegex(ValueError, "Unknown quadrant"):
+            parse_quadrants("xx")
+        y, x = np.indices((65, 65)) - 32
+        image = np.exp(-(x * x + y * y) / 200)
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "image.npy"
+            output = Path(folder) / "spectra.npz"
+            np.save(source, image)
+            main(["--image", str(source), "32", "32", "0", "1", "--output", str(output),
+                  "--beta-order", "2", "--quadrants", "ur", "--symmetry-axis", "both"])
+            meta, _ = load_plot_data(output)
+            self.assertEqual(meta["quadrants"], ["ur"])
+            self.assertEqual(meta["symmetry_axis"], "both")
+            with self.assertRaises(SystemExit):
+                main(["--image", str(source), "32", "32", "0", "1", "--output", str(output),
+                      "--quadrants", "ur", "--symmetry-axis", "none"])
 
     def test_center_rotation_and_energy_scaling(self):
         y, x = np.indices((65, 65)) - 32

@@ -2030,6 +2030,15 @@ The coefficients assume cylindrical symmetry about the vertical axis
 and use even orders. The plot omits bins with nonpositive isotropic
 intensity. Higher orders and weak-signal regions can be noisy.
 
+\textbf{Abel inversion options.} The folded \emph{Abel inversion options}
+section selects the detector quadrants used by the inversion: upper right
+(Q0), upper left (Q1), lower left (Q2), and lower right (Q3). All four are
+used by default. A \emph{Symmetry axis} can average the selected quadrants
+about the vertical axis, horizontal axis, or both. Selecting only some
+quadrants requires a symmetry axis; with no symmetry axis, all four
+quadrants are required. The selected quadrants and symmetry axis are saved
+in the spectrum bundle.
+
 \textbf{Fit peaks.} Choose \emph{Select fit range} and drag horizontally over
 the interval on the spectrum, or enter the two limits. Use \emph{Clear fit range}
 to remove the selection. Leave the peak

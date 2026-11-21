@@ -15,7 +15,8 @@ from nicegui import ui
 from plotly.subplots import make_subplots
 
 from vmi_analysis.centroiding.plot_data import load_plot_data
-from vmi_analysis.pes import (ABEL_METHODS, BASELINE_PARAMETERS, BETA_ORDERS, Geometry, PeakGuess, anisotropy_values,
+from vmi_analysis.pes import (ABEL_METHODS, BASELINE_PARAMETERS, BETA_ORDERS, QUADRANT_LABELS,
+                              QUADRANT_ORDER, Geometry, PeakGuess, anisotropy_values,
                               average_anisotropy, evaluate_fit_for_plot, fit_peaks)
 
 from ..shared import circularization_dir, generated_dir, workspace_root
@@ -24,8 +25,8 @@ from ..centroid_plots import _style, linear_axis_limits, plot_options
 from ..jobs import Job, JobManager
 from ..resources import canonical_path
 from .binning import BIN_LABEL_PATTERN
-from .common import (GENERATED, REPO_ROOT, JobView, action_bar, confirm_clear_outputs,
-                     field_grid, num_input, persist)
+from .common import (GENERATED, REPO_ROOT, JobView, action_bar, check_grid,
+                     confirm_clear_outputs, field_grid, num_input, persist)
 from .picker import LocalFilePicker
 
 CIRC_DIR = REPO_ROOT / "circularization"
@@ -186,8 +187,15 @@ def build(jobs: JobManager) -> None:
             shared = shared_geometry() if any(path not in saved for path in files) else None
             if alpha.value is not None and (not np.isfinite(alpha.value) or alpha.value <= 0):
                 raise ValueError("Alpha must be finite and positive.")
+            selected_quadrants = tuple(bool(field.value) for field in quadrant_fields.values())
+            if not any(selected_quadrants):
+                raise ValueError("Select at least one detector quadrant.")
+            if not all(selected_quadrants) and symmetry_axis.value == "none":
+                raise ValueError("Select a symmetry axis when using only some quadrants.")
             cmd = [sys.executable, "-m", "vmi_analysis.pes",
-                   "--abel-method", abel_method.value, "--beta-order", str(beta_order.value)]
+                   "--abel-method", abel_method.value, "--beta-order", str(beta_order.value),
+                   "--quadrants", ",".join(name for name, active in zip(QUADRANT_ORDER, selected_quadrants) if active),
+                   "--symmetry-axis", symmetry_axis.value]
             for path in files:
                 geometry = Geometry(**saved[path]) if path in saved else shared
                 x, y = geometry.center or ("auto", "auto")
@@ -322,6 +330,9 @@ def build(jobs: JobManager) -> None:
         ui.label(f"α = {meta['alpha']:g} eV/pixel²" if meta["alpha"] is not None else "Uncalibrated") \
             .classes("vmi-caption")
         ui.label(f"Abel inversion: {ABEL_METHODS[meta.get('abel_method', 'hansenlaw')]}").classes("vmi-caption")
+        quadrants = meta.get("quadrants", list(QUADRANT_ORDER))
+        ui.label(f"Quadrants: {', '.join(quadrants)} · symmetry: {meta.get('symmetry_axis', 'none')}") \
+            .classes("vmi-caption")
         with ui.row().classes("items-center gap-2"):
             ui.toggle(["Zoom", "Select fit range"], value="Zoom", on_change=set_drag_mode)
             ui.button("Clear fit range", on_click=clear_fit_range).props("flat")
@@ -417,6 +428,25 @@ def build(jobs: JobManager) -> None:
             beta_order = persist(ui.select({order: str(order) if order else "Off" for order in BETA_ORDERS},
                                            value=0, label="Maximum β order")
                                  .props("outlined dense"), "pes.beta_order")
+        with ui.expansion("Abel inversion options", icon="tune", value=False).classes("w-full").props(
+                'header-class="vmi-section-toggle text-primary" expand-icon-class="text-primary"'):
+            ui.label("Choose the detector quadrants used by the inversion and optional symmetry averaging. "
+                     "All four quadrants with no symmetry is the default full-image inversion.") \
+                .classes("vmi-subtitle")
+            with check_grid():
+                quadrant_fields = {
+                    name: persist(ui.checkbox(f"{QUADRANT_LABELS[name]} (Q{index})", value=True),
+                                  f"pes.quadrant_{name}")
+                    for index, name in enumerate(QUADRANT_ORDER)
+                }
+            with field_grid():
+                symmetry_axis = persist(ui.select(
+                    {"none": "None (independent quadrants)", "vertical": "Vertical axis",
+                     "horizontal": "Horizontal axis", "both": "Both axes"},
+                    value="none", label="Symmetry axis").props("outlined dense"), "pes.symmetry_axis")
+            ui.label("Selecting a subset of quadrants requires a symmetry axis. "
+                     "Symmetry averaging combines the selected quadrants before inversion.") \
+                .classes("vmi-subtitle")
         ui.label("Align the symmetry axis vertically before inversion. β includes even orders up to the selected maximum.") \
             .classes("vmi-subtitle")
         with action_bar(view, "Generate spectra", on_click=run):
