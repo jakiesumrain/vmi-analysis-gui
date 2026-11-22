@@ -27,6 +27,23 @@ ABEL_METHODS = {
 }
 BETA_ORDERS = (0, 2, 4, 6, 8, 10)
 BASELINE_PARAMETERS = {"None": 0, "Constant": 1, "Linear": 2}
+QUADRANT_ORDER = ("ur", "ul", "ll", "lr")
+QUADRANT_LABELS = {"ur": "Upper right", "ul": "Upper left",
+                   "ll": "Lower left", "lr": "Lower right"}
+SYMMETRY_AXES = {"none": None, "vertical": 0, "horizontal": 1, "both": (0, 1)}
+
+
+def parse_quadrants(value):
+    """Convert a comma-separated quadrant list to PyAbel's Q0..Q3 booleans."""
+    names = [name.strip().lower() for name in str(value or "").split(",") if name.strip()]
+    unknown = [name for name in names if name not in QUADRANT_LABELS]
+    if unknown:
+        raise ValueError(f"Unknown quadrant(s): {', '.join(unknown)}. "
+                         f"Choose from {', '.join(QUADRANT_ORDER)}.")
+    selected = tuple(name in names for name in QUADRANT_ORDER)
+    if not any(selected):
+        raise ValueError("Select at least one detector quadrant.")
+    return selected
 
 
 @dataclass(frozen=True)
@@ -60,7 +77,8 @@ def extract_spectrum(image, geometry=Geometry(), alpha=None, *, method="hansenla
     return _analyze_image(image, geometry, alpha, method, 0)[:4]
 
 
-def _analyze_image(image, geometry, alpha, method, beta_order):
+def _analyze_image(image, geometry, alpha, method, beta_order,
+                   use_quadrants=(True, True, True, True), symmetry_axis=None):
     if geometry.center is None:
         y, x = brightest_pixel(image)
     else:
@@ -80,7 +98,12 @@ def _analyze_image(image, geometry, alpha, method, beta_order):
         centered = rotate(centered, angle, reshape=False, order=1)
     # Matrix-based methods may write basis data unless given an explicit directory policy.
     options = {"basis_dir": None} if method in ("three_point", "two_point", "onion_peeling", "basex", "daun") else {}
+    if len(use_quadrants) != 4 or not any(use_quadrants):
+        raise ValueError("Select at least one detector quadrant.")
+    if not all(use_quadrants) and symmetry_axis is None:
+        raise ValueError("Select a symmetry axis when using only some quadrants.")
     inverted = abel.Transform(centered, method=method, direction="inverse", origin="none",
+                              symmetry_axis=symmetry_axis, use_quadrants=use_quadrants,
                               transform_options=options).transform
     radius, speed = abel.tools.vmi.angular_integration_3D(inverted)
     radius_limit = min(radius_limit, min(centered.shape) / 2 - 1)
@@ -277,18 +300,30 @@ def main(argv=None):
     parser.add_argument("--alpha", type=float, help="Energy calibration in eV per squared detector pixel")
     parser.add_argument("--abel-method", choices=ABEL_METHODS, default="hansenlaw")
     parser.add_argument("--beta-order", type=int, choices=BETA_ORDERS, default=0)
+    parser.add_argument("--quadrants", default="ur,ul,ll,lr",
+                        help="Comma-separated detector quadrants: ur, ul, ll, lr")
+    parser.add_argument("--symmetry-axis", choices=tuple(SYMMETRY_AXES), default="none",
+                        help="Quadrant symmetry averaging before inversion")
     parser.add_argument("--output", type=Path, required=True, help="Output spectrum bundle (.npz)")
     args = parser.parse_args(argv)
     if args.alpha is not None and (not np.isfinite(args.alpha) or args.alpha <= 0):
         parser.error("alpha must be finite and positive")
     if args.output.suffix.lower() != ".npz":
         parser.error("output must end in .npz")
+    try:
+        use_quadrants = parse_quadrants(args.quadrants)
+    except ValueError as exc:
+        parser.error(str(exc))
+    symmetry_axis = SYMMETRY_AXES[args.symmetry_axis]
+    if not all(use_quadrants) and symmetry_axis is None:
+        parser.error("--symmetry-axis is required when using only some quadrants")
     records, arrays = [], {}
     for filename, x, y, angle, resolution in args.image:
         try:
             geometry = Geometry(None if x == y == "auto" else (float(x), float(y)), float(angle), float(resolution))
             q, energy, intensity, center, angular = _analyze_image(
-                load_image(filename), geometry, args.alpha, args.abel_method, args.beta_order)
+                load_image(filename), geometry, args.alpha, args.abel_method, args.beta_order,
+                use_quadrants=use_quadrants, symmetry_axis=symmetry_axis)
         except (OSError, ValueError, EOFError) as exc:
             print(f"[PES] {filename}: {exc}")
             continue
@@ -301,7 +336,10 @@ def main(argv=None):
     if not records:
         raise SystemExit("[PES] No spectra generated.")
     save_plot_data(args.output, {"alpha": args.alpha, "images": records,
-                                "abel_method": args.abel_method, "beta_order": args.beta_order}, **arrays)
+                                "abel_method": args.abel_method, "beta_order": args.beta_order,
+                                "quadrants": [name for name, selected in zip(QUADRANT_ORDER, use_quadrants)
+                                              if selected],
+                                "symmetry_axis": args.symmetry_axis}, **arrays)
 
 
 if __name__ == "__main__":
