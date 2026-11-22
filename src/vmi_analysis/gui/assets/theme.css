@@ -353,7 +353,7 @@ html, body {
   position: fixed;
   z-index: 100;
   pointer-events: none;
-  border: 1px solid var(--vmi-primary);
+  border: 1px dashed var(--vmi-primary);
   background: color-mix(in srgb, var(--vmi-primary) 16%, transparent);
 }
 .vmi-live-detector-row,
