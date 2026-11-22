@@ -78,9 +78,6 @@ def build(jobs, *, navigate=None):
 
             with ui.row().classes("vmi-action-bar w-full items-center gap-2"):
                 session_button = theme.run_button("Start session")
-                abort_button = ui.button("Abort run", icon="stop") \
-                    .props("flat color=negative")
-                abort_button.visible = False
         error_label = ui.label("").classes("vmi-agent-error w-full") \
             .props('role="alert" tabindex="-1"')
         error_label.visible = False
@@ -93,8 +90,14 @@ def build(jobs, *, navigate=None):
         prompt = ui.textarea("Instruction", placeholder="Describe the analysis or file operation to perform.") \
             .classes("w-full").props("outlined autogrow rows=3")
         with ui.row().classes("w-full justify-between items-center gap-3"):
-            ui.label("Enter to send · Shift+Enter for a new line").classes("vmi-caption")
-            send_button = ui.button("Send", icon="send").props("color=primary unelevated")
+            with ui.column().classes("gap-0"):
+                with ui.row().classes("items-center gap-2"):
+                    activity_spinner = ui.spinner("dots", size="sm", color="primary").props('aria-hidden="true"')
+                    activity_label = ui.label().classes("vmi-caption").props('role="status"')
+                ui.label("Enter to send · Shift+Enter for a new line").classes("vmi-caption")
+            with ui.row().classes("items-center gap-2"):
+                abort_button = ui.button("Abort run", icon="stop").props("flat color=negative")
+                send_button = ui.button("Send", icon="send").props("color=primary unelevated")
 
     with ui.expansion("Diagnostics", icon="terminal", value=False).classes("w-full vmi-console"):
         ui.label("Process diagnostics appear here; protocol messages stay in the conversation.") \
@@ -306,6 +309,19 @@ def build(jobs, *, navigate=None):
         status.sync(session)
         snapshot = session.snapshot() if session is not None else None
         session_status = snapshot["status"] if snapshot else "idle"
+        waiting_for_approval = session_status == "running" and approval is not None
+        activity_text = {
+            "idle": "Start a session to send a message.",
+            "starting": "Starting the Agent session…",
+            "ready": "Ready for an instruction.",
+            "stopping": "Stopping the Agent session…",
+            "failed": "The Agent session failed. See Diagnostics.",
+        }.get(session_status, "The Agent session has ended.")
+        if session_status == "running":
+            activity_text = "Waiting for your approval." if waiting_for_approval else (
+                snapshot["activity"] or "Agent working…")
+        activity_label.text = activity_text
+        activity_spinner.visible = session_status in ("starting", "running", "stopping") and not waiting_for_approval
         active = session_status in ("starting", "ready", "running", "stopping")
         session_button.text = ("Starting…" if session_status == "starting" else
                                "Stopping…" if session_status == "stopping" else

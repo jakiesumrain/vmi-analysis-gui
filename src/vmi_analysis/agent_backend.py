@@ -271,6 +271,8 @@ class AgentSession:
         self._stop_thread: threading.Thread | None = None
         self._command_counter = 0
         self._panel_requests = {}
+        self._activity = ""
+        self._active_tools = {}
 
     @property
     def active(self) -> bool:
@@ -341,17 +343,26 @@ class AgentSession:
         self._append("user", message)
         command = {"type": "prompt", "message": message + model_context}
         with self._lock:
-            if self.status == "running":
+            follow_up = self.status == "running"
+            if follow_up:
                 command["streamingBehavior"] = "followUp"
             else:
                 self.status = "running"
-        self.send(command)
+                self._activity = "Waiting for the model…"
+        try:
+            self.send(command)
+        except RuntimeError:
+            with self._lock:
+                if not follow_up and not self._run_started and self.status == "running":
+                    self.status = "ready"
+            raise
 
     def abort(self) -> None:
         with self._lock:
             if self.status != "running":
                 return
             self._panel_requests.clear()
+            self._activity = "Stopping the reply…"
         self.send({"type": "abort"})
         self._append("status", "Abort requested; waiting for the current run to stop.")
 
@@ -442,21 +453,28 @@ class AgentSession:
                 self._run_started = True
                 if not self._stop_requested.is_set():
                     self.status = "running"
+                    self._activity = "Waiting for the model…"
         elif kind == "agent_settled":
             with self._lock:
                 self._run_started = False
                 self._panel_requests.clear()
+                self._active_tools.clear()
+                self._activity = ""
                 if not self._stop_requested.is_set():
                     self.status = "ready"
             self._assistant_index = None
         elif kind == "message_update":
             update = record.get("assistantMessageEvent") or {}
             if update.get("type") == "text_delta":
+                with self._lock:
+                    self._activity = "Writing a reply…"
                 self._append_assistant(str(update.get("delta", "")))
             elif update.get("type") == "error":
                 self._append("error", update.get("error", "The model stream failed."))
         elif kind == "tool_execution_start":
             name = str(record.get("toolName", "tool"))
+            with self._lock:
+                self._active_tools[str(record.get("toolCallId", name))] = self._redact(name)[:80]
             args = record.get("args") or {}
             detail = ""
             if isinstance(args, dict):
@@ -464,6 +482,9 @@ class AgentSession:
             self._append("tool", name, detail)
         elif kind == "tool_execution_end":
             name = str(record.get("toolName", "tool"))
+            with self._lock:
+                self._active_tools.pop(str(record.get("toolCallId", name)), None)
+                self._activity = "Waiting for the model…"
             outcome = "failed" if record.get("isError") else "finished"
             self._append("status", f"{name} {outcome}.")
         elif kind in ("auto_retry_start", "compaction_start"):
@@ -598,6 +619,10 @@ class AgentSession:
             return {
                 "id": self.id,
                 "status": self.status,
+                "activity": (
+                    f"Running {next(iter(self._active_tools.values()))}…"
+                    if self._active_tools else self._activity
+                ),
                 "error": self.error,
                 "model": self.request.model,
                 "base_url": self.request.base_url,

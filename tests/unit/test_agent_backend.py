@@ -130,6 +130,7 @@ class AgentBackendTests(unittest.TestCase):
         session.process = FakeProcess()
         session.status = "ready"
         session.prompt("Inspect the dataset")
+        self.assertEqual(session.snapshot()["activity"], "Waiting for the model…")
         command = json.loads(session.process.stdin.getvalue())
         self.assertEqual(command["type"], "prompt")
         self.assertEqual(command["message"], "Inspect the dataset")
@@ -140,10 +141,18 @@ class AgentBackendTests(unittest.TestCase):
         session.prompt("Summarize afterwards")
         second = json.loads(session.process.stdin.getvalue().splitlines()[1])
         self.assertEqual(second["streamingBehavior"], "followUp")
+        session.handle_record({"type": "tool_execution_start", "toolCallId": "read-1", "toolName": "read"})
+        session.handle_record({"type": "tool_execution_start", "toolCallId": "read-2", "toolName": "read"})
+        session.handle_record({"type": "tool_execution_end", "toolCallId": "read-1", "toolName": "read"})
+        self.assertEqual(session.snapshot()["activity"], "Running read…")
+        session.handle_record({"type": "tool_execution_end", "toolCallId": "read-2", "toolName": "read"})
+        self.assertEqual(session.snapshot()["activity"], "Waiting for the model…")
         session.handle_record({"type": "message_update",
                                "assistantMessageEvent": {"type": "text_delta", "delta": "A result"}})
+        self.assertEqual(session.snapshot()["activity"], "Writing a reply…")
         session.handle_record({"type": "agent_settled", "aborted": False})
         self.assertEqual(session.status, "ready")
+        self.assertEqual(session.snapshot()["activity"], "")
         self.assertEqual(session.snapshot()["entries"][-1]["text"], "A result")
 
     def test_second_prompt_before_first_response_is_queued(self):
