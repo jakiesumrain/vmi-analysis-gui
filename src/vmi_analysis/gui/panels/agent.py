@@ -11,7 +11,7 @@ from vmi_analysis.paths import GENERATED_DIR
 
 from .. import agent_panels, shared, theme
 from ..jobs import TERMINAL
-from .common import field_grid
+from .common import JobView, field_grid
 
 
 class AgentStatus:
@@ -101,6 +101,27 @@ def build(jobs, *, navigate=None):
             .classes("vmi-caption")
         diagnostics_log = theme.log_console()
 
+    workflow_view = JobView(jobs, job_name=agent_panels.DUMP_TO_TOF)
+    with theme.panel_card() as workflow_card:
+        theme.form_section(agent_panels.DUMP_TO_TOF)
+        with ui.row().classes("items-center gap-4"):
+            workflow_steps = ui.label().classes("vmi-caption")
+            stop_workflow = ui.button("Stop workflow", icon="stop", on_click=workflow_view.cancel).props("flat")
+        if navigate:
+            with ui.row().classes("items-center gap-2"):
+                ui.button("Open TPX3 Dump", on_click=lambda: navigate("TPX3 Dump")).props("flat")
+                ui.button("Open Ion TOF", on_click=lambda: navigate("Ion TOF")).props("flat")
+        workflow_view.place_console("Workflow console")
+    workflow_card.set_visibility(False)
+
+    def refresh_workflow():
+        workflow = workflow_view.job
+        workflow_card.set_visibility(workflow is not None)
+        if workflow is not None:
+            workflow_steps.text = " · ".join(f"{stage.name} {stage.status}" for stage in workflow.stages)
+            stop_workflow.set_visibility(workflow.status in ("queued", "running"))
+            stop_workflow.set_enabled(not workflow.cancel_requested)
+
     rendered = []
     rendered_session = None
     diagnostics_cursor = 0
@@ -157,6 +178,9 @@ def build(jobs, *, navigate=None):
                 show_error(exc)
                 await answer(session, key, {"error": str(exc)})
                 return
+            if submitted.name == agent_panels.DUMP_TO_TOF:
+                workflow_view.attach(submitted)
+                refresh_workflow()
             ui.notify(f"{submitted.name} submitted · {submitted.id}", type="positive")
             await answer(session, key, {"job_id": submitted.id, "panel": submitted.name, "status": submitted.status})
 
@@ -402,4 +426,5 @@ def build(jobs, *, navigate=None):
     refresh()
     shared.workspace_timer(0.4, refresh)
     shared.workspace_timer(0.4, refresh_panel)
+    shared.workspace_timer(0.4, refresh_workflow)
     return open_fit_context

@@ -164,6 +164,13 @@ alignment shift after checking the Ion TOF diagnostics, then supply the
 fit range and whether to fit the gated or unfiltered spectrum. Both fit
 modes count and normalize using the GMD2-gated frames.
 
+To run the first two panels together, ask the Agent to dump a TPX3 input
+and plot its unfiltered TOF. The approval shows both stages and the
+output passed between them. After approval, the workflow console shows
+each stage and offers **Stop workflow** while it is active. Reopen
+**Agent** after a browser reload to follow the workflow on the running
+server. The completed stages also appear in **TPX3 Dump** and **Ion TOF**.
+
 ## Security boundary
 
 This deployment separates application accounts for an approved lab team.

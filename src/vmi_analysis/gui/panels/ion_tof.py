@@ -184,14 +184,15 @@ def _results(job):
 
 
 def spectrum_job(path, *, source="pixels", reference=DEFAULT_REFERENCE, width=DEFAULT_BIN_SIZE_NS,
-                 low=0, high=None):
+                 low=0, high=None, pending_input=False):
     if not path:
         raise ValueError("Choose a LUNA HDF5 file or acquisition collection.")
     source_file = shared.checked_path(path)
-    if not source_file.is_file():
-        raise ValueError("The selected HDF5 file or collection does not exist.")
-    for member in collection_reads(source_file):
-        shared.checked_path(member)
+    if not pending_input:
+        if not source_file.is_file():
+            raise ValueError("The selected HDF5 file or collection does not exist.")
+        for member in collection_reads(source_file):
+            shared.checked_path(member)
     if source not in SOURCES or reference not in REFERENCES:
         raise ValueError("Choose a valid count source and trigger reference.")
     if width is None or not isfinite(width) or width <= 0:

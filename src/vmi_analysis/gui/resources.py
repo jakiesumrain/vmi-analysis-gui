@@ -68,7 +68,7 @@ class Access:
         return None
 
 
-def command_access(cmd, cwd=None):
+def command_access(cmd, cwd=None, *, prior_outputs=()):
     """Declare actual GUI command inputs/outputs without importing analysis scripts.
 
     Output directories are reserved as a whole for multi-file analysis stages.
@@ -102,7 +102,7 @@ def command_access(cmd, cwd=None):
         read(path)
         if path:
             candidate = canonical_path(path, cwd)
-            if candidate.suffix.lower() == ".json":
+            if candidate.suffix.lower() == ".json" and candidate not in prior_outputs:
                 for item in collection_reads(candidate):
                     read(item)
 
@@ -208,6 +208,6 @@ def job_access(job):
                            centroid_output_dir=command.centroid_output_dir)
         return combined
     for stage in job.stages:
-        access = access.union(command_access(stage.cmd, stage.cwd))
+        access = access.union(command_access(stage.cmd, stage.cwd, prior_outputs=access.writes))
         access = access.union(Access(writes=frozenset(canonical_path(p, stage.cwd) for p in stage.outputs)))
     return access

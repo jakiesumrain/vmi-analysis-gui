@@ -38,6 +38,7 @@ class Stage:
     status: str = "queued"
     started: float | None = None
     finished: float | None = None
+    result: Job | None = None
 
 
 @dataclass
@@ -104,8 +105,10 @@ class JobManager:
                        'XDG_CACHE_HOME': str(account.root / '.cache'),
                        'MPLCONFIGDIR': str(account.root / '.cache' / 'matplotlib'),
                        'PYTHONSAFEPATH': '1', 'VMI_SHARED_CONFIG': ''}
-            for cmd in [job.cmd, *(stage.cmd for stage in job.stages or ())]:
-                shared.check_command(cmd)
+            commands = [stage.cmd for stage in job.stages] if job.stages is not None else [job.cmd]
+            for command in commands:
+                if command is not None:
+                    shared.check_command(command)
         access = job_access(job)
         if account:
             for path in access.reads:
@@ -367,11 +370,30 @@ class JobManager:
             job.log.append(f"\n[stage {i+1}/{n}] {stage.name}")
             job.extra["stage_index"] = i
             job.progress = None
-            rc = self._run_cmd(job, stage.cmd, stage.cwd,
-                               prefix=f"[{stage.name}] ")
+            try:
+                if stage.result is None:
+                    rc = self._run_cmd(job, stage.cmd, stage.cwd, prefix=f"[{stage.name}] ")
+                else:
+                    rc = self._run_cmd(job, stage.cmd, stage.cwd, prefix=f"[{stage.name}] ",
+                                       stage_result=stage.result)
+            except OSError as exc:
+                message = f"[{stage.name}] Could not launch the stage: {exc}"
+                job.log.append(message)
+                if stage.result is not None:
+                    stage.result.log.append(message)
+                rc = -1
             stage.finished = time.time()
             stage.status = ("cancelled" if job._cancel_requested
                             else "done" if rc == 0 else "failed")
+            if stage.result is not None:
+                result = stage.result
+                result.owner = job.owner
+                result.created = result.started = stage.started
+                result.finished = stage.finished
+                result.progress = 1.0 if stage.status == "done" else None
+                result.returncode, result.status = rc, stage.status
+                with self._lock:
+                    self._jobs[result.id] = result
             if rc != 0 or job._cancel_requested:
                 outcome = "CANCELLED" if job._cancel_requested else "FAILED"
                 job.log.append(f"[stage {i+1}/{n}] {stage.name} {outcome} (rc={rc});"
@@ -383,7 +405,7 @@ class JobManager:
         job.returncode = 0
 
     def _run_cmd(self, job: Job, cmd: list[str], cwd: str | None,
-                 prefix: str = "") -> int:
+                 prefix: str = "", *, stage_result: Job | None = None) -> int:
         with self._lock:
             if job._cancel_requested:
                 return -1
@@ -395,7 +417,11 @@ class JobManager:
         # The pipe is decoded as UTF-8 below; without this the child (Windows
         # locale) writes GBK and tqdm bars / em-dashes arrive as U+FFFD.
         env["PYTHONIOENCODING"] = "utf-8"
-        job.log.append(f"[gui] $ {' '.join(str(c) for c in cmd)}")
+        command_line = f"[gui] $ {' '.join(str(c) for c in cmd)}"
+        job.log.append(command_line)
+        if stage_result is not None:
+            stage_result.log.append(command_line)
+        output_job = stage_result if stage_result is not None else job
         kwargs = {}
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
@@ -427,12 +453,14 @@ class JobManager:
                     seg = seg.rstrip()
                     if not seg:
                         continue
-                    if job.consume_output is not None and job.consume_output(job, seg):
+                    if output_job.consume_output is not None and output_job.consume_output(output_job, seg):
                         continue
                     m = _PROGRESS_RE.search(seg)
                     if m:
                         job.progress = min(1.0, int(m.group(1)) / 100.0)
                     job.log.append(prefix + seg)
+                    if stage_result is not None:
+                        stage_result.log.append(seg)
             proc.wait()
         finally:
             with self._lock:

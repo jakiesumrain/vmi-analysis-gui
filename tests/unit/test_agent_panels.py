@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event
 import time
 from types import SimpleNamespace
 import unittest
@@ -14,6 +15,7 @@ import numpy as np
 from vmi_analysis.agent_backend import AgentRequest, AgentSession, ContainerLauncher, PANEL_REQUEST_TITLE
 from vmi_analysis.gui import agent_panels, shared
 from vmi_analysis.gui.jobs import Job, JobManager
+from vmi_analysis.gui.resources import job_access
 from vmi_analysis.gui.panels import ion_luna, ion_tof
 
 
@@ -99,6 +101,59 @@ class AgentPanelTests(unittest.TestCase):
         dump.owner = "another_user"
         with self.assertRaisesRegex(ValueError, "your workspace"):
             agent_panels.status(self.jobs, dump.id)
+
+    def test_workflow_reserves_the_future_collection_and_stops_after_dump_failure(self):
+        (self.datasets / "sample.tpx3").touch()
+        workflow, summary = agent_panels.prepare(self.jobs, "ion_dump_to_tof", {
+            "dump": {"input": "/datasets/sample.tpx3", "output": "/workspace/ions.h5"},
+            "tof": {"bin_size_ns": 10},
+        })
+        collection = self.workspace / "ions.segments.json"
+        self.assertFalse(collection.exists())
+        self.assertEqual(summary["2. LUNA input"], str(collection))
+        self.assertIn(collection.resolve(), job_access(workflow).writes)
+        self.assertEqual(self.jobs.jobs(), [])
+        self.addCleanup(self.jobs.shutdown)
+        with patch.object(self.jobs, "_run_cmd", return_value=1) as run:
+            self.jobs.submit(workflow)
+            deadline = time.monotonic() + 5
+            while workflow.status in ("queued", "running") and time.monotonic() < deadline:
+                time.sleep(.01)
+        run.assert_called_once()
+        outcome = agent_panels.status(self.jobs, workflow.id)
+        self.assertEqual(outcome["status"], "failed")
+        self.assertEqual([step["status"] for step in outcome["steps"]], ["failed", "cancelled"])
+        self.assertEqual(self.jobs.get(outcome["steps"][0]["job_id"]).owner, self.account.name)
+        with patch.object(shared, "current_account", return_value=SimpleNamespace(name="other")):
+            with self.assertRaisesRegex(ValueError, "your workspace"):
+                agent_panels.status(self.jobs, workflow.id)
+
+    def test_stopping_workflow_cancels_the_waiting_tof_stage(self):
+        (self.datasets / "sample.tpx3").touch()
+        workflow, _ = agent_panels.prepare(self.jobs, "ion_dump_to_tof", {
+            "dump": {"input": "/datasets/sample.tpx3", "output": "/workspace/ions.h5"},
+        })
+        running, release = Event(), Event()
+
+        def run_step(*args, **kwargs):
+            running.set()
+            release.wait(5)
+            return 0
+
+        self.addCleanup(self.jobs.shutdown)
+        with patch.object(self.jobs, "_run_cmd", side_effect=run_step) as run:
+            self.jobs.submit(workflow)
+            try:
+                self.assertTrue(running.wait(5))
+                self.jobs.cancel(workflow.id)
+            finally:
+                release.set()
+            deadline = time.monotonic() + 5
+            while workflow.status in ("queued", "running") and time.monotonic() < deadline:
+                time.sleep(.01)
+        run.assert_called_once()
+        self.assertEqual(workflow.status, "cancelled")
+        self.assertEqual([stage.status for stage in workflow.stages], ["cancelled", "cancelled"])
 
     def test_stale_and_duplicate_approvals_cannot_be_claimed(self):
         clock = [0.0]
