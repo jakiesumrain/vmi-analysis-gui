@@ -4,8 +4,10 @@ import asyncio
 from importlib.resources import files
 import json
 from math import isfinite, log, sqrt
+from pathlib import Path
 import re
 import sys
+from tempfile import NamedTemporaryFile
 
 from nicegui import ui
 import numpy as np
@@ -30,6 +32,7 @@ from .ion_tof import REFERENCE_LABELS, SOURCES, _drag_interval, _mark_interval, 
 JOB_NAME = "Ion momenta"
 PLOT_HEIGHT = 580
 MAX_SPECIES = 64
+SPECIES_SCHEMA = "vmi-ion-species/1"
 
 
 def init_area_selection():
@@ -169,7 +172,7 @@ def _species_fields(record, save_peak):
                     return
                 save_peak(dict(record, formula=name, charge=int(number), t0_ns=t0, window_ns=list(window)))
 
-            ui.button("Add to species list", on_click=add).props("flat")
+            ui.button("Append to species file", on_click=add).props("flat")
 
 
 def _linked_plots(job, jobs, source, result, save_peak):
@@ -315,7 +318,7 @@ def _momentum_figure(edges, image, horizontal, vertical):
 
 
 def _species_entries(document, sources, reference):
-    if not isinstance(document, dict) or document.get("schema") != "vmi-ion-species/1":
+    if not isinstance(document, dict) or document.get("schema") != SPECIES_SCHEMA:
         raise ValueError("Choose an ion-species.json file exported by this panel.")
     items = document.get("species")
     if not isinstance(items, list) or not 1 <= len(items) <= MAX_SPECIES:
@@ -373,7 +376,7 @@ def _momentum_controls(job, jobs, result, saved):
 
     def append_assignment(item):
         if not using_file and len(rows) < MAX_SPECIES:
-            entries = _species_entries(dict(schema="vmi-ion-species/1", species=[item]),
+            entries = _species_entries(dict(schema=SPECIES_SCHEMA, species=[item]),
                                        sources, job.extra["reference"])
             add_row(entries[0])
             status.set_text(f"{len(rows)} assignments from this run.")
@@ -487,7 +490,34 @@ def _momentum_controls(job, jobs, result, saved):
     return append_assignment
 
 
-def _results(job, jobs):
+def _append_species_file(path, peak):
+    if path.suffix.lower() != ".json":
+        raise ValueError("Choose a species file ending in .json.")
+    document = dict(schema=SPECIES_SCHEMA, species=[])
+    if path.exists():
+        document = json.loads(path.read_text(encoding="utf-8-sig"))
+        if (not isinstance(document, dict) or document.get("schema") != SPECIES_SCHEMA
+                or not isinstance(document.get("species"), list)):
+            raise ValueError("Choose an ion-species JSON file or a new filename.")
+    assignments = document["species"]
+    if peak in assignments:
+        return
+    if len(assignments) >= MAX_SPECIES:
+        raise ValueError(f"Choose a file with fewer than {MAX_SPECIES} species assignments.")
+    assignments.append(peak)
+    data = json.dumps(document, indent=2, allow_nan=False) + "\n"
+    temporary = NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                   suffix=".tmp", delete=False)
+    temp_path = Path(temporary.name)
+    try:
+        with temporary:
+            temporary.write(data)
+        temp_path.replace(path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _results(job, jobs, species_file):
     if job.status != "done":
         return
     with np.load(shared.checked_path(job.extra["histogram"]), allow_pickle=False) as data:
@@ -495,9 +525,19 @@ def _results(job, jobs):
     saved = []
 
     def save_peak(peak):
+        try:
+            destination = species_file.value.strip()
+            if not destination:
+                raise ValueError("Choose a Species JSON file in the Ion momenta form.")
+            path = shared.checked_path(destination, write=True, cwd=shared.workspace_root())
+            with jobs.write_access([path]):
+                _append_species_file(path, peak)
+        except (ValueError, OSError, RecursionError, ResourceBusyError) as exc:
+            ui.notify(str(exc), type="warning")
+            return
+        ui.notify(f"Assignment saved to {path.name}.", type="positive")
         if peak not in saved:
             if len(saved) >= MAX_SPECIES:
-                ui.notify(f"Save up to {MAX_SPECIES} species assignments per run.", type="warning")
                 return
             saved.append(peak)
             summary.set_text(f"{len(saved)} species assignments ready to download.")
@@ -506,7 +546,7 @@ def _results(job, jobs):
                 append_assignment(peak)
 
     def download_species():
-        document = dict(schema="vmi-ion-species/1", species=saved)
+        document = dict(schema=SPECIES_SCHEMA, species=saved)
         ui.download.content(json.dumps(document, indent=2, allow_nan=False) + "\n",
                             "ion-species.json", "application/json")
 
@@ -540,7 +580,7 @@ def _results(job, jobs):
 
 
 def build(jobs):
-    view = JobView(jobs, job_name=JOB_NAME, results_builder=lambda job: _results(job, jobs))
+    view = JobView(jobs, job_name=JOB_NAME, results_builder=lambda job: _results(job, jobs, species_file))
     theme.panel_header(JOB_NAME, "Inspect detector positions and time of flight for ion momentum analysis.", view=view)
 
     def save(widget, key):
@@ -603,6 +643,8 @@ def build(jobs):
             bin_size = save(num_input("TOF bin size (ns)", DEFAULT_BIN_SIZE_NS, step="any"), "bin_size_ns")
             minimum = save(num_input("TOF minimum (ns)", 0, min=0, step="any"), "minimum")
             maximum = save(num_input("TOF maximum (ns, blank = auto)", None, step="any"), "maximum")
+        species_file = save(path_input("Species JSON file (append assignments)", browse="save",
+                                       filters=[".json"], default_name="ion-species.json"), "species_file")
         ui.label("Momentum reconstruction requires the ion mass and charge, detector center, "
                  "and spectrometer calibration or flight-field model.").classes("vmi-subtitle")
         with action_bar(view, "Plot positions and TOF", on_click=run):
