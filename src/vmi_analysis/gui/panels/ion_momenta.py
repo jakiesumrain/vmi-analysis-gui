@@ -1,6 +1,7 @@
 """Detector-position and TOF workbench for ion momentum reconstruction."""
 
 import asyncio
+from importlib.resources import files
 import json
 from math import isfinite, log, sqrt
 import re
@@ -26,6 +27,11 @@ from .ion_tof import REFERENCE_LABELS, SOURCES, _drag_interval, _mark_interval, 
 
 JOB_NAME = "Ion momenta"
 PLOT_HEIGHT = 580
+
+
+def init_area_selection():
+    script = (files("vmi_analysis.gui.assets") / "ion_area_selection.js").read_text(encoding="utf-8")
+    ui.add_body_html(f"<script>{script}</script>", shared=True)
 
 
 def _position_figure(image, title="Detector positions"):
@@ -156,6 +162,7 @@ def _linked_plots(job, jobs, source, result, save_peak):
     reference = job.extra["reference"]
     revisions = {"position": 0, "tof": 0}
     gates = dict.fromkeys(revisions)
+    redraw = {"position": lambda: redraw_image(), "tof": lambda: redraw_tof()}
 
     async def apply(kind, bounds):
         revisions[kind] += 1
@@ -164,7 +171,7 @@ def _linked_plots(job, jobs, source, result, save_peak):
         target.clear()
         if bounds is None:
             gates[kind] = None
-            redraw()
+            redraw[kind]()
             return
         with target:
             ui.label("Applying gate…").classes("vmi-caption")
@@ -183,12 +190,12 @@ def _linked_plots(job, jobs, source, result, save_peak):
                 with target:
                     ui.label(str(exc)).classes("text-negative")
                 gates[kind] = None
-                redraw()
+                redraw[kind]()
             return
         if revisions[kind] != revision or target.is_deleted:
             return
         gates[kind] = bounds
-        redraw()
+        redraw[kind]()
         target.clear()
         with target:
             if kind == "tof":
@@ -233,19 +240,16 @@ def _linked_plots(job, jobs, source, result, save_peak):
         if tof_mode.value == "Select TOF range" and (limits := _drag_interval(event)):
             await select("tof", times, limits)
 
-    def redraw():
+    def redraw_image():
         fig = _position_figure(image)
-        selecting = image_mode.value == "Select area"
-        if selecting:
-            fig.add_scatter(x=[0, image.shape[1] - 1], y=[0, image.shape[0] - 1], mode="markers",
-                            marker=dict(opacity=0), hoverinfo="skip")
         if gates["position"] is not None:
             xmin, xmax, ymin, ymax = gates["position"]
             fig.add_shape(type="rect", x0=xmin, x1=xmax, y0=ymin, y1=ymax,
                           line=dict(color="#38bdf8", width=2))
-        fig.update_layout(dragmode="select" if selecting else "zoom", uirevision="positions",
-                          selections=[], selectionrevision=str(gates["position"]))
+        fig.update_layout(uirevision="positions")
         image_plot.update_figure(plot_options(fig))
+
+    def redraw_tof():
         selecting = tof_mode.value == "Select TOF range"
         fig = _tof_figure(edges, {source: result[source]}, "Time-of-flight spectrum", selecting=selecting)
         fig.update_layout(height=PLOT_HEIGHT, margin=dict(l=65, r=24, t=90, b=65), uirevision="tof")
@@ -272,11 +276,13 @@ def _linked_plots(job, jobs, source, result, save_peak):
     with ui.element("div").classes("vmi-ion-detector-row"):
         filtered_image = ui.column().classes("w-full min-w-0")
         filtered_tof = ui.column().classes("w-full min-w-0")
-    image_mode.on_value_change(lambda _: redraw())
-    tof_mode.on_value_change(lambda _: redraw())
-    image_plot.on("plotly_selected", image_selected, js_handler="event => emit(event?.range ?? null)")
+    image_mode.on_value_change(lambda event: image_plot.props(
+        'data-ion-area="on"' if event.value == "Select area" else 'data-ion-area="off"'))
+    tof_mode.on_value_change(lambda _: redraw_tof())
+    image_plot.on("ion-area-selected", image_selected, js_handler="event => emit(event.detail)")
     tof_plot.on("plotly_selected", tof_selected, js_handler="event => emit(event?.range ?? null)")
-    redraw()
+    redraw_image()
+    redraw_tof()
 
 
 def _results(job, jobs):

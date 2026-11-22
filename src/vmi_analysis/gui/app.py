@@ -410,6 +410,7 @@ def main(*, host: str = "0.0.0.0", launch_command: str = "uv run vmi-analysis") 
         MANAGER.set_max_concurrent(2)
     init_zoom_overlay()
     pes.init_axes()
+    ion_momenta.init_area_selection()
     ui.run(title="VMI Analysis",
            favicon=str(files("vmi_analysis.gui.assets") / "electron-spectrum-measured.svg"),
            host=host,

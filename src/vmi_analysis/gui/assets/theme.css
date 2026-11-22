@@ -345,6 +345,17 @@ html, body {
   background: var(--vmi-hairline);
 }
 .vmi-field-grid { row-gap: var(--vmi-space-3); }
+[data-ion-area="on"] .nsewdrag {
+  cursor: crosshair;
+  touch-action: none;
+}
+.ion-area-draft {
+  position: fixed;
+  z-index: 100;
+  pointer-events: none;
+  border: 1px solid var(--vmi-primary);
+  background: color-mix(in srgb, var(--vmi-primary) 16%, transparent);
+}
 .vmi-live-detector-row,
 .vmi-ion-detector-row {
   display: grid;
