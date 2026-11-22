@@ -9,7 +9,9 @@ import numpy as np
 
 from vmi_analysis.gui.resources import command_access
 from vmi_analysis.ion_acquisition import SCHEMA, collection_reads
-from vmi_analysis.ion_momenta import gated_preview, main, position_histograms
+from vmi_analysis.ion_momenta import (DEFAULT_MM_PER_PIXEL, LONGITUDINAL_CONVERSION, SpeciesMomentum,
+                                     gated_preview, main, momentum_components, momentum_projections,
+                                     position_histograms)
 from vmi_analysis.ion_tof import histogram
 
 
@@ -49,6 +51,26 @@ class IonMomentaTests(unittest.TestCase):
             self.assertEqual(image.shape, (401, 302))
             self.assertEqual(image.sum(), 2)
             self.assertEqual((image[9, 12], image[400, 301]), (1, 1))
+
+    def test_momenta_use_pixel_center_tof_reference_and_longitudinal_scale(self):
+        ion = SpeciesMomentum("clusters", (.0039, .0041), 131.293, 2, .005, 1.5)
+        momenta = momentum_components(np.array([14.]), np.array([6.]), np.array([1000.]),
+                                      SpeciesMomentum("clusters", (0, 2000), 131.293, 2, 1010, 1.5),
+                                      (12., 8.), DEFAULT_MM_PER_PIXEL)
+        expected = 349.7122801734099 * 131.293 * 2 / 1000
+        np.testing.assert_allclose(momenta, [[expected], [-expected], [LONGITUDINAL_CONVERSION * 30]])
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "dump.h5"
+            self.create_dump(path)
+            result = position_histograms(path, ("clusters",), minimum=0, maximum=.003)
+            edges, maps, counts = momentum_projections(
+                path, "TDC1Rising", [ion], (300.75, 400.25), DEFAULT_MM_PER_PIXEL,
+                result["trigger_times"], result["segment_offsets"], stopped=lambda: False,
+            )
+            np.testing.assert_array_equal(counts, [1])
+            np.testing.assert_array_equal(maps.sum(axis=(2, 3)), [[1, 1]])
+            zero_bin = np.searchsorted(edges[0], 0, side="right") - 1
+            self.assertEqual(maps[0, 0, zero_bin, zero_bin], 1)
 
     def test_independent_gates_use_unrounded_positions_and_unbinned_tof(self):
         with tempfile.TemporaryDirectory() as folder:

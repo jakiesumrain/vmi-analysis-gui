@@ -1,6 +1,7 @@
 """Build matched detector-position and TOF views for ion momentum analysis."""
 
 import argparse
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import tempfile
@@ -17,6 +18,73 @@ from .tof_bins import DEFAULT_BIN_SIZE_NS
 
 COORDINATES = {"pixels": ("x", "y"), "clusters": ("cx", "cy")}
 MAX_IMAGE_BINS = 1_048_576
+DEFAULT_MM_PER_PIXEL = 75 / 180
+TRANSVERSE_CONVERSION = 839.3094724161837
+LONGITUDINAL_CONVERSION = 1.784795
+MOMENTUM_BINS = 161
+
+
+@dataclass(frozen=True)
+class SpeciesMomentum:
+    source: str
+    window_ns: tuple[float, float]
+    mass_u: float
+    charge: int
+    t0_ns: float
+    pz_scale: float = 1.0
+
+
+def momentum_components(x, y, tof, species, center, mm_per_pixel):
+    """Return the three momentum components in atomic units for positive TOF."""
+    transverse = TRANSVERSE_CONVERSION * species.mass_u * mm_per_pixel / tof
+    return (transverse * (x - center[0]), transverse * (y - center[1]),
+            LONGITUDINAL_CONVERSION * species.charge * species.pz_scale * (species.t0_ns - tof))
+
+
+def momentum_projections(path, reference, species, center, mm_per_pixel, triggers, offsets, *, stopped):
+    """Accumulate both projections with the same bin scale, using bounded working memory."""
+    paths = segment_files(path)
+    if len(paths) + 1 != len(offsets):
+        raise ValueError("The acquisition segments changed. Plot positions and TOF again.")
+    by_source = {source: [] for source in ARRIVALS}
+    for index, item in enumerate(species):
+        by_source[item.source].append((index, item))
+
+    def blocks():
+        for (data, _), start, stop in zip(paths, offsets[:-1], offsets[1:], strict=True):
+            with h5py.File(data, "r") as file:
+                actual = _trigger_times(file, reference)
+                if not np.array_equal(actual, triggers[start:stop]):
+                    raise ValueError("The triggers changed. Plot positions and TOF again.")
+                for source, group in by_source.items():
+                    if not group:
+                        continue
+                    for x, y, tof in position_blocks(file, source, actual):
+                        if stopped():
+                            raise ValueError("The momentum preview stopped.")
+                        valid = valid_positions(x, y) & (tof > 0)
+                        for index, item in group:
+                            low, high = item.window_ns
+                            mask = valid & (tof >= low) & (tof <= high)
+                            if np.any(mask):
+                                values = momentum_components(x[mask], y[mask], tof[mask],
+                                                             item, center, mm_per_pixel)
+                                if not np.isfinite(values).all():
+                                    raise ValueError("Momentum values overflowed. Check the scales and ion mass.")
+                                yield index, values
+
+    extents = np.zeros(len(species))
+    totals = np.zeros(len(species), dtype=np.int64)
+    for index, values in blocks():
+        extents[index] = max(extents[index], *(np.max(np.abs(axis)) for axis in values))
+        totals[index] += len(values[0])
+    edges = [np.linspace(-bound, bound, MOMENTUM_BINS + 1) for bound in np.maximum(extents, 1)]
+    maps = np.zeros((len(species), 2, MOMENTUM_BINS, MOMENTUM_BINS), dtype=np.int64)
+    if totals.any():
+        for index, (px, py, pz) in blocks():
+            maps[index, 0] += np.histogram2d(py, px, bins=edges[index])[0].astype(np.int64)
+            maps[index, 1] += np.histogram2d(pz, py, bins=edges[index])[0].astype(np.int64)
+    return edges, maps, totals
 
 
 def position_blocks(file, source, triggers):

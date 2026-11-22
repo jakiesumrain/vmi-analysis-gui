@@ -12,7 +12,8 @@ import numpy as np
 import plotly.graph_objects as go
 
 from vmi_analysis.ion_acquisition import collection_reads
-from vmi_analysis.ion_momenta import gated_preview
+from vmi_analysis.ion_momenta import (DEFAULT_MM_PER_PIXEL, SpeciesMomentum, gated_preview,
+                                     momentum_projections)
 from vmi_analysis.ion_tof import DEFAULT_REFERENCE
 from vmi_analysis.pes import evaluate_fit_for_plot, fit_peaks
 from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS
@@ -27,6 +28,7 @@ from .ion_tof import REFERENCE_LABELS, SOURCES, _drag_interval, _mark_interval, 
 
 JOB_NAME = "Ion momenta"
 PLOT_HEIGHT = 580
+MAX_SPECIES = 64
 
 
 def init_area_selection():
@@ -298,6 +300,176 @@ def _linked_plots(job, jobs, source, result, save_peak):
     redraw_tof()
 
 
+def _momentum_figure(edges, image, horizontal, vertical):
+    centers = (edges[:-1] + edges[1:]) / 2
+    fig = _style(go.Figure(), f"{horizontal}–{vertical}")
+    fig.add_heatmap(x=centers, y=centers, z=image, colorscale="Viridis",
+                    colorbar=dict(title="Counts", thickness=14),
+                    hovertemplate="%{x:.4g}, %{y:.4g} a.u.<br>%{z:,} counts<extra></extra>")
+    fig.update_layout(height=460, margin=dict(l=65, r=65, t=55, b=55))
+    axis = dict(range=[edges[0], edges[-1]], constrain="domain", zeroline=False)
+    fig.update_xaxes(title_text=f"{horizontal} (a.u.)", **axis)
+    fig.update_yaxes(title_text=f"{vertical} (a.u.)", scaleanchor="x", scaleratio=1, **axis)
+    return fig
+
+
+def _species_entries(document, sources, reference):
+    if not isinstance(document, dict) or document.get("schema") != "vmi-ion-species/1":
+        raise ValueError("Choose an ion-species.json file exported by this panel.")
+    items = document.get("species")
+    if not isinstance(items, list) or not 1 <= len(items) <= MAX_SPECIES:
+        raise ValueError(f"The species file must contain 1–{MAX_SPECIES} assignments.")
+    entries = []
+    for item in items:
+        if (not isinstance(item, dict) or not isinstance(item.get("formula"), str) or not item["formula"].strip()
+                or type(item.get("charge")) is not int or not item["charge"]
+                or abs(item["charge"]) > 2**53):
+            raise ValueError("Each assignment needs a chemical formula and a nonzero integer charge.")
+        if item.get("source") not in sources or item.get("trigger_reference") != reference:
+            raise ValueError("Plot positions and TOF with the count sources and trigger reference in the species file.")
+        window = item.get("window_ns")
+        t0 = item.get("t0_ns", item.get("center_ns"))
+        if (not isinstance(window, list) or len(window) != 2
+                or any(type(value) not in (int, float) or not -1e100 < value < 1e100 for value in (*window, t0))
+                or window[0] >= window[1]):
+            raise ValueError("Each assignment needs finite TOF limits and a zero-momentum TOF.")
+        entries.append((item["formula"], item["charge"], item["source"], tuple(window), t0))
+    return entries
+
+
+def _momentum_controls(job, jobs, result, saved):
+    sources = tuple(source for source in ("clusters", "pixels") if source in result)
+    detector = result[f"{sources[0]}_image"]
+    if not detector.any() and len(sources) > 1:
+        detector = result[f"{sources[1]}_image"]
+    y, x = np.unravel_index(detector.argmax(), detector.shape) if detector.any() else (None, None)
+    rows = []
+    using_file = False
+    plotting = False
+
+    def add_row(entry):
+        formula, charge, source, window, t0 = entry
+        with calibrations, ui.column().classes("w-full gap-1"):
+            ui.label(f"{formula} · charge {charge:+d} · {SOURCES[source]} · "
+                     f"{window[0]:.6g}–{window[1]:.6g} ns").classes("vmi-caption")
+            with field_grid(3):
+                mass = num_input("Ion mass (u)", 131.293 if formula == "Xe" else None, step="any")
+                reference = num_input("Momentum t₀ (ns)", t0, step="any")
+                pz_scale = num_input("p_z scale factor", 1, step="any")
+        rows.append((formula, charge, source, window, mass, reference, pz_scale))
+        plot_button.set_enabled(not plotting)
+
+    def use_current():
+        nonlocal using_file
+        using_file = False
+        calibrations.clear()
+        plots.clear()
+        rows.clear()
+        plot_button.disable()
+        for item in saved:
+            append_assignment(item)
+        status.set_text(f"{len(rows)} assignments from this run.")
+
+    def append_assignment(item):
+        if not using_file and len(rows) < MAX_SPECIES:
+            entries = _species_entries(dict(schema="vmi-ion-species/1", species=[item]),
+                                       sources, job.extra["reference"])
+            add_row(entries[0])
+            status.set_text(f"{len(rows)} assignments from this run.")
+
+    async def load(event):
+        nonlocal using_file
+        try:
+            entries = _species_entries(json.loads(await event.file.text(encoding="utf-8-sig")),
+                                       sources, job.extra["reference"])
+        except (ValueError, RecursionError) as exc:
+            ui.notify(str(exc), type="warning")
+            return
+        finally:
+            upload.reset()
+        using_file = True
+        calibrations.clear()
+        plots.clear()
+        rows.clear()
+        for entry in entries:
+            add_row(entry)
+        status.set_text(f"{len(rows)} assignments from {event.file.name}.")
+
+    async def plot():
+        nonlocal plotting
+        if plotting:
+            return
+        plotting = True
+        try:
+            calibration = [center_x.value, center_y.value, pixel_scale.value]
+            if not all(value is not None and isfinite(value) for value in calibration) or calibration[-1] <= 0:
+                raise ValueError("Enter a finite detector center and a positive pixel scale.")
+            species, labels = [], []
+            for formula, charge, source, window, mass, reference, scale in rows:
+                values = [mass.value, reference.value, scale.value]
+                if not all(value is not None and isfinite(value) for value in values) or min(values[0], values[2]) <= 0:
+                    raise ValueError(f"Enter a positive mass and p_z scale and a finite t₀ for {formula} {charge:+d}.")
+                species.append(SpeciesMomentum(source, window, values[0], charge, values[1], values[2]))
+                labels.append((formula, charge, source))
+            plot_button.disable()
+            upload.disable()
+            current_button.disable()
+            plots.clear()
+            with plots:
+                ui.label("Calculating momentum projections…").classes("vmi-caption")
+            path = shared.checked_path(job.extra["source_file"])
+            with jobs.preview_read_access(collection_reads(path)) as stopping:
+                edges, images, totals = await asyncio.to_thread(
+                    momentum_projections, path, job.extra["reference"], species, tuple(calibration[:2]),
+                    calibration[2], result["trigger_times"], result["segment_offsets"],
+                    stopped=lambda: stopping() or plots.is_deleted,
+                )
+        except (ValueError, OSError, KeyError, ResourceBusyError) as exc:
+            if not plots.is_deleted:
+                plots.clear()
+                ui.notify(str(exc), type="warning")
+            return
+        finally:
+            plotting = False
+            if not plots.is_deleted:
+                plot_button.set_enabled(bool(rows))
+                upload.enable()
+                current_button.enable()
+        if plots.is_deleted:
+            return
+        plots.clear()
+        with plots:
+            for label, bins, maps, count, calibration in zip(labels, edges, images, totals, species, strict=True):
+                formula, charge, source = label
+                ui.label(f"{formula} · charge {charge:+d} · {SOURCES[source]} · {count:,} arrivals · "
+                         f"t₀ {calibration.t0_ns:.6g} ns · p_z scale {calibration.pz_scale:.6g}"
+                         ).classes("vmi-caption")
+                if count:
+                    with ui.element("div").classes("grid grid-cols-1 md:grid-cols-2 gap-4 w-full"):
+                        for image, horizontal, vertical in zip(maps, ("pₓ", "pᵧ"), ("pᵧ", "p_z"), strict=True):
+                            ui.plotly(plot_options(_momentum_figure(bins, image, horizontal, vertical))
+                                      ).classes("w-full min-w-0")
+                else:
+                    ui.label("No arrivals with positive TOF inside this species window.").classes("vmi-subtitle")
+
+    theme.form_section("Momentum projections")
+    ui.label("Uses the species TOF window across the whole detector. TOF is used directly. "
+             "The initial center comes from the brightest detector bin.").classes("vmi-subtitle")
+    with field_grid(3):
+        center_x = num_input("Detector center X (px)", None if x is None else int(x), step="any")
+        center_y = num_input("Detector center Y (px)", None if y is None else int(y), step="any")
+        pixel_scale = num_input("Detector scale (mm/px)", DEFAULT_MM_PER_PIXEL, step="any")
+    with ui.row().classes("items-center gap-2"):
+        upload = ui.upload(label="Load species JSON", on_upload=load, auto_upload=True,
+                           max_file_size=256 * 1024).props('accept=".json" flat bordered')
+        current_button = ui.button("Use current assignments", on_click=use_current).props("flat")
+    status = ui.label("Add fitted peaks or load a species file.").classes("vmi-caption")
+    calibrations = ui.column().classes("w-full")
+    plot_button = ui.button("Plot momenta", on_click=plot, icon="scatter_plot").disable()
+    plots = ui.column().classes("w-full")
+    return append_assignment
+
+
 def _results(job, jobs):
     if job.status != "done":
         return
@@ -307,9 +479,14 @@ def _results(job, jobs):
 
     def save_peak(peak):
         if peak not in saved:
+            if len(saved) >= MAX_SPECIES:
+                ui.notify(f"Save up to {MAX_SPECIES} species assignments per run.", type="warning")
+                return
             saved.append(peak)
             summary.set_text(f"{len(saved)} species assignments ready to download.")
             download.enable()
+            if "source_file" in job.extra:
+                append_assignment(peak)
 
     def download_species():
         document = dict(schema="vmi-ion-species/1", species=saved)
@@ -341,6 +518,8 @@ def _results(job, jobs):
             summary = ui.label("Add fitted peaks to download a species list.").classes("vmi-caption")
             download = ui.button("Download species JSON", on_click=download_species, icon="download")
             download.disable()
+        if "source_file" in job.extra:
+            append_assignment = _momentum_controls(job, jobs, result, saved)
 
 
 def build(jobs):
