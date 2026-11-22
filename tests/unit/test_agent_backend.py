@@ -191,6 +191,36 @@ class AgentBackendTests(unittest.TestCase):
         session._append("error", "provider rejected test-secret")
         self.assertNotIn("test-secret", session.snapshot()["entries"][0]["text"])
 
+    def test_late_stderr_is_redacted_before_credentials_are_discarded(self):
+        process = FakeProcess()
+        read_fd, write_fd = os.pipe()
+        process.stderr = os.fdopen(read_fd, "rb")
+        writer = os.fdopen(write_fd, "wb")
+        session = AgentSession(self.request(), FakeLauncher(process)).start()
+        try:
+            deadline = time.monotonic() + 2
+            while session.status != "stopped" and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(session.status, "stopped")
+            self.assertEqual(session._api_key, "test-secret")
+            self.assertTrue(session.config_dir.exists())
+
+            writer.write(b"provider diagnostic: test-secret\n")
+            writer.flush()
+            writer.close()
+
+            deadline = time.monotonic() + 2
+            while (session._api_key or session.config_dir.exists()) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            diagnostics = session.snapshot()["diagnostics"]
+            self.assertEqual(diagnostics, ["provider diagnostic: [redacted]"])
+            self.assertNotIn("test-secret", diagnostics)
+            self.assertEqual(session._api_key, "")
+            self.assertEqual(session.request.api_key, "")
+            self.assertFalse(session.config_dir.exists())
+        finally:
+            writer.close()
+
     def test_stop_removes_configuration_and_all_in_memory_key_copies(self):
         launcher = FakeLauncher()
         session = AgentSession(self.request(), launcher)
