@@ -12,7 +12,8 @@ import numpy as np
 import plotly.graph_objects as go
 
 from vmi_analysis.ion_acquisition import collection_reads
-from vmi_analysis.ion_momenta import (DEFAULT_MM_PER_PIXEL, SpeciesMomentum, gated_preview,
+from vmi_analysis.ion_momenta import (DEFAULT_MM_PER_PIXEL, LONGITUDINAL_CONVERSION,
+                                     TRANSVERSE_CONVERSION, SpeciesMomentum, gated_preview,
                                      momentum_projections)
 from vmi_analysis.ion_tof import DEFAULT_REFERENCE
 from vmi_analysis.pes import evaluate_fit_for_plot, fit_peaks
@@ -455,6 +456,22 @@ def _momentum_controls(job, jobs, result, saved):
     theme.form_section("Momentum projections")
     ui.label("Uses the species TOF window across the whole detector. TOF is used directly. "
              "The initial center comes from the brightest detector bin.").classes("vmi-subtitle")
+    with ui.expansion("Momentum formulas and units", icon="functions", value=True).classes("w-full"):
+        with ui.column().classes("w-full gap-1"):
+            ui.label(f"p_x = {TRANSVERSE_CONVERSION:.9f} × M × s × (x − x₀) / t").classes("font-mono")
+            ui.label(f"p_y = {TRANSVERSE_CONVERSION:.9f} × M × s × (y − y₀) / t").classes("font-mono")
+            ui.label(f"p_z = {LONGITUDINAL_CONVERSION:.6f} × Z × f_z × (t₀ − t)").classes("font-mono")
+            ui.label("All momenta are in atomic units. M is the ion mass in u and Z is the charge number in units of e."
+                     ).classes("vmi-subtitle")
+            ui.label("x and y are the hit or cluster coordinates in pixels. x₀ and y₀ are the detector center in pixels. "
+                     f"s is the detector scale in mm/pixel and defaults to {DEFAULT_MM_PER_PIXEL:.6f} (75 mm / 180 pixels)."
+                     ).classes("vmi-subtitle")
+            ui.label("t is the measured TOF in ns relative to the selected trigger, used directly. "
+                     "t₀ is the species’ editable zero-momentum TOF in ns on the same time reference. "
+                     "f_z is the dimensionless p_z scale factor and defaults to 1.").classes("vmi-subtitle")
+            ui.label("The transverse model assumes negligible transverse forces. The longitudinal formula is linear "
+                     "near t₀ and uses the first extraction field of 22.2 V/mm. For positive ions, an earlier arrival "
+                     "gives positive p_z toward the detector.").classes("vmi-subtitle")
     with field_grid(3):
         center_x = num_input("Detector center X (px)", None if x is None else int(x), step="any")
         center_y = num_input("Detector center Y (px)", None if y is None else int(y), step="any")
