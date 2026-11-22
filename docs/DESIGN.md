@@ -17,6 +17,9 @@ components, or extending the theme. It states principles and the shared
 vocabulary; it does not re-document the implementation. The authoritative
 sources are:
 
+- [Agent-first design](agent-first-design.md) — principles for the embedded
+  Agent, shared panel operations, and reusable analyses.
+
 - `src/vmi_analysis/gui/assets/theme.css` — the token scales. **Tokens are
   the design system.** If a value is not a token, it does not belong in
   component CSS.
