@@ -11,7 +11,7 @@ from vmi_analysis.paths import validate_distinct_output
 from vmi_analysis.ion_acquisition import manifest_path, segment_files
 
 from ..shared import checked_path, workspace_root
-from .. import theme
+from .. import shared, theme
 from ..jobs import Job, JobManager
 from .common import (REPO_ROOT, JobView, action_bar, check_grid, field_grid, num_input,
                      open_folder_button, path_input, persist)
@@ -24,6 +24,19 @@ HDF5_TYPES = [".h5", ".hdf5"]
 OPTIONS = {option.flag: option for option in PROCESS_OPTIONS}
 PANEL_DEFAULTS = {"calculate-timewalk-statistics": True, "tof-tdc-reference": "TDC1Rising", "ctot-cut": 500}
 COMMAND_KEY = "luna_command"
+WSL_FIELDS = {"distribution": "WSL distribution", "executable": "Linux LUNA executable"}
+
+
+def wsl_settings():
+    if sys.platform != "win32" or shared.SERVER:
+        return {}
+    store = shared.settings_store()
+    return {key: store.get(f"ion_luna.{key}", "") for key in WSL_FIELDS}
+
+
+def wsl_arguments(settings):
+    return [f"--wsl-{key}={value.strip()}" for key, value in settings.items()
+            if isinstance(value, str) and value.strip()]
 
 
 def capture_command(job, line):
@@ -130,13 +143,9 @@ def build(jobs: JobManager):
         return value
 
     def wsl_options():
-        cmd = []
-        if sys.platform == "win32":
-            if distro.value.strip():
-                cmd += ["--wsl-distribution", distro.value.strip()]
-            if executable.value.strip():
-                cmd += ["--wsl-executable", executable.value.strip()]
-        return cmd
+        if sys.platform == "win32" and not shared.SERVER:
+            return wsl_arguments({key: field.value for key, field in wsl_fields.items()})
+        return []
 
     def run():
         command = [sys.executable, "-m", "vmi_analysis.ion_luna"]
@@ -252,11 +261,13 @@ def build(jobs: JobManager):
         for widget in (stage, fields["raw-only"], fields["disable-clustering"], stats_checkbox):
             widget.on_value_change(update_options)
         update_options()
-        if sys.platform == "win32":
+        if sys.platform == "win32" and not shared.SERVER:
             with ui.expansion("WSL2 settings", icon="settings").classes("w-full"):
                 with field_grid():
-                    distro = save(ui.input("WSL distribution (blank = default)").props("outlined dense"), "distribution")
-                    executable = save(ui.input("Linux LUNA executable (blank = PATH)").props("outlined dense"), "executable")
+                    wsl_fields = {
+                        key: save(ui.input(f"{label} (blank = {fallback})").props("outlined dense"), key)
+                        for (key, label), fallback in zip(WSL_FIELDS.items(), ("default", "PATH"), strict=True)
+                    }
         with action_bar(view, on_click=run):
             pass
     view.place_console()

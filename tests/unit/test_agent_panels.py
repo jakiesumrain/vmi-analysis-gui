@@ -42,12 +42,30 @@ class AgentPanelTests(unittest.TestCase):
         self.assertEqual(job.consume_output, ion_luna.capture_command)
         self.assertIn("--split-acquisitions", job.cmd)
         self.assertIn("--calculate-timewalk-statistics", job.cmd)
-        self.assertEqual(summary["HDF5 output"], str(self.workspace / "ions.h5"))
+        self.assertFalse(any(arg.startswith("--wsl-") for arg in job.cmd))
+        self.assertEqual(summary["Collection output"], str(self.workspace / "ions.segments.json"))
         self.assertEqual(self.jobs.jobs(), [])
         with self.assertRaises(shared.WorkspaceDenied):
             agent_panels.prepare(self.jobs, "tpx3_dump", {
                 "input": "/datasets/sample.tpx3", "output": "/datasets/ions.h5",
             })
+
+    def test_local_windows_dump_uses_the_panel_wsl_settings(self):
+        source = self.datasets / "sample.tpx3"
+        source.touch()
+        executable = "/opt/my luna/bin/tpx3dump"
+        settings = {"ion_luna.distribution": " Ubuntu-20.04 ", "ion_luna.executable": executable}
+        with (patch.object(shared, "SERVER", None),
+              patch.object(shared, "current_account", return_value=None),
+              patch.object(shared, "workspace_root", return_value=self.workspace),
+              patch.object(shared, "settings_store", return_value=settings),
+              patch.object(ion_luna.sys, "platform", "win32")):
+            job, summary = agent_panels.prepare(self.jobs, "tpx3_dump", {
+                "input": str(source), "output": str(self.workspace / "ions.h5"),
+            })
+        self.assertIn("--wsl-distribution=Ubuntu-20.04", job.cmd)
+        self.assertIn(f"--wsl-executable={executable}", job.cmd)
+        self.assertEqual(summary["Linux LUNA executable"], executable)
 
     def test_handoff_keeps_acquisition_metadata_and_owner_scope(self):
         output, metadata = self.workspace / "ions.h5", self.workspace / "meta.h5"

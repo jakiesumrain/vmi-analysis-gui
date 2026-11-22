@@ -138,13 +138,19 @@ def _dump(params):
     matrix = _path(params["timewalk"]) if params.get("timewalk") else None
     if matrix and (not values.get("calculate-timewalk-statistics") or not matrix.is_file()):
         raise ValueError("A timewalk seed requires statistics calculation and an existing HDF5 file.")
-    job = ion_luna.dump_job(source, target, prefixed=prefixed, options=values, timewalk=matrix)
-    summary = {"TPX3 input": str(source), "HDF5 output": str(target), "Strip acquisition prefix": prefixed,
+    wsl = ion_luna.wsl_settings()
+    job = ion_luna.dump_job(source, target, prefixed=prefixed, options=values, timewalk=matrix,
+                           wsl=ion_luna.wsl_arguments(wsl))
+    summary = {"TPX3 input": str(source), "Strip acquisition prefix": prefixed,
                "Split detected acquisitions": prefixed, "Timewalk seed": str(matrix) if matrix else None}
     if prefixed:
-        summary["Collection output (if split)"] = str(manifest_path(target))
-        summary["Segment folder (if split)"] = str(target.with_name(f"{target.stem}_segments"))
+        summary["Collection output"] = str(manifest_path(target))
+        summary["Segment folder"] = str(target.with_name(f"{target.stem}_segments"))
+    else:
+        summary["HDF5 output"] = str(target)
     summary.update({ion_luna.OPTIONS[key].label: value for key, value in values.items()})
+    summary.update({ion_luna.WSL_FIELDS[key]: value.strip() for key, value in wsl.items()
+                    if isinstance(value, str) and value.strip()})
     return job, summary
 
 
@@ -221,7 +227,7 @@ def prepare(jobs, operation, params):
         build = {"ion_tof": _spectrum, "ion_tof_gate": _gate, "ion_tof_fit": _fit}[operation]
         job, summary = build(jobs, params)
     for key in ("metadata", "histogram", "peak_result"):
-        if key in job.extra and (key != "metadata" or operation == "tpx3_dump"):
+        if key in job.extra and key != "metadata":
             summary[f"{key.replace('_', ' ').capitalize()} output"] = job.extra[key]
     job.extra["agent_panel"] = True
     return job, summary
