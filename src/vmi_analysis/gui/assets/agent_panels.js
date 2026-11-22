@@ -14,7 +14,7 @@ export default function (pi) {
             operation: Type.Optional(Type.String()),
             parameters: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
             job_id: Type.Optional(Type.String()),
-            view_id: Type.Optional(Type.String({description: 'Use the supplied view ID when proposing a fit from an Ion TOF plot.'})),
+            view_id: Type.Optional(Type.String({description: 'Use the supplied view ID when proposing an operation from the active panel view.'})),
         }),
         async execute(_id, params, signal, _onUpdate, ctx) {
             const payload = JSON.stringify(params);

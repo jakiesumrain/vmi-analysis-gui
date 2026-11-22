@@ -16,6 +16,7 @@ from vmi_analysis.agent_backend import AGENTS
 
 from . import shared, theme, workflow
 from .jobs import MANAGER, ResourceBusyError
+from .panel_operations import build_registry
 from .startup import startup_port
 from .panels import (accumulate, agent, binning, calibration, centroid, circularize,
                      dark, gmd_map, ion_live, ion_luna, ion_pipeline, ion_tof, ion_tof_fallback, ion_unpack,
@@ -98,6 +99,8 @@ def _schedule_shutdown_after_last_client(client) -> None:
     _shutdown_task = background_tasks.create(
         _shutdown_after(_env_float("VMI_GUI_SHUTDOWN_GRACE", DEFAULT_SHUTDOWN_GRACE)),
         name="auto-shutdown-check")
+
+PANEL_OPERATIONS = build_registry()
 
 TABS = [
     ("GMD Map", gmd_map),
@@ -379,7 +382,8 @@ def index() -> None:
                             elif name == ion_pipeline.FALLBACK_JOB_NAME:
                                 module.build(MANAGER, fallback=True)
                             elif module is agent:
-                                ask_agent = module.build(MANAGER, navigate=lambda name: setattr(panels, "value", name))
+                                ask_agent = module.build(MANAGER, registry=PANEL_OPERATIONS,
+                                                         navigate=lambda name: setattr(panels, "value", name))
                             elif module is ion_tof:
                                 module.build(MANAGER, ask_agent=ask_agent)
                             else:

@@ -16,8 +16,11 @@ from vmi_analysis.pes import BASELINE_PARAMETERS, evaluate_fit_for_plot
 from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS
 
 from .. import shared, theme
+from ..agent_panels import (PanelOperation, PanelView, boolean, number, require_completed_job,
+                            resolve_path)
 from ..centroid_plots import _style, plot_options
 from ..jobs import Job, ResourceBusyError
+from . import ion_luna
 from .common import JobView, action_bar, adopt_agent_form, field_grid, num_input, path_input, persist
 
 
@@ -29,6 +32,122 @@ SOURCES = {"pixels": "Raw pixel hits", "clusters": "Clustered events", "both": "
 SOURCE_COLORS = {"pixels": "#1e40af", "clusters": "#c2410c"}
 REFERENCE_LABELS = {name: name.replace("Rising", " rising").replace("Falling", " falling")
                     for name in REFERENCES}
+
+
+def agent_operations():
+    spectrum = {
+        "panel": JOB_NAME,
+        "summary": "Use the preceding selected TDC trigger in each acquisition to calculate TOF. "
+                   "Histogram raw pixel hits, clustered events, or both.",
+        "parameters": {
+            "input": {"type": "path", "description": "LUNA HDF5 or acquisition collection"},
+            "dump_job_id": {"type": "job ID", "description": "Completed TPX3 Dump job ID, instead of input"},
+            "source": {"type": "string", "default": "pixels", "choices": list(SOURCES)},
+            "reference": {"type": "string", "default": DEFAULT_REFERENCE, "choices": list(REFERENCES)},
+            "bin_size_ns": {"type": "number", "unit": "ns", "default": DEFAULT_BIN_SIZE_NS},
+            "minimum_ns": {"type": "number", "unit": "ns", "default": 0},
+            "maximum_ns": {"type": "number or null", "unit": "ns", "default": None},
+        },
+        "manual": JOB_NAME,
+    }
+    gate = {
+        "panel": JOB_NAME,
+        "summary": "Apply an inclusive GMD2 gate. Metadata row j selects camera frame j + d "
+                   "within the same acquisition. Use the alignment diagnostic to choose d.",
+        "parameters": {
+            "tof_job_id": {"type": "job ID", "description": "Completed Ion TOF job ID"},
+            "metadata": {"type": "path", "description": "Matching metadata, optional after a TPX3 Dump handoff"},
+            "gmd_min_na": {"type": "number", "unit": "nA"},
+            "gmd_max_na": {"type": "number", "unit": "nA"},
+            "shift": {"type": "integer", "unit": "frames", "choices": list(GMD_SHIFTS)},
+        },
+    }
+    fit = {
+        "panel": JOB_NAME,
+        "summary": "Fit Gaussian peaks on gated or unfiltered TOF. Count individual arrivals within "
+                   "the fitted windows on the GMD2-gated frames in either case.",
+        "parameters": {
+            "gate_job_id": {"type": "job ID", "description": "Completed GMD2-gated TOF job ID"},
+            "sources": {"type": "list of strings", "default": ["pixels"], "choices": ["pixels", "clusters"]},
+            "region_ns": {"type": "number pair", "unit": "ns", "description": "[Minimum, maximum]"},
+            "peaks_ns": {"type": "list of number pairs", "unit": "ns", "default": [],
+                         "description": "[Center, Gaussian FWHM] for each peak. Empty means automatic."},
+            "baseline": {"type": "string", "default": "Constant", "choices": list(BASELINE_PARAMETERS)},
+            "unfiltered": {"type": "boolean", "default": False},
+        },
+    }
+    return (
+        PanelOperation("ion_tof", spectrum, _spectrum, (JOB_NAME,), outputs=("histogram",)),
+        PanelOperation("ion_tof_gate", gate, _gate, (FILTER_JOB_NAME,), outputs=("histogram",)),
+        PanelOperation("ion_tof_fit", fit, _fit, (FIT_JOB_NAME, UNFILTERED_FIT_JOB_NAME), outputs=("peak_result",)),
+    )
+
+
+def _spectrum(jobs, params, *, pending_input=False):
+    dump_id, path = params.get("dump_job_id"), params.get("input")
+    if bool(dump_id) == bool(path):
+        raise ValueError("Supply one TPX3 Dump job ID or one input file.")
+    metadata = None
+    if dump_id:
+        dump = require_completed_job(jobs, dump_id, name=ion_luna.JOB_NAME)
+        path, metadata = ion_luna.completed_dump_input(dump)
+    source = params.get("source", "pixels")
+    reference = params.get("reference", DEFAULT_REFERENCE)
+    width = number(params.get("bin_size_ns", DEFAULT_BIN_SIZE_NS))
+    low = number(params.get("minimum_ns", 0))
+    high = params.get("maximum_ns")
+    if high is not None:
+        high = number(high)
+    job = spectrum_job(resolve_path(path), source=source, reference=reference, width=width, low=low, high=high,
+                               pending_input=pending_input)
+    if not metadata and job.extra["source_file"].lower().endswith(".json"):
+        metadata = job.extra["source_file"]
+    if metadata:
+        job.extra["metadata"] = str(resolve_path(metadata))
+    job.extra["panel_form"] = {"input": job.extra["source_file"], "source": source, "reference": reference,
+                               "bin_size_ns": width, "minimum": low, "maximum": high,
+                               "metadata": job.extra.get("metadata", "")}
+    return job, {"LUNA input": job.extra["source_file"], "Count": SOURCES[source],
+                 "Trigger reference": reference, "Bin size (ns)": width, "TOF minimum (ns)": low,
+                 "TOF maximum (ns)": high if high is not None else "Automatic"}
+
+
+def _gate(jobs, params):
+    parent = require_completed_job(jobs, params["tof_job_id"], name=JOB_NAME)
+    metadata = params.get("metadata") or parent.extra.get("metadata")
+    if not metadata and parent.extra["source_file"].lower().endswith(".json"):
+        metadata = parent.extra["source_file"]
+    low, high = number(params["gmd_min_na"]), number(params["gmd_max_na"])
+    shift = params["shift"]
+    job = filtered_job(parent, resolve_path(metadata), low, high, shift)
+    return job, {"TOF job": parent.id, "Metadata": job.extra["metadata"], "GMD2 minimum (nA)": low,
+                 "GMD2 maximum (nA)": high, "Alignment shift d (frames)": shift}
+
+
+def _fit(jobs, params):
+    parent = require_completed_job(jobs, params["gate_job_id"], name=FILTER_JOB_NAME)
+    targets = params.get("sources", ["pixels"])
+    if not isinstance(targets, list) or not all(isinstance(item, str) for item in targets):
+        raise ValueError("Supply a list of spectrum sources.")
+    region = params["region_ns"]
+    estimates = params.get("peaks_ns", [])
+    if not isinstance(region, list) or not isinstance(estimates, list) or len(estimates) > 20:
+        raise ValueError("Supply numeric fit bounds and up to 20 pairs of peak estimates.")
+    region = [number(value) for value in region]
+    parsed = []
+    for pair in estimates:
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise ValueError("Supply [center, Gaussian FWHM] for each peak estimate.")
+        parsed.append([number(value) for value in pair])
+    baseline = params.get("baseline", "Constant")
+    unfiltered = boolean(params.get("unfiltered", False))
+    original = require_completed_job(jobs, parent.extra["parent_id"], name=JOB_NAME) if unfiltered else None
+    job = peak_fit_job(parent, targets, region, parsed, baseline,
+                              unfiltered_result=original.extra["histogram"] if original else None)
+    return job, {"Gated TOF job": parent.id, "Spectra": targets, "Fit range (ns)": region,
+                 "Peak estimates (ns)": parsed or "Automatic", "Baseline": baseline,
+                 "Fit spectrum": "Unfiltered" if original else "GMD2-gated",
+                 "Counting and normalization": "GMD2-gated"}
 
 
 def _gmd_histogram(label, values):
@@ -288,13 +407,14 @@ def build(jobs, *, ask_agent=None):
         return persist(widget, f"ion_tof.{key}")
 
     def use_latest():
-        candidates = [job for job in jobs.jobs() if job.name == "TPX3 Dump" and job.status == "done"]
+        candidates = [job for job in jobs.jobs() if job.name == ion_luna.JOB_NAME and job.status == "done"]
         if not candidates:
             ui.notify("Complete a TPX3 dump first or choose a saved collection.", type="warning")
             return
         latest = max(candidates, key=lambda job: job.finished)
-        input_file.value = latest.extra.get("collection", latest.extra["output"])
-        set_metadata(latest.extra.get("collection", latest.extra.get("metadata", "")))
+        path, metadata = ion_luna.completed_dump_input(latest)
+        input_file.value = path
+        set_metadata(metadata or "")
 
     def run():
         try:
@@ -517,18 +637,21 @@ def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None,
         fit_low.value = fit_high.value = None
         fit_view.clear_results()
 
-    def show_agent_fit(region, settings, approve, decline):
+    def show_agent_fit(job, settings, approve, decline):
         if fit_low.is_deleted:
             raise ValueError("The source spectrum changed. Open that result to ask the Agent again.")
-        fit_low.value, fit_high.value = region
+        fit_low.value, fit_high.value = job.extra["fit_range"]
         mode.value = "Select fit range"
         refresh_plot()
         with agent_review:
             ui.label(f"Agent fit draft · {settings['Spectra']} · {settings['Baseline']} baseline · "
                      f"Peak estimates {settings['Peak estimates (ns)']}").classes("vmi-caption")
+        async def approve_fit():
+            await approve({"region_ns": [fit_low.value, fit_high.value]})
+
         with agent_review, ui.row().classes("items-center gap-2"):
             ui.label("Adjust the fit range on the plot or in the form.")
-            ui.button("Approve Agent fit", on_click=lambda: approve((fit_low.value, fit_high.value)))
+            ui.button("Approve Agent fit", on_click=approve_fit)
             ui.button("Decline", on_click=decline).props("flat")
 
     def open_agent():
@@ -536,11 +659,28 @@ def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None,
                 or not targets.value):
             ui.notify("Select a spectrum and an increasing fit range first.", type="warning")
             return
-        ask_agent({
+        settings = {
             "gate_job_id": filtered_job.id, "sources": list(targets.value or []),
             "region_ns": [fit_low.value, fit_high.value], "baseline": baseline.value,
             "unfiltered": unfiltered_result is not None,
-        }, show_agent_fit, agent_review)
+        }
+
+        def bind(parameters):
+            if fit_low.is_deleted:
+                raise ValueError("The source spectrum changed. Open that result to ask the Agent again.")
+            bound = {**settings, **parameters, "gate_job_id": settings["gate_job_id"],
+                     "unfiltered": settings["unfiltered"]}
+            if not isinstance(bound["sources"], list) or any(
+                    source not in settings["sources"] for source in bound["sources"]):
+                raise ValueError("Choose a source selected on the Ion TOF plot.")
+            return bound
+
+        ask_agent(PanelView(
+            panel=JOB_NAME, operation="ion_tof_fit",
+            label=f"Ion TOF fit context · {fit_low.value:g}–{fit_high.value:g} ns",
+            instruction="Use the selected range unless the user requests a change.",
+            settings=settings, bind=bind, render_review=show_agent_fit, review_container=agent_review,
+        ))
 
     def add_peak():
         with peak_list, ui.row().classes("w-full items-center gap-3") as row:

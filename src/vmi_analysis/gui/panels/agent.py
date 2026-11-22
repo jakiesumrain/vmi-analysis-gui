@@ -9,7 +9,8 @@ from nicegui import ui
 from vmi_analysis.agent_backend import AGENTS, API_FORMATS, AgentRequest
 from vmi_analysis.paths import GENERATED_DIR
 
-from .. import agent_panels, shared, theme
+from .. import shared, theme
+from ..agent_panels import PanelView
 from ..jobs import TERMINAL
 from .common import JobView, field_grid
 
@@ -44,7 +45,32 @@ class AgentStatus:
         self.wait_label.visible = bool(self.wait_label.text)
 
 
-def build(jobs, *, navigate=None):
+def _workflow_card(jobs, name, targets, navigate):
+    view = JobView(jobs, job_name=name)
+    with theme.panel_card() as card:
+        theme.form_section(name)
+        with ui.row().classes("items-center gap-4"):
+            steps = ui.label().classes("vmi-caption")
+            stop = ui.button("Stop workflow", icon="stop", on_click=view.cancel).props("flat")
+        with ui.row().classes("items-center gap-2"):
+            for target in targets:
+                ui.button(f"Open {target}", on_click=lambda target=target: navigate(target)).props("flat")
+        view.place_console("Workflow console")
+    card.set_visibility(False)
+
+    def refresh():
+        job = view.job
+        card.set_visibility(job is not None)
+        if job is not None:
+            steps.text = " · ".join(f"{stage.name} {stage.status}" for stage in job.stages)
+            stop.set_visibility(job.status in ("queued", "running"))
+            stop.set_enabled(not job.cancel_requested)
+
+    shared.workspace_timer(0.4, refresh)
+    return view, refresh
+
+
+def build(jobs, *, registry, navigate):
     account = shared.current_account()
     owner = account.name if account else "local"
     status = AgentStatus()
@@ -104,42 +130,24 @@ def build(jobs, *, navigate=None):
             .classes("vmi-caption")
         diagnostics_log = theme.log_console()
 
-    workflow_view = JobView(jobs, job_name=agent_panels.DUMP_TO_TOF)
-    with theme.panel_card() as workflow_card:
-        theme.form_section(agent_panels.DUMP_TO_TOF)
-        with ui.row().classes("items-center gap-4"):
-            workflow_steps = ui.label().classes("vmi-caption")
-            stop_workflow = ui.button("Stop workflow", icon="stop", on_click=workflow_view.cancel).props("flat")
-        if navigate:
-            with ui.row().classes("items-center gap-2"):
-                ui.button("Open TPX3 Dump", on_click=lambda: navigate("TPX3 Dump")).props("flat")
-                ui.button("Open Ion TOF", on_click=lambda: navigate("Ion TOF")).props("flat")
-        workflow_view.place_console("Workflow console")
-    workflow_card.set_visibility(False)
-
-    def refresh_workflow():
-        workflow = workflow_view.job
-        workflow_card.set_visibility(workflow is not None)
-        if workflow is not None:
-            workflow_steps.text = " · ".join(f"{stage.name} {stage.status}" for stage in workflow.stages)
-            stop_workflow.set_visibility(workflow.status in ("queued", "running"))
-            stop_workflow.set_enabled(not workflow.cancel_requested)
+    workflow_views = {name: _workflow_card(jobs, name, targets, navigate)
+                      for name, targets in registry.workflows().items()}
 
     rendered = []
     rendered_session = None
     diagnostics_cursor = 0
     empty_state = None
     approval = None
-    fit_context = None
+    view_context = None
     active_review = None
 
-    def open_fit_context(settings, show_fit, review):
-        nonlocal fit_context
+    def open_view_context(view: PanelView):
+        nonlocal view_context
         if active_review is not None:
-            ui.notify("Approve or decline the existing Agent fit draft first.", type="warning")
+            ui.notify("Approve or decline the existing Agent draft first.", type="warning")
             return
-        fit_context = (uuid4().hex, settings, show_fit, review)
-        context_note.text = f"Ion TOF fit context · {settings['region_ns'][0]:g}–{settings['region_ns'][1]:g} ns"
+        view_context = (uuid4().hex, view)
+        context_note.text = view.label
         navigate("Agent")
 
     def clear_review():
@@ -154,12 +162,12 @@ def build(jobs, *, navigate=None):
         except RuntimeError as exc:
             show_error(exc)
 
-    async def decide(session, key, job, approved, *, fit_parameters=None, region=None):
-        nonlocal approval, fit_context
+    async def decide(session, key, job, approved, *, rebuild=None):
+        nonlocal approval, view_context
         with approval_view:
-            if approved and fit_parameters is not None:
+            if approved and rebuild is not None:
                 try:
-                    job, _ = agent_panels.prepare(jobs, "ion_tof_fit", {**fit_parameters, "region_ns": list(region)})
+                    job, _ = rebuild()
                 except (OSError, TypeError, ValueError) as exc:
                     ui.notify(str(exc), type="warning")
                     return
@@ -169,7 +177,7 @@ def build(jobs, *, navigate=None):
             approval = None
             approval_view.clear()
             if active_review is not None:
-                fit_context = None
+                view_context = None
                 context_note.text = ""
             clear_review()
             if not approved:
@@ -181,9 +189,10 @@ def build(jobs, *, navigate=None):
                 show_error(exc)
                 await answer(session, key, {"error": str(exc)})
                 return
-            if submitted.name == agent_panels.DUMP_TO_TOF:
-                workflow_view.attach(submitted)
-                refresh_workflow()
+            if submitted.name in workflow_views:
+                view, refresh = workflow_views[submitted.name]
+                view.attach(submitted)
+                refresh()
             ui.notify(f"{submitted.name} submitted · {submitted.id}", type="positive")
             await answer(session, key, {"job_id": submitted.id, "panel": submitted.name, "status": submitted.status})
 
@@ -204,42 +213,44 @@ def build(jobs, *, navigate=None):
         approval_view.clear()
         clear_review()
         view_id = request.get("view_id")
-        if view_id is not None and (fit_context is None or fit_context[0] != view_id):
+        if view_id is not None and (view_context is None or view_context[0] != view_id):
             return
         try:
             match request.get("action"):
                 case "describe":
-                    value = agent_panels.describe(request.get("operation"))
+                    value = registry.describe(request.get("operation"))
                 case "status" | "wait":
-                    value = agent_panels.status(jobs, request.get("job_id"))
+                    value = registry.status(jobs, request.get("job_id"))
                     if request["action"] == "wait" and value["status"] not in TERMINAL:
                         return
                 case "propose":
                     operation = request.get("operation")
                     parameters = request.get("parameters", {})
-                    if view_id is not None:
-                        if operation != "ion_tof_fit" or not isinstance(parameters, dict):
-                            raise ValueError("Use the Ion TOF fit operation with this view.")
-                        _, settings, show_fit, review = fit_context
-                        parameters = {**settings, **parameters, "gate_job_id": settings["gate_job_id"],
-                                      "unfiltered": settings["unfiltered"]}
-                        if not isinstance(parameters["sources"], list) or any(
-                                source not in settings["sources"] for source in parameters["sources"]):
-                            raise ValueError("Choose a source selected on the Ion TOF plot.")
-                    job, inputs = agent_panels.prepare(jobs, operation, parameters)
-                    if view_id is not None:
-                        show_fit(job.extra["fit_range"], inputs,
-                                 lambda region: decide(session, key, job, True,
-                                                       fit_parameters=parameters, region=region),
-                                 lambda: decide(session, key, job, False))
+                    view = view_context[1] if view_id is not None else None
+                    if view is not None:
+                        if operation != view.operation or not isinstance(parameters, dict):
+                            raise ValueError(f"Use {view.operation} with this view.")
+                        parameters = view.bind(parameters)
+                    job, inputs = registry.prepare(jobs, operation, parameters)
+                    if view is not None:
+                        async def approve(edits):
+                            await decide(session, key, job, True, rebuild=lambda: registry.prepare(
+                                jobs, operation, view.bind({**parameters, **edits})
+                            ))
+
+                        async def decline():
+                            await decide(session, key, job, False)
+
+                        view.render_review(job, inputs, approve, decline)
                         approval = (session.id, key)
-                        active_review = review
+                        active_review = view.review_container
                         with approval_view:
-                            ui.label("The Agent fit draft is ready to review in Ion TOF.")
+                            ui.label(f"The Agent draft is ready to review in {view.panel}.")
                             with ui.row():
-                                ui.button("Review on Ion TOF", on_click=lambda: navigate("Ion TOF")).props("flat")
-                                ui.button("Decline fit", on_click=lambda: decide(session, key, job, False)).props("flat")
-                        navigate("Ion TOF")
+                                ui.button(f"Review on {view.panel}",
+                                          on_click=lambda: navigate(view.panel)).props("flat")
+                                ui.button("Decline draft", on_click=decline).props("flat")
+                        navigate(view.panel)
                         return
                     approval = (session.id, key)
                     with approval_view, theme.panel_card():
@@ -407,12 +418,11 @@ def build(jobs, *, navigate=None):
                 raise RuntimeError("Start an agent session first.")
             message = prompt.value or ""
             model_context = ""
-            if fit_context is not None:
-                identifier, settings, _, _ = fit_context
-                model_context = ("\n\n[App context from the user's Ion TOF selection. For a fit proposal, "
-                                 "call vmi_panel with action propose, operation ion_tof_fit, and this view_id. "
-                                 "Use the selected range unless the user requests a change.]\n"
-                                 + json.dumps({"view_id": identifier, "parameters": settings}))
+            if view_context is not None:
+                identifier, view = view_context
+                model_context = (f"\n\n[App context from {view.panel}. Call vmi_panel with action propose, "
+                                 f"operation {view.operation}, and this view_id. {view.instruction}]\n"
+                                 + json.dumps({"view_id": identifier, "parameters": view.settings}))
             await asyncio.to_thread(session.prompt, message, model_context=model_context)
             if prompt.value == message:
                 prompt.value = ""
@@ -442,5 +452,4 @@ def build(jobs, *, navigate=None):
     refresh()
     shared.workspace_timer(0.4, refresh)
     shared.workspace_timer(0.4, refresh_panel)
-    shared.workspace_timer(0.4, refresh_workflow)
-    return open_fit_context
+    return open_view_context

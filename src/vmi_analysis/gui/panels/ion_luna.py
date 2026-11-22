@@ -12,6 +12,7 @@ from vmi_analysis.ion_acquisition import manifest_path, segment_files
 
 from ..shared import checked_path, workspace_root
 from .. import shared, theme
+from ..agent_panels import PanelOperation, boolean, resolve_path
 from ..jobs import Job, JobManager
 from .common import (REPO_ROOT, JobView, action_bar, adopt_agent_form, check_grid, field_grid, num_input,
                      open_folder_button, path_input, persist)
@@ -25,6 +26,110 @@ OPTIONS = {option.flag: option for option in PROCESS_OPTIONS}
 PANEL_DEFAULTS = {"calculate-timewalk-statistics": True, "tof-tdc-reference": "TDC1Rising", "ctot-cut": 500}
 COMMAND_KEY = "luna_command"
 WSL_FIELDS = {"distribution": "WSL distribution", "executable": "Linux LUNA executable"}
+
+
+DUMP_OPTIONS = (
+    "layout", "raw-only", "disable-clustering", "tof-tdc-reference",
+    "clustering-algorithm", "eps-t", "eps-s", "kuttruff-buffer-size",
+    "calculate-timewalk-statistics", "ctot-cut",
+)
+
+
+def _dump_artifacts(job):
+    return ("collection",) if job.extra.get("collection") else ("output", "metadata")
+
+
+def planned_dump_input(job):
+    output = Path(job.extra["output"])
+    return manifest_path(output) if "metadata" in job.extra else output
+
+
+def completed_dump_input(job):
+    extra = job.extra
+    return extra.get("collection", extra["output"]), extra.get("collection", extra.get("metadata"))
+
+
+def agent_operations():
+    description = {
+        "panel": JOB_NAME,
+        "summary": "Decode TPX3 files with LUNA. Acquisition prefixes supply timestamps and GMD readings. "
+                   "Detected clock resets split independent streams. Output is an HDF5 file or a collection.",
+        "parameters": {
+            "input": {"type": "path", "description": "TPX3 file or directory"},
+            "output": {"type": "path", "description": "Workspace HDF5 file"},
+            "prefixed": {"type": "boolean", "default": True},
+            "timewalk": {"type": "path", "description": "Optional existing statistics HDF5 seed"},
+            "options": {"type": "object", "default": {
+                key: PANEL_DEFAULTS.get(key, OPTIONS[key].default) for key in DUMP_OPTIONS
+            }},
+        },
+        "option_choices": {key: list(OPTIONS[key].choices) for key in DUMP_OPTIONS if OPTIONS[key].choices},
+        "outputs": ["collection", "output", "metadata"],
+        "manual": JOB_NAME,
+    }
+    return (PanelOperation("tpx3_dump", description, _prepare_dump, (JOB_NAME,), artifacts=_dump_artifacts),)
+
+
+def _active_dump_options(value):
+    options = {flag: value(flag) for flag in ("layout", "raw-only", "disable-clustering")}
+    if not options["raw-only"]:
+        options["tof-tdc-reference"] = value("tof-tdc-reference")
+    if not (options["raw-only"] or options["disable-clustering"]):
+        options.update({flag: value(flag) for flag in ("clustering-algorithm", "eps-t", "eps-s")})
+        if options["clustering-algorithm"] == "Kuttruff2024":
+            options["kuttruff-buffer-size"] = value("kuttruff-buffer-size")
+        options["calculate-timewalk-statistics"] = value("calculate-timewalk-statistics")
+        if options["calculate-timewalk-statistics"]:
+            options["ctot-cut"] = value("ctot-cut")
+    return options
+
+
+def _prepare_dump(_jobs, params):
+    source = resolve_path(params["input"])
+    if not source.is_dir() and not (source.is_file() and source.suffix.lower() == ".tpx3"):
+        raise ValueError("Choose an existing TPX3 file or directory.")
+    target = resolve_path(params["output"], write=True)
+    if target.suffix.lower() not in HDF5_TYPES:
+        raise ValueError("Choose an .h5 or .hdf5 output path.")
+    prefixed = boolean(params.get("prefixed", True))
+    requested = params.get("options", {})
+    if not isinstance(requested, dict) or requested.keys() - set(DUMP_OPTIONS):
+        raise ValueError("Use the TPX3 Dump options listed by describe.")
+    values = {}
+    for key in DUMP_OPTIONS:
+        option = OPTIONS[key]
+        default = PANEL_DEFAULTS.get(key, option.default)
+        value = requested.get(key, default)
+        if type(value) is not type(default) or (option.choices and value not in option.choices):
+            raise ValueError(f"Choose a valid value for {option.label}.")
+        if type(value) is int and value < (1 if key == "kuttruff-buffer-size" else 0):
+            raise ValueError(f"{option.label} is below the permitted minimum.")
+        if isinstance(value, str) and (not value.strip() or value.startswith("-") or "\x00" in value):
+            raise ValueError(f"Choose a valid value for {option.label}.")
+        values[key] = value
+    values = _active_dump_options(values.__getitem__)
+    matrix = resolve_path(params["timewalk"]) if params.get("timewalk") else None
+    if matrix and (not values.get("calculate-timewalk-statistics") or not matrix.is_file()):
+        raise ValueError("A timewalk seed requires statistics calculation and an existing HDF5 file.")
+    wsl = wsl_settings()
+    job = dump_job(source, target, prefixed=prefixed, options=values, timewalk=matrix,
+                   wsl=wsl_arguments(wsl))
+    summary = {"TPX3 input": str(source), "Strip acquisition prefix": prefixed,
+               "Split detected acquisitions": prefixed, "Timewalk seed": str(matrix) if matrix else None}
+    if prefixed:
+        summary["Collection output"] = str(manifest_path(target))
+        summary["Segment folder"] = str(target.with_name(f"{target.stem}_segments"))
+    else:
+        summary["HDF5 output"] = str(target)
+    summary.update({OPTIONS[key].label: value for key, value in values.items()})
+    summary.update({WSL_FIELDS[key]: value.strip() for key, value in wsl.items()
+                    if isinstance(value, str) and value.strip()})
+    job.extra["panel_form"] = {
+        "input_mode": "Folder" if source.is_dir() else "File",
+        "input": str(source), "output": str(target), "acquisition_prefix": prefixed,
+        **values, "timewalk_file": str(matrix) if matrix else "",
+    }
+    return job, summary
 
 
 def wsl_settings():
@@ -187,19 +292,10 @@ def build(jobs: JobManager):
                 return
             if not source.value.strip() or not output.value.strip():
                 raise ValueError("Choose a TPX3 input and an HDF5 output.")
-            stats = calculate_stats()
-            arguments = {flag: option_value(flag) for flag in ("layout", "raw-only", "disable-clustering")}
-            if not arguments["raw-only"]:
-                arguments["tof-tdc-reference"] = option_value("tof-tdc-reference")
-            if cluster_enabled():
-                arguments.update({flag: option_value(flag) for flag in ("clustering-algorithm", "eps-t", "eps-s")})
-                if arguments["clustering-algorithm"] == "Kuttruff2024":
-                    arguments["kuttruff-buffer-size"] = option_value("kuttruff-buffer-size")
-            if stats:
-                arguments.update({"calculate-timewalk-statistics": True, "ctot-cut": option_value("ctot-cut")})
+            arguments = _active_dump_options(option_value)
             job = dump_job(source.value.strip(), output.value.strip(), prefixed=prefixed.value,
-                           options=arguments, timewalk=timewalk.value.strip() if stats else None,
-                           wsl=wsl_options())
+                           options=arguments, wsl=wsl_options(),
+                           timewalk=timewalk.value.strip() if arguments.get("calculate-timewalk-statistics") else None)
             view.attach(jobs.submit(job))
         except (OSError, TypeError, ValueError) as exc:
             ui.notify(str(exc), type="warning")

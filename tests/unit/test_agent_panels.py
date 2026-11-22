@@ -1,5 +1,6 @@
 """Agent proposals use the panel builders and the signed-in account's job scope."""
 
+import asyncio
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -7,16 +8,18 @@ from threading import Event
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import h5py
 import numpy as np
+from nicegui import Client, ui
 
 from vmi_analysis.agent_backend import AgentRequest, AgentSession, ContainerLauncher, PANEL_REQUEST_TITLE
-from vmi_analysis.gui import agent_panels, shared
+from vmi_analysis.gui import shared
+from vmi_analysis.gui.panel_operations import build_registry
 from vmi_analysis.gui.jobs import Job, JobManager
 from vmi_analysis.gui.resources import job_access
-from vmi_analysis.gui.panels import ion_luna, ion_tof
+from vmi_analysis.gui.panels import agent, ion_luna, ion_tof
 from vmi_analysis.gui.panels.common import adopt_agent_form
 
 
@@ -35,10 +38,11 @@ class AgentPanelTests(unittest.TestCase):
         self.enterContext(patch.object(shared, "SERVER", server))
         self.enterContext(patch.object(shared, "current_account", return_value=self.account))
         self.jobs = JobManager()
+        self.registry = build_registry()
 
     def test_dump_proposal_uses_normal_defaults_and_does_not_submit(self):
         (self.datasets / "sample.tpx3").touch()
-        job, summary = agent_panels.prepare(self.jobs, "tpx3_dump", {
+        job, summary = self.registry.prepare(self.jobs, "tpx3_dump", {
             "input": "/datasets/sample.tpx3", "output": "/workspace/ions.h5",
         })
         self.assertEqual(job.name, ion_luna.JOB_NAME)
@@ -49,7 +53,7 @@ class AgentPanelTests(unittest.TestCase):
         self.assertEqual(summary["Collection output"], str(self.workspace / "ions.segments.json"))
         self.assertEqual(self.jobs.jobs(), [])
         with self.assertRaises(shared.WorkspaceDenied):
-            agent_panels.prepare(self.jobs, "tpx3_dump", {
+            self.registry.prepare(self.jobs, "tpx3_dump", {
                 "input": "/datasets/sample.tpx3", "output": "/datasets/ions.h5",
             })
 
@@ -63,7 +67,7 @@ class AgentPanelTests(unittest.TestCase):
               patch.object(shared, "workspace_root", return_value=self.workspace),
               patch.object(shared, "settings_store", return_value=settings),
               patch.object(ion_luna.sys, "platform", "win32")):
-            job, summary = agent_panels.prepare(self.jobs, "tpx3_dump", {
+            job, summary = self.registry.prepare(self.jobs, "tpx3_dump", {
                 "input": str(source), "output": str(self.workspace / "ions.h5"),
             })
         self.assertIn("--wsl-distribution=Ubuntu-20.04", job.cmd)
@@ -72,7 +76,7 @@ class AgentPanelTests(unittest.TestCase):
 
     def test_dump_proposal_records_the_panel_form(self):
         (self.datasets / "sample.tpx3").touch()
-        job, _ = agent_panels.prepare(self.jobs, "tpx3_dump", {
+        job, _ = self.registry.prepare(self.jobs, "tpx3_dump", {
             "input": "/datasets/sample.tpx3", "output": "/workspace/ions.h5", "prefixed": False,
             "options": {"layout": "quad", "raw-only": True, "ctot-cut": 250},
         })
@@ -86,9 +90,18 @@ class AgentPanelTests(unittest.TestCase):
         self.assertEqual(form["timewalk_file"], "")
         self.assertNotIn("tof-tdc-reference", form)  # absent from a raw-only run
 
+    def test_discovery_exposes_typed_inputs_and_rejects_internal_builder_options(self):
+        spectrum = self.registry.describe("ion_tof")
+        self.assertEqual(spectrum["parameters"]["bin_size_ns"]["unit"], "ns")
+        self.assertEqual(spectrum["outputs"], ["histogram"])
+        with self.assertRaisesRegex(ValueError, "listed by describe"):
+            self.registry.prepare(self.jobs, "ion_tof", {"input": "missing.h5", "pending_input": True})
+        with self.assertRaisesRegex(ValueError, "does not exist"):
+            self.registry.prepare(self.jobs, "ion_tof", {"input": "missing.h5"})
+
     def test_folder_dump_proposal_marks_the_folder_input_mode(self):
         self.datasets.joinpath("frames").mkdir()
-        job, _ = agent_panels.prepare(self.jobs, "tpx3_dump", {
+        job, _ = self.registry.prepare(self.jobs, "tpx3_dump", {
             "input": "/datasets/frames", "output": "/workspace/ions.h5",
         })
         self.assertEqual(job.extra["panel_form"]["input_mode"], "Folder")
@@ -98,7 +111,7 @@ class AgentPanelTests(unittest.TestCase):
         output.touch()
         dump = Job(ion_luna.JOB_NAME, status="done", owner=self.account.name, extra={"output": str(output)})
         self.jobs._jobs[dump.id] = dump
-        job, _ = agent_panels.prepare(self.jobs, "ion_tof", {
+        job, _ = self.registry.prepare(self.jobs, "ion_tof", {
             "dump_job_id": dump.id, "source": "both", "reference": "TDC2Falling",
             "bin_size_ns": 10, "minimum_ns": 5, "maximum_ns": 20000,
         })
@@ -127,14 +140,14 @@ class AgentPanelTests(unittest.TestCase):
         dump = Job(ion_luna.JOB_NAME, status="done", owner=self.account.name,
                    extra={"output": str(output), "metadata": str(metadata)})
         self.jobs._jobs[dump.id] = dump
-        spectrum, options = agent_panels.prepare(self.jobs, "ion_tof", {"dump_job_id": dump.id})
+        spectrum, options = self.registry.prepare(self.jobs, "ion_tof", {"dump_job_id": dump.id})
         self.assertEqual(options["LUNA input"], str(output))
         self.assertEqual(spectrum.extra["metadata"], str(metadata))
-        self.assertEqual(agent_panels.status(self.jobs, dump.id)["files"]["output"], "/workspace/ions.h5")
+        self.assertEqual(self.registry.status(self.jobs, dump.id)["files"]["output"], "/workspace/ions.h5")
         spectrum.status = "done"
         spectrum.owner = self.account.name
         self.jobs._jobs[spectrum.id] = spectrum
-        gate, options = agent_panels.prepare(self.jobs, "ion_tof_gate", {
+        gate, options = self.registry.prepare(self.jobs, "ion_tof_gate", {
             "tof_job_id": spectrum.id, "gmd_min_na": 2, "gmd_max_na": 8, "shift": -1,
         })
         self.assertEqual(options["Alignment shift d (frames)"], -1)
@@ -142,7 +155,7 @@ class AgentPanelTests(unittest.TestCase):
         gate.status = "done"
         gate.owner = self.account.name
         self.jobs._jobs[gate.id] = gate
-        fit, options = agent_panels.prepare(self.jobs, "ion_tof_fit", {
+        fit, options = self.registry.prepare(self.jobs, "ion_tof_fit", {
             "gate_job_id": gate.id, "region_ns": [9000, 9800], "peaks_ns": [[9400, 30]],
             "unfiltered": True,
         })
@@ -151,11 +164,11 @@ class AgentPanelTests(unittest.TestCase):
         self.assertEqual(options["Counting and normalization"], "GMD2-gated")
         dump.owner = "another_user"
         with self.assertRaisesRegex(ValueError, "your workspace"):
-            agent_panels.status(self.jobs, dump.id)
+            self.registry.status(self.jobs, dump.id)
 
     def test_workflow_reserves_the_future_collection_and_stops_after_dump_failure(self):
         (self.datasets / "sample.tpx3").touch()
-        workflow, summary = agent_panels.prepare(self.jobs, "ion_dump_to_tof", {
+        workflow, summary = self.registry.prepare(self.jobs, "ion_dump_to_tof", {
             "dump": {"input": "/datasets/sample.tpx3", "output": "/workspace/ions.h5"},
             "tof": {"bin_size_ns": 10},
         })
@@ -171,17 +184,17 @@ class AgentPanelTests(unittest.TestCase):
             while workflow.status in ("queued", "running") and time.monotonic() < deadline:
                 time.sleep(.01)
         run.assert_called_once()
-        outcome = agent_panels.status(self.jobs, workflow.id)
+        outcome = self.registry.status(self.jobs, workflow.id)
         self.assertEqual(outcome["status"], "failed")
         self.assertEqual([step["status"] for step in outcome["steps"]], ["failed", "cancelled"])
         self.assertEqual(self.jobs.get(outcome["steps"][0]["job_id"]).owner, self.account.name)
         with patch.object(shared, "current_account", return_value=SimpleNamespace(name="other")):
             with self.assertRaisesRegex(ValueError, "your workspace"):
-                agent_panels.status(self.jobs, workflow.id)
+                self.registry.status(self.jobs, workflow.id)
 
     def test_stopping_workflow_cancels_the_waiting_tof_stage(self):
         (self.datasets / "sample.tpx3").touch()
-        workflow, _ = agent_panels.prepare(self.jobs, "ion_dump_to_tof", {
+        workflow, _ = self.registry.prepare(self.jobs, "ion_dump_to_tof", {
             "dump": {"input": "/datasets/sample.tpx3", "output": "/workspace/ions.h5"},
         })
         running, release = Event(), Event()
@@ -222,6 +235,92 @@ class AgentPanelTests(unittest.TestCase):
         clock[0] = 301
         self.assertFalse(session.take_panel_request("test-id"))
 
+    def test_contextual_fit_stays_in_its_tab_and_submits_the_edited_bounds(self):
+        data = self.datasets / "sample.h5"
+        data.touch()
+        gated = Job(ion_tof.FILTER_JOB_NAME, status="done", owner=self.account.name,
+                    extra={"source_file": str(data), "histogram": str(self.workspace / "gate.npz"),
+                           "reference": ion_tof.DEFAULT_REFERENCE})
+        jobs = Mock()
+        jobs.get.side_effect = lambda job_id: gated if job_id == gated.id else None
+        jobs.jobs.return_value = []
+        jobs.submit.side_effect = lambda job: job
+
+        session = Mock(id="session", status="running")
+        session.snapshot.return_value = {
+            "id": session.id, "status": "running", "activity": "", "entries": [], "diagnostics": [],
+        }
+        page = ui.page("/_test_agent_view")
+        origin, other = Client(page), Client(page)
+        self.addCleanup(origin.delete)
+        self.addCleanup(other.delete)
+
+        def build_tab(client):
+            timers, buttons = {}, {}
+            navigate = Mock()
+
+            def button(text="", **kwargs):
+                element = real_button(text, **kwargs)
+                if callback := kwargs.get("on_click"):
+                    buttons[text] = callback
+                if text == "Send":
+                    on_click = element.on_click
+
+                    def connect(callback):
+                        buttons[text] = callback
+                        return on_click(callback)
+
+                    element.on_click = connect
+                return element
+
+            def timer(_interval, callback):
+                timers.setdefault(callback.__name__, callback)
+
+            with client, patch.object(shared, "workspace_timer", timer), patch.object(ui, "button", button):
+                ask_agent = agent.build(jobs, registry=self.registry, navigate=navigate)
+                ion_tof._peak_fitting(jobs, gated, np.arange(11), {"pixels": np.ones(10)}, ask_agent=ask_agent)
+            return timers, buttons, navigate
+
+        def field(label):
+            return next(element for element in origin.elements.values() if element._props.get("label") == label)
+
+        real_button = ui.button
+        with patch.object(agent.AGENTS, "current", return_value=session):
+            timers, buttons, navigate = build_tab(origin)
+            other_timers, _, other_navigate = build_tab(other)
+            with origin:
+                field("Fit TOF min (ns)").value = 2
+                field("Fit TOF max (ns)").value = 8
+                buttons["Ask Agent"]()
+                field("Instruction").value = "Fit this peak"
+                asyncio.run(buttons["Send"]())
+            context = session.prompt.call_args.kwargs["model_context"]
+            view_id = json.loads(context.splitlines()[-1])["view_id"]
+            session.panel_request.return_value = ("draft", {
+                "action": "propose", "operation": "ion_tof_fit", "view_id": view_id,
+                "parameters": {"gate_job_id": "different-run", "region_ns": [3, 7]},
+            })
+
+            with other:
+                asyncio.run(other_timers["refresh_panel"]())
+            other_navigate.assert_not_called()
+            session.take_panel_request.assert_not_called()
+
+            with origin, patch.object(ui, "button", wraps=real_button) as added:
+                asyncio.run(timers["refresh_panel"]())
+                navigate.assert_called_with("Ion TOF")
+                self.assertEqual(field("Fit TOF min (ns)").value, 3)
+                self.assertEqual(field("Fit TOF max (ns)").value, 7)
+                field("Fit TOF min (ns)").value = 4
+                approve = next(call.kwargs["on_click"] for call in added.call_args_list
+                               if call.args == ("Approve Agent fit",))
+                asyncio.run(approve())
+        jobs.submit.assert_called_once()
+        submitted = jobs.submit.call_args.args[0]
+        self.assertEqual(submitted.extra["filtered_id"], gated.id)
+        self.assertEqual(submitted.extra["fit_range"], [4, 7])
+        session.take_panel_request.assert_called_once_with("draft")
+
     def test_approved_tof_gate_and_fit_use_real_scheduler_and_artifacts(self):
         data = self.datasets / "luna.h5"
         metadata = self.datasets / "metadata.h5"
@@ -236,8 +335,7 @@ class AgentPanelTests(unittest.TestCase):
             handle["frames"] = np.array([(1, 3e-9, 3e-9), (2, 9e-9, 9e-9)],
                                         dtype=[("timestamp_ns", "i8"), ("gmd1", "f8"), ("gmd2", "f8")])
 
-        def approve(operation, params):
-            job, _ = agent_panels.prepare(self.jobs, operation, params)
+        def run(job):
             self.jobs.submit(job)
             deadline = time.monotonic() + 30
             while job.status in ("queued", "running") and time.monotonic() < deadline:
@@ -245,15 +343,44 @@ class AgentPanelTests(unittest.TestCase):
             self.assertEqual(job.status, "done", "\n".join(job.log))
             return job
 
+        def approve(operation, params):
+            job, _ = self.registry.prepare(self.jobs, operation, params)
+            return run(job)
+
         self.addCleanup(self.jobs.shutdown)
-        original = approve("ion_tof", {"input": "/datasets/luna.h5", "bin_size_ns": .2, "maximum_ns": 10})
+        (self.datasets / "sample.tpx3").touch()
+        workflow, _ = self.registry.prepare(self.jobs, "ion_dump_to_tof", {
+            "dump": {"input": "/datasets/sample.tpx3", "output": "/workspace/dump.h5", "prefixed": False},
+            "tof": {"bin_size_ns": .2, "maximum_ns": 10},
+        })
+        dump, spectrum = workflow.stages
+        run_command = self.jobs._run_cmd
+
+        def simulate_luna(job, command, cwd, **kwargs):
+            if command == dump.cmd:
+                Path(dump.result.extra["output"]).write_bytes(data.read_bytes())
+                return 0
+            return run_command(job, command, cwd, **kwargs)
+
+        with patch.object(self.jobs, "_run_cmd", side_effect=simulate_luna):
+            run(workflow)
+        original = self.jobs.get(spectrum.result.id)
+        outcome = self.registry.status(self.jobs, workflow.id)
+        self.assertEqual([step["status"] for step in outcome["steps"]], ["done", "done"])
+        self.assertEqual(original.extra["source_file"], dump.result.extra["output"])
+        self.assertTrue(original.extra["agent_panel"])
+        self.assertTrue(dump.result.extra["agent_panel"])
         gated = approve("ion_tof_gate", {"tof_job_id": original.id, "metadata": "/datasets/metadata.h5",
                                        "gmd_min_na": 2, "gmd_max_na": 4, "shift": 0})
         fitted = approve("ion_tof_fit", {"gate_job_id": gated.id, "region_ns": [3, 7], "peaks_ns": [[5, 1]]})
         with np.load(fitted.extra["peak_result"]) as result:
             self.assertEqual(int(result["selected_triggers"]), 1)
             self.assertIn("pixels_peaks", result)
-        self.assertIn("peak_result", agent_panels.status(self.jobs, fitted.id)["files"])
+        self.assertIn("peak_result", self.registry.status(self.jobs, fitted.id)["files"])
+        manual = run(ion_tof.peak_fit_job(gated, ["pixels"], [3, 7], [[5, 1]], "Constant"))
+        with np.load(fitted.extra["peak_result"]) as agent_result, np.load(manual.extra["peak_result"]) as manual_result:
+            for key in agent_result.files:
+                np.testing.assert_array_equal(agent_result[key], manual_result[key])
 
     def test_rootless_launch_arguments_keep_the_private_mounts_accessible(self):
         request = AgentRequest(self.account.name, self.workspace, self.root / ".agent",
