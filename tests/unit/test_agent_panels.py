@@ -69,6 +69,42 @@ class AgentPanelTests(unittest.TestCase):
         self.assertIn(f"--wsl-executable={executable}", job.cmd)
         self.assertEqual(summary["Linux LUNA executable"], executable)
 
+    def test_dump_proposal_records_the_panel_form(self):
+        (self.datasets / "sample.tpx3").touch()
+        job, _ = agent_panels.prepare(self.jobs, "tpx3_dump", {
+            "input": "/datasets/sample.tpx3", "output": "/workspace/ions.h5", "prefixed": False,
+            "options": {"layout": "quad", "raw-only": True, "ctot-cut": 250},
+        })
+        form = job.extra["panel_form"]
+        self.assertEqual(form["input_mode"], "File")
+        self.assertEqual(form["input"], str(self.datasets / "sample.tpx3"))
+        self.assertEqual(form["output"], str(self.workspace / "ions.h5"))
+        self.assertIs(form["acquisition_prefix"], False)
+        self.assertEqual(form["layout"], "quad")
+        self.assertIs(form["raw-only"], True)
+        self.assertNotIn("tof-tdc-reference", form)  # absent from a raw-only run
+
+    def test_folder_dump_proposal_marks_the_folder_input_mode(self):
+        self.datasets.joinpath("frames").mkdir()
+        job, _ = agent_panels.prepare(self.jobs, "tpx3_dump", {
+            "input": "/datasets/frames", "output": "/workspace/ions.h5",
+        })
+        self.assertEqual(job.extra["panel_form"]["input_mode"], "Folder")
+
+    def test_spectrum_proposal_records_the_panel_form(self):
+        output = self.workspace / "ions.h5"
+        output.touch()
+        dump = Job(ion_luna.JOB_NAME, status="done", owner=self.account.name, extra={"output": str(output)})
+        self.jobs._jobs[dump.id] = dump
+        job, _ = agent_panels.prepare(self.jobs, "ion_tof", {
+            "dump_job_id": dump.id, "source": "both", "reference": "TDC2Falling",
+            "bin_size_ns": 10, "minimum_ns": 5, "maximum_ns": 20000,
+        })
+        self.assertEqual(job.extra["panel_form"], {
+            "input": str(output), "source": "both", "reference": "TDC2Falling",
+            "bin_size_ns": 10.0, "minimum": 5.0, "maximum": 20000,
+        })
+
     def test_handoff_keeps_acquisition_metadata_and_owner_scope(self):
         output, metadata = self.workspace / "ions.h5", self.workspace / "meta.h5"
         for path in (output, metadata):

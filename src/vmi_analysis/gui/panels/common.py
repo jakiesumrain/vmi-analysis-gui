@@ -374,10 +374,13 @@ class JobView:
     results_builder(job) is called once when the job reaches a terminal state.
     live_builder(job) is called on every refresh while the job runs (e.g. to
     update a live partial image).
+    attach_builder(job) is called whenever the view takes over a job, including
+    the reload and Agent reconnect paths, so a panel can show the run's inputs.
     """
 
     def __init__(self, jobs: JobManager, results_builder=None, live_builder=None,
-                 interval: float = 0.7, job_name: str | None = None, command_key: str | None = None):
+                 interval: float = 0.7, job_name: str | None = None, command_key: str | None = None,
+                 attach_builder=None):
         self.jobs = jobs
         self.job_name = job_name
         self._command_key = command_key
@@ -389,6 +392,7 @@ class JobView:
         self._results_shown = False
         self._results_builder = results_builder
         self._live_builder = live_builder
+        self._attach_builder = attach_builder
         # Status controls are created inline in the panel header by
         # place_status() (theme.panel_header passes the view there).
         self.badge = None
@@ -535,6 +539,11 @@ class JobView:
         if self.log is not None:
             self.log.clear()
         self._reset_results()
+        if self._attach_builder is not None:
+            try:
+                self._attach_builder(job)
+            except Exception:
+                pass  # a stale saved form must never block status or results
         self.refresh()
 
     def cancel(self) -> None:

@@ -81,6 +81,10 @@ Relative paths resolve from the subprocess working directory.
 - `JobView` displays job status in the panel header and logs in a
   collapsible console. One button starts, stops, or cancels
   the panel job. A browser reload can reattach to an active job by name.
+- An approved Agent operation records the resolved panel inputs in
+  `job.extra["panel_form"]`. When a panel adopts an Agent job, its
+  `attach_builder` fills the form from that record, so the run shows the same
+  inputs a user would have entered before clicking Run.
 - Cancel and shutdown stop subprocess trees. On Windows the manager uses
   `taskkill /T /F`. On POSIX it signals the process group.
 - `agent_backend.py` owns one interactive session per account rather than a

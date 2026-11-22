@@ -160,6 +160,12 @@ def _dump(params):
     summary.update({ion_luna.OPTIONS[key].label: value for key, value in values.items()})
     summary.update({ion_luna.WSL_FIELDS[key]: value.strip() for key, value in wsl.items()
                     if isinstance(value, str) and value.strip()})
+    job.extra["panel_form"] = {
+        "input_mode": "Folder" if source.is_dir() else "File",
+        "input": str(source), "output": str(target), "acquisition_prefix": prefixed,
+        **values,
+        **({"timewalk_file": str(matrix)} if matrix else {}),
+    }
     return job, summary
 
 
@@ -181,8 +187,11 @@ def _spectrum(jobs, params, *, pending_input=False):
         high = _number(high)
     job = ion_tof.spectrum_job(_path(path), source=source, reference=reference, width=width, low=low, high=high,
                                pending_input=pending_input)
+    job.extra["panel_form"] = {"input": job.extra["source_file"], "source": source, "reference": reference,
+                               "bin_size_ns": width, "minimum": low, "maximum": high}
     if metadata:
         job.extra["metadata"] = str(_path(metadata))
+        job.extra["panel_form"]["metadata"] = job.extra["metadata"]
     return job, {"LUNA input": job.extra["source_file"], "Count": ion_tof.SOURCES[source],
                  "Trigger reference": reference, "Bin size (ns)": width, "TOF minimum (ns)": low,
                  "TOF maximum (ns)": high if high is not None else "Automatic"}

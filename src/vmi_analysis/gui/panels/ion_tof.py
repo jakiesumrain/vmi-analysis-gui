@@ -262,6 +262,18 @@ def peak_fit_job(gated_job, targets, region, estimates, baseline, *, unfiltered_
 
 
 def build(jobs, *, ask_agent=None):
+    def restore_form(job):
+        """Show an Agent run's resolved inputs, as if the user had entered them."""
+        form = job.extra.get("panel_form") if job.extra.get("agent_panel") else None
+        if not isinstance(form, dict) or not form:
+            return
+        for key, widget in (("input", input_file), ("source", source), ("reference", reference),
+                            ("bin_size_ns", bin_size), ("minimum", minimum), ("maximum", maximum)):
+            if key in form:
+                widget.value = form[key]
+        if form.get("metadata"):
+            set_metadata(form["metadata"])
+
     def show_job(job):
         if job.status == "done" and job.extra.get("agent_panel"):
             reset_gmd()
@@ -274,7 +286,7 @@ def build(jobs, *, ask_agent=None):
         if job.status == "done":
             restore_agent_gate(job)
 
-    view = JobView(jobs, job_name=JOB_NAME, results_builder=show_job)
+    view = JobView(jobs, job_name=JOB_NAME, results_builder=show_job, attach_builder=restore_form)
     theme.panel_header(JOB_NAME, "Plot unfiltered time-of-flight spectra from a Timepix3 dump.", view=view)
 
     def save(widget, key):
