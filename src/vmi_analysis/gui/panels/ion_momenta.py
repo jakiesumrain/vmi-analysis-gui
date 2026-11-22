@@ -64,7 +64,7 @@ def _gate_fields(labels):
         return [num_input(label, None, step="any") for label in labels]
 
 
-def _fit_controls(plot, source, edges, counts, context, save_peak):
+def _fit_controls(plot, source, edges, counts, context, save_peak, register_peak):
     selected_region = model = None
     with ui.row().classes("items-center gap-2"):
         mode = ui.toggle(["Zoom", "Select fit range"], value="Zoom")
@@ -130,7 +130,7 @@ def _fit_controls(plot, source, edges, counts, context, save_peak):
                 record = dict(context, fit_range_ns=list(region), center_ns=center, sigma_ns=sigma,
                               fwhm_ns=peak["fwhm"], fit_window_ns=[low, high], profile="Gaussian",
                               baseline="Constant", residual_rms_counts_per_bin=error, at_bound=peak["bound"])
-                _species_fields(record, save_peak)
+                register_peak(*_species_fields(record, save_peak))
 
     mode.on_value_change(lambda _: redraw())
     plot.on("plotly_selected", selected, js_handler="event => emit(event?.range ?? null)")
@@ -140,7 +140,7 @@ def _fit_controls(plot, source, edges, counts, context, save_peak):
 
 def _species_fields(record, save_peak):
     low, high = record["fit_window_ns"]
-    with ui.column().classes("w-full gap-1"):
+    with ui.column().classes("w-full gap-1") as row:
         warning = " · Fit at parameter bound" if record["at_bound"] else ""
         ui.label(f'μ {record["center_ns"]:.6g} ns · σ {record["sigma_ns"]:.6g} ns · '
                  f'μ ± 3σ [{low:.6g}, {high:.6g}] ns{warning}').classes("vmi-caption")
@@ -152,30 +152,34 @@ def _species_fields(record, save_peak):
             formula = ui.input("Chemical formula", placeholder="Xe").props("outlined dense")
             charge = num_input("Charge (e)", 1, step=1)
 
-            def add():
+            def read_peak(*, allow_blank=False):
                 name = (formula.value or "").strip()
                 number = charge.value
+                if allow_blank and not name:
+                    return None
                 if not re.fullmatch(r"(?:[A-Z][a-z]?|[0-9]|[()\[\]]|[·.])+", name) or not re.search("[A-Z]", name):
-                    ui.notify("Enter a chemical formula such as Xe or N2.", type="warning")
-                    return
+                    raise ValueError("Enter a chemical formula such as Xe or N2.")
                 if number is None or not isfinite(number) or not float(number).is_integer() or not number:
-                    ui.notify("Enter a nonzero integer charge, such as 1 or 2.", type="warning")
-                    return
+                    raise ValueError(f"Enter a nonzero integer charge for {name}, such as 1 or 2.")
                 t0 = reference_tof.value
                 if t0 is None or not isfinite(t0):
-                    ui.notify("Enter a finite zero-momentum TOF.", type="warning")
-                    return
+                    raise ValueError(f"Enter a finite zero-momentum TOF for {name}.")
+                window = _interval([minimum_tof.value, maximum_tof.value])
+                return dict(record, formula=name, charge=int(number), t0_ns=t0, window_ns=list(window))
+
+            def add():
                 try:
-                    window = _interval([minimum_tof.value, maximum_tof.value])
+                    peak = read_peak()
                 except ValueError as exc:
                     ui.notify(str(exc), type="warning")
                     return
-                save_peak(dict(record, formula=name, charge=int(number), t0_ns=t0, window_ns=list(window)))
+                save_peak(peak)
 
             ui.button("Append to species file", on_click=add).props("flat")
+    return row, read_peak
 
 
-def _linked_plots(job, jobs, source, result, save_peak):
+def _linked_plots(job, jobs, source, result, save_peak, register_peak):
     image, edges = result[f"{source}_image"], result["edges"]
     triggers, offsets = result["trigger_times"], result["segment_offsets"]
     reference = job.extra["reference"]
@@ -227,7 +231,7 @@ def _linked_plots(job, jobs, source, result, save_peak):
                                position_gate_px=dict(zip(("xmin", "xmax", "ymin", "ymax"), bounds, strict=True)),
                                histogram_range_ns=[float(edges[0]), float(edges[-1])],
                                bin_size_ns=job.extra["bin_size_ns"])
-                _fit_controls(chart, source, edges, filtered, context, save_peak)
+                _fit_controls(chart, source, edges, filtered, context, save_peak, register_peak)
 
     async def enter(kind, fields):
         try:
@@ -341,14 +345,14 @@ def _species_entries(document, sources, reference):
     return entries
 
 
-def _momentum_controls(job, jobs, result, saved):
+def _momentum_controls(job, jobs, result, species_file, read_current):
     sources = tuple(source for source in ("clusters", "pixels") if source in result)
     detector = result[f"{sources[0]}_image"]
     if not detector.any() and len(sources) > 1:
         detector = result[f"{sources[1]}_image"]
     y, x = np.unravel_index(detector.argmax(), detector.shape) if detector.any() else (None, None)
     rows = []
-    using_file = False
+    assignment_source = "appended"
     plotting = False
 
     def add_row(entry):
@@ -363,41 +367,52 @@ def _momentum_controls(job, jobs, result, saved):
         rows.append((formula, charge, source, window, mass, reference, pz_scale))
         plot_button.set_enabled(not plotting)
 
-    def use_current():
-        nonlocal using_file
-        using_file = False
+    def show_assignments(entries, source, message):
+        nonlocal assignment_source
+        assignment_source = source
         calibrations.clear()
         plots.clear()
         rows.clear()
         plot_button.disable()
-        for item in saved:
-            append_assignment(item)
-        status.set_text(f"{len(rows)} assignments from this run.")
+        for entry in entries:
+            add_row(entry)
+        status.set_text(message)
 
     def append_assignment(item):
-        if not using_file and len(rows) < MAX_SPECIES:
+        if assignment_source == "appended" and len(rows) < MAX_SPECIES:
             entries = _species_entries(dict(schema=SPECIES_SCHEMA, species=[item]),
                                        sources, job.extra["reference"])
             add_row(entries[0])
             status.set_text(f"{len(rows)} assignments from this run.")
 
-    async def load(event):
-        nonlocal using_file
+    def use_current():
         try:
-            entries = _species_entries(json.loads(await event.file.text(encoding="utf-8-sig")),
-                                       sources, job.extra["reference"])
-        except (ValueError, RecursionError) as exc:
+            items = read_current()
+            if not items:
+                show_assignments([], "current", "Enter a chemical formula on a fitted peak to use it here.")
+                return
+            entries = _species_entries(dict(schema=SPECIES_SCHEMA, species=items), sources, job.extra["reference"])
+        except ValueError as exc:
             ui.notify(str(exc), type="warning")
             return
-        finally:
-            upload.reset()
-        using_file = True
-        calibrations.clear()
-        plots.clear()
-        rows.clear()
-        for entry in entries:
-            add_row(entry)
-        status.set_text(f"{len(rows)} assignments from {event.file.name}.")
+        show_assignments(entries, "current", f"{len(entries)} assignments from the fitted peaks.")
+
+    def load():
+        try:
+            destination = species_file.value.strip()
+            if not destination:
+                raise ValueError("Choose a Species JSON file in the Ion momenta form.")
+            path = shared.checked_path(destination, cwd=shared.workspace_root())
+            with jobs.preview_read_access([path]):
+                with path.open("rb") as stream:
+                    raw = stream.read(256 * 1024 + 1)
+            if len(raw) > 256 * 1024:
+                raise ValueError("The species JSON file exceeds 256 KiB.")
+            entries = _species_entries(json.loads(raw.decode("utf-8-sig")), sources, job.extra["reference"])
+        except (OSError, ValueError, RecursionError, ResourceBusyError) as exc:
+            ui.notify(str(exc), type="warning")
+            return
+        show_assignments(entries, "file", f"{len(entries)} assignments from {path.name}.")
 
     async def plot():
         nonlocal plotting
@@ -416,7 +431,7 @@ def _momentum_controls(job, jobs, result, saved):
                 species.append(SpeciesMomentum(source, window, values[0], charge, values[1], values[2]))
                 labels.append((formula, charge, source))
             plot_button.disable()
-            upload.disable()
+            load_button.disable()
             current_button.disable()
             plots.clear()
             with plots:
@@ -437,7 +452,7 @@ def _momentum_controls(job, jobs, result, saved):
             plotting = False
             if not plots.is_deleted:
                 plot_button.set_enabled(bool(rows))
-                upload.enable()
+                load_button.enable()
                 current_button.enable()
         if plots.is_deleted:
             return
@@ -480,8 +495,7 @@ def _momentum_controls(job, jobs, result, saved):
         center_y = num_input("Detector center Y (px)", None if y is None else int(y), step="any")
         pixel_scale = num_input("Detector scale (mm/px)", DEFAULT_MM_PER_PIXEL, step="any")
     with ui.row().classes("items-center gap-2"):
-        upload = ui.upload(label="Load species JSON", on_upload=load, auto_upload=True,
-                           max_file_size=256 * 1024).props('accept=".json" flat bordered')
+        load_button = ui.button("Load species JSON", on_click=load, icon="folder_open").props("flat")
         current_button = ui.button("Use current assignments", on_click=use_current).props("flat")
     status = ui.label("Add fitted peaks or load a species file.").classes("vmi-caption")
     calibrations = ui.column().classes("w-full")
@@ -523,6 +537,15 @@ def _results(job, jobs, species_file):
     with np.load(shared.checked_path(job.extra["histogram"]), allow_pickle=False) as data:
         result = {key: data[key] for key in data.files if not key.endswith("_shot_counts")}
     saved = []
+    fitted_rows = []
+
+    def register_peak(row, read):
+        fitted_rows[:] = [(element, reader) for element, reader in fitted_rows if not element.is_deleted]
+        fitted_rows.append((row, read))
+
+    def read_current():
+        return [peak for row, read in fitted_rows
+                if not row.is_deleted and (peak := read(allow_blank=True)) is not None]
 
     def save_peak(peak):
         try:
@@ -564,7 +587,7 @@ def _results(job, jobs, species_file):
                      f'{int(result[f"{source}_outside"]):,} outside the TOF interval · '
                      f'{int(result[f"{source}_invalid_positions"]):,} invalid positions').classes("vmi-caption")
             if "source_file" in job.extra:
-                _linked_plots(job, jobs, source, result, save_peak)
+                _linked_plots(job, jobs, source, result, save_peak, register_peak)
             else:
                 ui.label("Plot positions and TOF again to enable gating.").classes("vmi-subtitle")
                 with ui.element("div").classes("vmi-ion-detector-row"):
@@ -576,7 +599,7 @@ def _results(job, jobs, species_file):
             download = ui.button("Download species JSON", on_click=download_species, icon="download")
             download.disable()
         if "source_file" in job.extra:
-            append_assignment = _momentum_controls(job, jobs, result, saved)
+            append_assignment = _momentum_controls(job, jobs, result, species_file, read_current)
 
 
 def build(jobs):
