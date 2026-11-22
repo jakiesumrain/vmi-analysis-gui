@@ -263,11 +263,11 @@ class AgentPanelTests(unittest.TestCase):
                 element = real_button(text, **kwargs)
                 if callback := kwargs.get("on_click"):
                     buttons[text] = callback
-                if text == "Send":
+                if text == "Send" or kwargs.get("icon") == "arrow_upward":
                     on_click = element.on_click
 
                     def connect(callback):
-                        buttons[text] = callback
+                        buttons["Send"] = callback
                         return on_click(callback)
 
                     element.on_click = connect

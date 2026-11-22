@@ -1,6 +1,7 @@
 """Interactive per-user agent sessions for shared data and private workspaces."""
 
 import asyncio
+from importlib.resources import files
 import json
 from uuid import uuid4
 
@@ -15,18 +16,18 @@ from ..jobs import TERMINAL
 from .common import JobView, field_grid
 
 
+AGENT_CHAT_JS = files("vmi_analysis.gui.assets") / "agent_chat.js"
+
+
 class AgentStatus:
     def __init__(self):
         self.badge = None
         self.spinner = None
-        self.wait_label = None
 
     def place_status(self):
         self.badge = theme.status_badge("idle")
         self.spinner = ui.spinner("dots", size="sm", color="primary")
         self.spinner.visible = False
-        self.wait_label = ui.label("").classes("vmi-caption")
-        self.wait_label.visible = False
 
     def sync(self, session):
         status = session.status if session is not None else "idle"
@@ -40,9 +41,6 @@ class AgentStatus:
         theme.set_badge(self.badge, badge_status)
         self.badge.text = status
         self.spinner.visible = status in ("starting", "running", "stopping")
-        self.wait_label.text = "The session remains available after a browser reload." if status in (
-            "ready", "running") else ""
-        self.wait_label.visible = bool(self.wait_label.text)
 
 
 def _workflow_card(jobs, name, targets, navigate):
@@ -56,6 +54,7 @@ def _workflow_card(jobs, name, targets, navigate):
             for target in targets:
                 ui.button(f"Open {target}", on_click=lambda target=target: navigate(target)).props("flat")
         view.place_console("Workflow console")
+    card.classes("vmi-agent-workflow")
     card.set_visibility(False)
 
     def refresh():
@@ -74,58 +73,76 @@ def build(jobs, *, registry, navigate):
     account = shared.current_account()
     owner = account.name if account else "local"
     status = AgentStatus()
+    connection_button = None
+
+    def place_connection():
+        nonlocal connection_button
+        connection_button = ui.button("Connection", icon="tune").props(
+            'flat dense no-caps aria-label="Connection" aria-expanded="false"')
+        connection_button.classes("vmi-agent-connection-toggle")
+
     theme.panel_header(
         "Agent",
         "Inspect shared data and work in your workspace with your own model endpoint.",
         view=status,
+        actions=place_connection,
     )
 
-    with theme.panel_card():
-        with ui.expansion("Connection", icon="tune", value=False) \
-                .classes("w-full vmi-agent-connection") as connection:
-            with field_grid():
-                base_url = ui.input("Base URL", placeholder="https://provider.example/v1") \
-                    .classes("w-full").props("outlined dense autocomplete=off")
-                model = ui.input("Model ID", placeholder="provider-model-name") \
-                    .classes("w-full").props("outlined dense autocomplete=off")
-            with field_grid():
-                api = ui.select(API_FORMATS, value="openai-completions", label="API format") \
-                    .classes("w-full").props("outlined dense")
-                api_key = ui.input("API key", password=True, password_toggle_button=True) \
-                    .classes("w-full").props("outlined dense autocomplete=off")
-            ui.label("The key is used only for this session and is never saved or included in workflows. "
-                     "Stopping the session removes its temporary configuration.").classes("vmi-subtitle")
-            if shared.SERVER:
-                ui.label("The isolated agent can read Shared datasets and change files only in My workspace. "
-                         "Prompts and data content are sent to the endpoint you choose.").classes("vmi-subtitle")
-            else:
-                ui.label("Local development starts pi directly unless VMI_AGENT_BACKEND=container is set. "
-                         "The agent can change files in this workspace.").classes("vmi-subtitle")
+    with ui.column().classes("vmi-agent-connection w-full") as connection:
+        with field_grid():
+            base_url = ui.input("Base URL", placeholder="https://provider.example/v1") \
+                .classes("w-full").props("outlined dense autocomplete=off")
+            model = ui.input("Model ID", placeholder="provider-model-name") \
+                .classes("w-full").props("outlined dense autocomplete=off")
+        with field_grid():
+            api = ui.select(API_FORMATS, value="openai-completions", label="API format") \
+                .classes("w-full").props("outlined dense")
+            api_key = ui.input("API key", password=True, password_toggle_button=True) \
+                .classes("w-full").props("outlined dense autocomplete=off")
+        ui.label("The key is used only for this session and is never saved or included in workflows. "
+                 "Stopping the session removes its temporary configuration.").classes("vmi-subtitle")
+        if shared.SERVER:
+            ui.label("The isolated agent can read Shared datasets and change files only in My workspace. "
+                     "Prompts and data content are sent to the endpoint you choose.").classes("vmi-subtitle")
+        else:
+            ui.label("Local development starts pi directly unless VMI_AGENT_BACKEND=container is set. "
+                     "The agent can change files in this workspace.").classes("vmi-subtitle")
+        with ui.row().classes("vmi-action-bar w-full items-center gap-2"):
+            session_button = theme.run_button("Start session")
+    connection.set_visibility(False)
+    error_label = ui.label("").classes("vmi-agent-error vmi-agent-notice w-full") \
+        .props('role="alert" tabindex="-1"')
+    error_label.visible = False
 
-            with ui.row().classes("vmi-action-bar w-full items-center gap-2"):
-                session_button = theme.run_button("Start session")
-        error_label = ui.label("").classes("vmi-agent-error w-full") \
-            .props('role="alert" tabindex="-1"')
-        error_label.visible = False
-
-        theme.form_section("Conversation")
+    with ui.element("div").classes("vmi-agent-timeline w-full"):
         with ui.scroll_area().classes("vmi-agent-transcript w-full") as transcript:
-            entries_column = ui.column().classes("w-full gap-3")
-        approval_view = ui.column().classes("w-full gap-2")
-        context_note = ui.label().classes("vmi-caption")
-        prompt = ui.textarea("Instruction", placeholder="Describe the analysis or file operation to perform.") \
-            .classes("w-full").props("outlined autogrow rows=3")
-        with ui.row().classes("w-full justify-between items-center gap-3"):
-            with ui.column().classes("gap-0"):
-                with ui.row().classes("items-center gap-2"):
+            entries_column = ui.column().classes("vmi-agent-entries w-full")
+        latest_button = ui.button("Latest messages", icon="arrow_downward").props(
+            'flat dense no-caps aria-hidden="true" tabindex="-1"')
+        latest_button.classes("vmi-agent-latest")
+    approval_view = ui.column().classes("vmi-agent-approval w-full gap-2")
+
+    with ui.column().classes("vmi-agent-composer w-full"):
+        context_note = ui.label().classes("vmi-agent-context")
+        context_note.visible = False
+        prompt = ui.textarea("Instruction", placeholder="Type a message…") \
+            .classes("vmi-agent-prompt w-full").props(
+                'borderless autogrow rows=2 aria-label="Instruction" autocomplete=off')
+        with ui.row().classes("w-full justify-between items-center gap-3 no-wrap"):
+            with ui.column().classes("vmi-agent-composer-status gap-0"):
+                with ui.row().classes("items-center gap-2 no-wrap"):
                     activity_spinner = ui.spinner("dots", size="sm", color="primary").props('aria-hidden="true"')
                     activity_label = ui.label().classes("vmi-caption").props('role="status"')
-                ui.label("Enter to send · Shift+Enter for a new line").classes("vmi-caption")
-            with ui.row().classes("items-center gap-2"):
+                ui.label("Enter to send · Shift+Enter for a new line").classes(
+                    "vmi-caption vmi-agent-keyboard-hint")
+            with ui.row().classes("items-center gap-2 no-wrap"):
                 abort_button = ui.button("Abort run", icon="stop").props("flat color=negative")
-                send_button = ui.button("Send", icon="send").props("color=primary unelevated")
+                send_button = ui.button(icon="arrow_upward").props(
+                    'round color=primary unelevated aria-label="Send"')
+                send_button.classes("vmi-agent-send")
 
-    with ui.expansion("Diagnostics", icon="terminal", value=False).classes("w-full vmi-console"):
+    with ui.expansion("Diagnostics", icon="terminal", value=False).classes(
+            "vmi-agent-diagnostics w-full vmi-console"):
         ui.label("Process diagnostics appear here; protocol messages stay in the conversation.") \
             .classes("vmi-caption")
         diagnostics_log = theme.log_console()
@@ -141,6 +158,13 @@ def build(jobs, *, registry, navigate):
     view_context = None
     active_review = None
 
+    def toggle_connection():
+        connection.visible = not connection.visible
+        connection_button.props(f'aria-expanded="{str(connection.visible).lower()}"')
+        connection_button.classes(remove="vmi-agent-connection-open")
+        if connection.visible:
+            connection_button.classes("vmi-agent-connection-open")
+
     def open_view_context(view: PanelView):
         nonlocal view_context
         if active_review is not None:
@@ -148,6 +172,7 @@ def build(jobs, *, registry, navigate):
             return
         view_context = (uuid4().hex, view)
         context_note.text = view.label
+        context_note.visible = True
         navigate("Agent")
 
     def clear_review():
@@ -179,6 +204,7 @@ def build(jobs, *, registry, navigate):
             if active_review is not None:
                 view_context = None
                 context_note.text = ""
+                context_note.visible = False
             clear_review()
             if not approved:
                 await answer(session, key, {"status": "declined"})
@@ -289,13 +315,13 @@ def build(jobs, *, registry, navigate):
         diagnostics_log.clear()
         entries_column.clear()
         with entries_column:
-            with ui.row().classes("vmi-results-empty w-full items-center justify-center gap-2") as empty:
+            with ui.row().classes("vmi-agent-empty w-full items-center justify-center gap-2") as empty:
                 ui.icon("forum").props('aria-hidden="true"')
                 ui.label("Start a session to begin a conversation.").classes("vmi-caption")
             empty_state = empty
 
     def add_entry(entry):
-        with entries_column:
+        with entries_column, ui.column().classes(f"vmi-agent-entry vmi-agent-entry-{entry['kind']} w-full"):
             if entry["kind"] == "user":
                 ui.label("You").classes("vmi-overline")
                 element = ui.label(entry["text"]).classes("vmi-agent-message vmi-agent-user")
@@ -303,7 +329,7 @@ def build(jobs, *, registry, navigate):
                 ui.label("Agent").classes("vmi-overline")
                 element = ui.markdown(entry["text"]).classes("vmi-agent-message")
             elif entry["kind"] == "tool":
-                with ui.row().classes("items-center gap-2"):
+                with ui.row().classes("vmi-agent-tool items-center gap-2"):
                     ui.icon("construction").props('aria-hidden="true"')
                     element = ui.label(entry["text"]).classes("vmi-caption")
                 if entry["detail"]:
@@ -366,8 +392,7 @@ def build(jobs, *, registry, navigate):
                     changed = True
         if changed:
             ui.run_javascript(
-                f"const e=getHtmlElement({transcript.id}).querySelector('.q-scrollarea__container');"
-                "if(e)e.scrollTop=e.scrollHeight;")
+                f"if(typeof vmiAgentChatChanged==='function')vmiAgentChatChanged({transcript.id},{latest_button.id});")
         diagnostics = snapshot["diagnostics"]
         if diagnostics_cursor > len(diagnostics):
             diagnostics_log.clear()
@@ -440,14 +465,17 @@ def build(jobs, *, registry, navigate):
             show_error(exc)
         refresh()
 
+    connection_button.on_click(toggle_connection)
     session_button.on_click(toggle_session)
     send_button.on_click(send)
+    latest_button.on_click(lambda: ui.run_javascript(f"vmiAgentChatLatest({transcript.id},{latest_button.id});"))
     prompt.on(
         "keydown", send,
         js_handler="(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) "
                    "{ event.preventDefault(); emit(event); } }",
     )
     abort_button.on_click(abort)
+    ui.context.client.on_connect(lambda: ui.run_javascript(AGENT_CHAT_JS.read_text(encoding="utf-8")))
     reset_transcript(None)
     refresh()
     shared.workspace_timer(0.4, refresh)
