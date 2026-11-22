@@ -260,7 +260,7 @@ def peak_fit_job(gated_job, targets, region, estimates, baseline, *, unfiltered_
     return job
 
 
-def build(jobs):
+def build(jobs, *, ask_agent=None):
     def show_job(job):
         if job.status == "done" and job.extra.get("agent_panel"):
             reset_gmd()
@@ -314,11 +314,13 @@ def build(jobs):
             maximum = save(num_input("TOF maximum (ns, blank = auto)", None, step="any"), "maximum")
         with action_bar(view, "Plot TOF", on_click=run):
             pass
-    view.place_console()
-    reset_gmd, set_metadata, restore_agent_gate = _gmd_section(jobs, view, save)
+    console = ui.column().classes("w-full")
+    reset_gmd, set_metadata, restore_agent_gate = _gmd_section(jobs, view, save, ask_agent=ask_agent)
+    with console:
+        view.place_console()
 
 
-def _gmd_section(jobs, view, save):
+def _gmd_section(jobs, view, save, *, ask_agent=None):
     loaded_job = None
     loaded_metadata = None
     readings = None
@@ -437,13 +439,14 @@ def _gmd_section(jobs, view, save):
                 fig = _tof_figure(edges, spectra, "GMD2-filtered time-of-flight spectra")
                 ui.plotly(plot_options(fig)).classes("w-full")
             else:
-                _peak_fitting(jobs, job, edges, spectra)
+                _peak_fitting(jobs, job, edges, spectra, ask_agent=ask_agent)
             with ui.expansion("Unfiltered TOF", icon="show_chart", value=False).classes("w-full gap-4").props(
                     'data-tof-fit-source="unfiltered"'):
                 ui.label("Fits the unfiltered spectrum to define peak windows. Counting and normalization "
                          f"still use the {selected:,} GMD2-selected triggers above.").classes("vmi-subtitle")
                 if selected and any(counts.any() for counts in unfiltered_spectra.values()):
-                    _peak_fitting(jobs, job, edges, unfiltered_spectra, unfiltered_result=original_path)
+                    _peak_fitting(jobs, job, edges, unfiltered_spectra, unfiltered_result=original_path,
+                                  ask_agent=ask_agent)
                 else:
                     ui.plotly(plot_options(_tof_figure(edges, unfiltered_spectra,
                                                        "Unfiltered time-of-flight spectra"))).classes("w-full")
@@ -468,7 +471,7 @@ def _gmd_section(jobs, view, save):
                  "click Apply GMD2 range. Pairing stays within each acquisition. The limits are inclusive."
                  ).classes("vmi-subtitle")
         filter_view.run_button("Apply GMD2 range", on_click=run_filter)
-        filter_view.place_console("Filtered TOF console")
+        filter_console = ui.column().classes("w-full")
     filtered_display = ui.column().classes("w-full gap-4")
     metadata_file.on_value_change(lambda _: reset_gmd())
     def set_metadata(value):
@@ -480,10 +483,13 @@ def _gmd_section(jobs, view, save):
                 and filtered.extra.get("parent_id") == parent.id):
             show_filtered(filtered)
 
+    with filter_console:
+        filter_view.place_console("Filtered TOF console")
+
     return reset_gmd, set_metadata, restore_agent_gate
 
 
-def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None):
+def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None, ask_agent=None):
     peak_rows = []
     fit_job_name = UNFILTERED_FIT_JOB_NAME if unfiltered_result is not None else FIT_JOB_NAME
     title = "Unfiltered time-of-flight spectra" if unfiltered_result is not None else "GMD2-filtered time-of-flight spectra"
@@ -502,6 +508,31 @@ def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None)
     def clear_fit_range():
         fit_low.value = fit_high.value = None
         fit_view.clear_results()
+
+    def show_agent_fit(region, settings, approve, decline):
+        if fit_low.is_deleted:
+            raise ValueError("The source spectrum changed. Open that result to ask the Agent again.")
+        fit_low.value, fit_high.value = region
+        mode.value = "Select fit range"
+        refresh_plot()
+        with agent_review:
+            ui.label(f"Agent fit draft · {settings['Spectra']} · {settings['Baseline']} baseline · "
+                     f"Peak estimates {settings['Peak estimates (ns)']}").classes("vmi-caption")
+        with agent_review, ui.row().classes("items-center gap-2"):
+            ui.label("Adjust the fit range on the plot or in the form.")
+            ui.button("Approve Agent fit", on_click=lambda: approve((fit_low.value, fit_high.value)))
+            ui.button("Decline", on_click=decline).props("flat")
+
+    def open_agent():
+        if (fit_low.value is None or fit_high.value is None or fit_low.value >= fit_high.value
+                or not targets.value):
+            ui.notify("Select a spectrum and an increasing fit range first.", type="warning")
+            return
+        ask_agent({
+            "gate_job_id": filtered_job.id, "sources": list(targets.value or []),
+            "region_ns": [fit_low.value, fit_high.value], "baseline": baseline.value,
+            "unfiltered": unfiltered_result is not None,
+        }, show_agent_fit, agent_review)
 
     def add_peak():
         with peak_list, ui.row().classes("w-full items-center gap-3") as row:
@@ -546,6 +577,9 @@ def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None)
     with ui.row().classes("items-center gap-2"):
         mode = ui.toggle(["Zoom", "Select fit range"], value="Zoom", on_change=lambda _: refresh_plot())
         ui.button("Clear fit range", on_click=clear_fit_range).props("flat")
+        if ask_agent:
+            ui.button("Ask Agent", icon="smart_toy", on_click=open_agent).props("flat")
+    agent_review = ui.column().classes("w-full")
     plot = ui.plotly(go.Figure()).classes("w-full")
     plot.on("plotly_selected", select_fit_range, js_handler="event => emit(event?.range ?? null)")
     theme.form_section("Gaussian TOF peak fitting")

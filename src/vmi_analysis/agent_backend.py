@@ -327,7 +327,7 @@ class AgentSession:
                 self._assistant_index = len(self.entries) - 1
             self.entries[self._assistant_index]["text"] += self._redact(delta)
 
-    def prompt(self, message: str) -> None:
+    def prompt(self, message: str, *, model_context: str = "") -> None:
         if not message.strip():
             raise ValueError("Enter an instruction first.")
         if len(message) > 100_000:
@@ -336,7 +336,7 @@ class AgentSession:
             if self.status not in ("ready", "running"):
                 raise RuntimeError("Start an agent session before sending an instruction.")
         self._append("user", message)
-        command = {"type": "prompt", "message": message}
+        command = {"type": "prompt", "message": message + model_context}
         with self._lock:
             if self.status == "running":
                 command["streamingBehavior"] = "followUp"

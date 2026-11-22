@@ -1,6 +1,8 @@
 """Interactive per-user agent sessions for shared data and private workspaces."""
 
 import asyncio
+import json
+from uuid import uuid4
 
 from nicegui import ui
 
@@ -42,7 +44,7 @@ class AgentStatus:
         self.wait_label.visible = bool(self.wait_label.text)
 
 
-def build(jobs):
+def build(jobs, *, navigate=None):
     account = shared.current_account()
     owner = account.name if account else "local"
     status = AgentStatus()
@@ -87,6 +89,7 @@ def build(jobs):
         with ui.scroll_area().classes("vmi-agent-transcript w-full") as transcript:
             entries_column = ui.column().classes("w-full gap-3")
         approval_view = ui.column().classes("w-full gap-2")
+        context_note = ui.label().classes("vmi-caption")
         prompt = ui.textarea("Instruction", placeholder="Describe the analysis or file operation to perform.") \
             .classes("w-full").props("outlined autogrow rows=3")
         with ui.row().classes("w-full justify-between items-center gap-3"):
@@ -103,6 +106,23 @@ def build(jobs):
     diagnostics_cursor = 0
     empty_state = None
     approval = None
+    fit_context = None
+    active_review = None
+
+    def open_fit_context(settings, show_fit, review):
+        nonlocal fit_context
+        if active_review is not None:
+            ui.notify("Approve or decline the existing Agent fit draft first.", type="warning")
+            return
+        fit_context = (uuid4().hex, settings, show_fit, review)
+        context_note.text = f"Ion TOF fit context · {settings['region_ns'][0]:g}–{settings['region_ns'][1]:g} ns"
+        navigate("Agent")
+
+    def clear_review():
+        nonlocal active_review
+        if active_review is not None and not active_review.is_deleted:
+            active_review.clear()
+        active_review = None
 
     async def answer(session, key, value):
         try:
@@ -110,20 +130,30 @@ def build(jobs):
         except RuntimeError as exc:
             show_error(exc)
 
-    async def decide(session, key, job, approved):
-        nonlocal approval
+    async def decide(session, key, job, approved, *, fit_parameters=None, region=None):
+        nonlocal approval, fit_context
         with approval_view:
+            if approved and fit_parameters is not None:
+                try:
+                    job, _ = agent_panels.prepare(jobs, "ion_tof_fit", {**fit_parameters, "region_ns": list(region)})
+                except (OSError, TypeError, ValueError) as exc:
+                    ui.notify(str(exc), type="warning")
+                    return
             if AGENTS.current(owner) is not session or not session.take_panel_request(key):
                 show_error("This approval request is no longer pending.")
                 return
             approval = None
             approval_view.clear()
+            if active_review is not None:
+                fit_context = None
+                context_note.text = ""
+            clear_review()
             if not approved:
                 await answer(session, key, {"status": "declined"})
                 return
             try:
                 submitted = jobs.submit(job)
-            except (OSError, RuntimeError, ValueError) as exc:
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 show_error(exc)
                 await answer(session, key, {"error": str(exc)})
                 return
@@ -131,19 +161,24 @@ def build(jobs):
             await answer(session, key, {"job_id": submitted.id, "panel": submitted.name, "status": submitted.status})
 
     async def refresh_panel():
-        nonlocal approval
+        nonlocal approval, active_review
         session = AGENTS.current(owner)
         pending = session.panel_request() if session else None
         if pending is None:
             if approval is not None:
                 approval = None
                 approval_view.clear()
+                clear_review()
             return
         key, request = pending
         if approval == (session.id, key):
             return
         approval = None
         approval_view.clear()
+        clear_review()
+        view_id = request.get("view_id")
+        if view_id is not None and (fit_context is None or fit_context[0] != view_id):
+            return
         try:
             match request.get("action"):
                 case "describe":
@@ -153,8 +188,32 @@ def build(jobs):
                     if request["action"] == "wait" and value["status"] not in TERMINAL:
                         return
                 case "propose":
-                    job, inputs = agent_panels.prepare(jobs, request.get("operation"),
-                                                       request.get("parameters", {}))
+                    operation = request.get("operation")
+                    parameters = request.get("parameters", {})
+                    if view_id is not None:
+                        if operation != "ion_tof_fit" or not isinstance(parameters, dict):
+                            raise ValueError("Use the Ion TOF fit operation with this view.")
+                        _, settings, show_fit, review = fit_context
+                        parameters = {**settings, **parameters, "gate_job_id": settings["gate_job_id"],
+                                      "unfiltered": settings["unfiltered"]}
+                        if not isinstance(parameters["sources"], list) or any(
+                                source not in settings["sources"] for source in parameters["sources"]):
+                            raise ValueError("Choose a source selected on the Ion TOF plot.")
+                    job, inputs = agent_panels.prepare(jobs, operation, parameters)
+                    if view_id is not None:
+                        show_fit(job.extra["fit_range"], inputs,
+                                 lambda region: decide(session, key, job, True,
+                                                       fit_parameters=parameters, region=region),
+                                 lambda: decide(session, key, job, False))
+                        approval = (session.id, key)
+                        active_review = review
+                        with approval_view:
+                            ui.label("The Agent fit draft is ready to review in Ion TOF.")
+                            with ui.row():
+                                ui.button("Review on Ion TOF", on_click=lambda: navigate("Ion TOF")).props("flat")
+                                ui.button("Decline fit", on_click=lambda: decide(session, key, job, False)).props("flat")
+                        navigate("Ion TOF")
+                        return
                     approval = (session.id, key)
                     with approval_view, theme.panel_card():
                         theme.form_section(f"Review {job.name} run")
@@ -307,7 +366,14 @@ def build(jobs):
             if session is None:
                 raise RuntimeError("Start an agent session first.")
             message = prompt.value or ""
-            await asyncio.to_thread(session.prompt, message)
+            model_context = ""
+            if fit_context is not None:
+                identifier, settings, _, _ = fit_context
+                model_context = ("\n\n[App context from the user's Ion TOF selection. For a fit proposal, "
+                                 "call vmi_panel with action propose, operation ion_tof_fit, and this view_id. "
+                                 "Use the selected range unless the user requests a change.]\n"
+                                 + json.dumps({"view_id": identifier, "parameters": settings}))
+            await asyncio.to_thread(session.prompt, message, model_context=model_context)
             if prompt.value == message:
                 prompt.value = ""
         except (RuntimeError, ValueError) as exc:
@@ -336,3 +402,4 @@ def build(jobs):
     refresh()
     shared.workspace_timer(0.4, refresh)
     shared.workspace_timer(0.4, refresh_panel)
+    return open_fit_context

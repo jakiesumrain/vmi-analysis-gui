@@ -378,6 +378,10 @@ def index() -> None:
                                 module.build(MANAGER, use_calibration=export_calibration)
                             elif name == ion_pipeline.FALLBACK_JOB_NAME:
                                 module.build(MANAGER, fallback=True)
+                            elif module is agent:
+                                ask_agent = module.build(MANAGER, navigate=lambda name: setattr(panels, "value", name))
+                            elif module is ion_tof:
+                                module.build(MANAGER, ask_agent=ask_agent)
                             else:
                                 module.build(MANAGER)
 
