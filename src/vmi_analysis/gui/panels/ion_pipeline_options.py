@@ -6,7 +6,16 @@ from .. import shared, theme
 from .common import field_grid, num_input
 
 
-def options_form(save):
+def options_form(save, *, fallback=False):
+    if fallback:
+        from vmi_analysis.tpx3_analysis import UNWRAP_MODE
+
+        theme.form_section("Standalone decoding")
+        unwrap = save(ui.select({"signed": "Signed (default)", "go4": "Go4"}, value=UNWRAP_MODE,
+                                label="Timestamp unwrapping").props("outlined dense"), "unwrap")
+        ui.label("Decodes raw pixel hits.").classes("vmi-subtitle")
+        return lambda: dict(backend="fallback", source="pixels", unwrap=unwrap.value)
+
     theme.form_section("LUNA decoding")
     with field_grid():
         source = save(ui.select({"pixels": "Raw pixel hits", "clusters": "Clustered events"},

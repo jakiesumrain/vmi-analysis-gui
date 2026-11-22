@@ -292,6 +292,25 @@ class GuiSubmissionTests(unittest.TestCase):
         self.assertEqual(cfg["vmi_picasso"]["spectrum_plot"]["x_max"], -1)
         self.assertEqual(Path(job.extra["output_dir"]), ROOT / "centroiding/vmi_output")
 
+    def test_pes_abel_options_are_folded_by_default(self):
+        from nicegui import Client, app, ui
+        from vmi_analysis.gui.panels import pes
+
+        manager = Mock()
+        manager.jobs.return_value = []
+        client = Client(ui.page("/_test_pes_abel_options"))
+        try:
+            with client, patch.object(app.storage, "_general", {MIGRATED_KEY: True}):
+                pes.build(manager)
+            expansion = next(
+                element for element in client.elements.values()
+                if element.__class__.__name__ == "Expansion"
+                and "Abel inversion options" in getattr(element, "text", "")
+            )
+            self.assertFalse(expansion.value)
+        finally:
+            client.delete()
+
     def test_pes_submits_selected_method_order_and_image_override(self):
         from vmi_analysis.gui.panels import pes
         from vmi_analysis.gui.resources import canonical_path
@@ -301,7 +320,8 @@ class GuiSubmissionTests(unittest.TestCase):
                  "pes.abel_method": "three_point", "pes.beta_order": 6,
                  "pes.image_geometry": json.dumps({source: {"center": [23, 25], "angle": 90, "resolution": 2}})}
         job = self.submit_form(pes, store, label="Generate spectra")
-        self.assertEqual(job.cmd[3:13], ["--abel-method", "three_point", "--beta-order", "6",
+        self.assertEqual(job.cmd[3:17], ["--abel-method", "three_point", "--beta-order", "6",
+                                         "--quadrants", "ur,ul,ll,lr", "--symmetry-axis", "none",
                                          "--image", source, "23", "25", "90", "2"])
         self.assertEqual(job.reads, [source])
         self.assertEqual(job.writes, [job.extra["pes_spectra"]])

@@ -3,6 +3,7 @@
   if (!sidebar || sidebar.dataset.sidebarReady) return;
   sidebar.dataset.sidebarReady = 'true';
   const toggle = sidebar.querySelector('[data-sidebar-toggle]');
+  const settingsLabel = sidebar.querySelector('.vmi-sidebar-settings .block');
   const groups = [...sidebar.querySelectorAll('.vmi-sidebar-disclosure')];
   const states = new Map();
   const desktop = matchMedia('(min-width: 901px)');
@@ -40,11 +41,18 @@
       groups.forEach(group => group.open = collapsed || states.get(group));
       // Reveal a tool selected while only icons were shown.
       if (!collapsed && active?.getAttribute('aria-label') !== activeBeforeCollapse) {
-        const group = active?.closest('.vmi-sidebar-disclosure');
-        if (group) group.open = true;
+        for (let group = active?.closest('.vmi-sidebar-disclosure'); group;
+             group = group.parentElement.closest('.vmi-sidebar-disclosure')) {
+          group.open = true;
+        }
       }
     }
     sidebar.classList.toggle('vmi-sidebar--collapsed', collapsed);
+    // Quasar's .block utility uses display: block !important; match its priority.
+    if (settingsLabel) {
+      if (collapsed) settingsLabel.style.setProperty('display', 'none', 'important');
+      else settingsLabel.style.removeProperty('display');
+    }
     const label = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
     toggle.setAttribute('aria-label', label);
     toggle.setAttribute('aria-expanded', String(!collapsed));

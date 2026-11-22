@@ -7,10 +7,24 @@ import json
 import h5py
 import numpy as np
 
-from vmi_analysis.ion_tof import GMD_SHIFTS, filtered_histogram, fit_filtered_peaks, gmd_diagnostics, histogram
+from vmi_analysis.ion_tof import (GMD_SHIFTS, filtered_histogram, fit_filtered_peaks, gmd_count_pairs,
+                                gmd_diagnostics, histogram)
 
 
 class IonTofTests(unittest.TestCase):
+    def test_scatter_pairs_follow_the_shift_within_each_acquisition(self):
+        gmd = np.array([1., 2., np.nan, 4., 5., 6.])
+        counts = np.array([10, 20, 30, 40, 0, 60])
+        for shift, readings, expected_counts in (
+            (-1, [2, 5], [10, 40]),
+            (0, [1, 2, 4, 6], [10, 20, 40, 60]),
+            (1, [1, 2, 5], [20, 30, 60]),
+        ):
+            with self.subTest(shift=shift):
+                x, y = gmd_count_pairs(gmd, counts, shift, [0, 3, 6])
+                np.testing.assert_array_equal(x, readings)
+                np.testing.assert_array_equal(y, expected_counts)
+
     def test_reference_edge_order_tick_precision_and_missing_trigger(self):
         base = 2**60
         with TemporaryDirectory() as directory:

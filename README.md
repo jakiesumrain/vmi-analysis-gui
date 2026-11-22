@@ -24,6 +24,11 @@ Use **Save workflow** in **Settings** to save panel values to a JSON file.
 Use **Load workflow** to restore those values. Save a Trig Calibration
 session separately to preserve its band, masks, and ring fits.
 
+For a live Timepix3 preview, install the optional receiver with
+`uv sync --extra live`, then open **Ion → Live TPX3**. Enter the acquisition
+publisher address, for example `tcp://acquisition-host:5556`. On a shared
+server, the administrator sets the address with `VMI_TPX3_LIVE_ENDPOINT`.
+
 ## Documentation
 
 - [Shared server setup](docs/shared-server.md) for independent workspaces

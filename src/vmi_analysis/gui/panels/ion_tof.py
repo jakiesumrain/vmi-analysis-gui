@@ -10,7 +10,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from vmi_analysis.ion_tof import DEFAULT_REFERENCE, GMD_SHIFTS, REFERENCES, gmd_diagnostics, gmd_limits
+from vmi_analysis.ion_tof import DEFAULT_REFERENCE, GMD_SHIFTS, REFERENCES, gmd_count_pairs, gmd_diagnostics, gmd_limits
 from vmi_analysis.ion_acquisition import collection_reads
 from vmi_analysis.pes import BASELINE_PARAMETERS, evaluate_fit_for_plot
 from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS
@@ -26,6 +26,7 @@ FILTER_JOB_NAME = "GMD-filtered TOF"
 FIT_JOB_NAME = "TOF peak fit"
 UNFILTERED_FIT_JOB_NAME = "Unfiltered TOF peak fit"
 SOURCES = {"pixels": "Raw pixel hits", "clusters": "Clustered events", "both": "Both"}
+SOURCE_COLORS = {"pixels": "#1e40af", "clusters": "#c2410c"}
 REFERENCE_LABELS = {name: name.replace("Rising", " rising").replace("Falling", " falling")
                     for name in REFERENCES}
 
@@ -43,25 +44,26 @@ def _gmd_histogram(label, values):
 
 def _correlation_plot(result, sources):
     fig = go.Figure()
-    best_shifts = []
+    best_shifts = {}
     issue = result["gmd_alignment_issue"]
     if issue:
         fig.add_annotation(text="Alignment unavailable", x=0.5, y=0.5, xref="paper", yref="paper",
                            showarrow=False)
     else:
         shifts = result["gmd_shifts"]
-        for source, color in zip(sources, ("#1e40af", "#c2410c")):
+        for source in sources:
             coefficients = result[f"{source}_gmd_correlation"]
             pairs = result[f"{source}_gmd_pairs"]
             for column, (statistic, dash) in enumerate((("Pearson", "solid"), ("Spearman", "dash"))):
                 fig.add_scatter(
                     x=shifts, y=coefficients[:, column], customdata=pairs, mode="lines+markers",
-                    line=dict(dash=dash, color=color), name=f"{SOURCES[source]} · {statistic}",
+                    line=dict(dash=dash, color=SOURCE_COLORS[source]), name=f"{SOURCES[source]} · {statistic}",
                     hovertemplate="d = %{x:+d}<br>Correlation %{y:.3f}<br>%{customdata:,} pairs",
                 )
             pearson = coefficients[:, 0]
             maxima = np.isfinite(pearson) & (pearson == np.max(pearson, where=np.isfinite(pearson), initial=-np.inf))
-            best_shifts.append(int(shifts[maxima][0]) if maxima.sum() == 1 else None)
+            if maxima.sum() == 1:
+                best_shifts[source] = int(shifts[maxima][0])
         fig.update_xaxes(tickmode="array", tickvals=shifts)
         fig.add_vline(x=0, line_dash="dot", line_color="#94a3b8")
     _style(fig, "GMD2 versus counts per frame")
@@ -69,11 +71,34 @@ def _correlation_plot(result, sources):
                       margin=dict(b=110))
     fig.update_xaxes(title_text="Shift d (frames)")
     fig.update_yaxes(title_text="Correlation coefficient", range=[-1.05, 1.05])
-    suggested = best_shifts[0] if best_shifts and len(set(best_shifts)) == 1 else None
-    return fig, suggested
+    return fig, best_shifts
 
 
-def _gmd_results(result, sources):
+def _count_scatter(result, counts, shifts, boundaries, title):
+    fig = go.Figure()
+    if not result["gmd_alignment_issue"]:
+        for source, shift in shifts.items():
+            x, y = gmd_count_pairs(result["gmd2_na"], counts[source], shift, boundaries)
+            index = GMD_SHIFTS.index(shift)
+            pearson = result[f"{source}_gmd_correlation"][index, 0]
+            score = f"r = {pearson:.3f}" if np.isfinite(pearson) else "r unavailable"
+            fig.add_scattergl(x=x, y=y, mode="markers",
+                              name=f"{SOURCES[source]} · d = {shift:+d} · {score}",
+                              marker=dict(size=4, opacity=0.55, color=SOURCE_COLORS[source],
+                                          symbol="circle" if source == "pixels" else "diamond"),
+                              hovertemplate="%{x:.4g} nA · %{y:,} counts<extra>%{fullData.name}</extra>")
+    if not fig.data:
+        message = "Alignment unavailable" if result["gmd_alignment_issue"] else "No unique best Pearson shift"
+        fig.add_annotation(text=message, x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+    _style(fig, title)
+    fig.update_layout(height=520, showlegend=bool(fig.data), legend=dict(orientation="h", y=-0.24),
+                      margin=dict(b=110))
+    fig.update_xaxes(title_text="GMD2 (nA)")
+    fig.update_yaxes(title_text="Counts per frame", rangemode="tozero")
+    return fig
+
+
+def _gmd_results(result, counts, boundaries):
     first, second = result["gmd1_na"], result["gmd2_na"]
     valid = np.isfinite(first) & np.isfinite(second)
     scatter = go.Figure(go.Scattergl(x=second[valid], y=first[valid], mode="markers",
@@ -82,14 +107,21 @@ def _gmd_results(result, sources):
     scatter.update_layout(height=360)
     scatter.update_xaxes(title_text="GMD2 (nA)")
     scatter.update_yaxes(title_text="GMD1 (nA)")
-    correlation, suggested = _correlation_plot(result, sources)
+    correlation, best_shifts = _correlation_plot(result, counts)
+    zero = _count_scatter(result, counts, dict.fromkeys(counts, 0), boundaries, "Counts versus GMD2 · No shift")
+    best = _count_scatter(result, counts, best_shifts, boundaries, "Counts versus GMD2 · Best Pearson shift")
     with ui.expansion("GMD diagnostic plots", icon="insights", value=False).classes("w-full"):
         with ui.element("div").classes("grid grid-cols-1 md:grid-cols-2 gap-4 w-full"):
-            for fig in (scatter, _gmd_histogram("GMD1", first), _gmd_histogram("GMD2", second), correlation):
+            for fig in (_gmd_histogram("GMD1", first), _gmd_histogram("GMD2", second), scatter, correlation,
+                        zero, best):
                 ui.plotly(plot_options(fig)).classes("w-full min-w-0")
         ui.label("Correlation compares GMD2 row j with camera frame j + d across all assigned hits. "
-                 "It uses positive GMD2 and counts, with at least 10 pairs per shift.").classes("vmi-subtitle")
-    return suggested
+                 "It uses positive GMD2 and counts, with at least 10 pairs per shift. "
+                 "The scatter plots compare d = 0 with the unique best Pearson shift for each count source."
+                 ).classes("vmi-subtitle")
+    if len(best_shifts) == len(counts) and len(set(best_shifts.values())) == 1:
+        return next(iter(best_shifts.values()))
+    return None
 
 def _load_gmd_diagnostics(result_path, metadata):
     with np.load(result_path, allow_pickle=False) as result:
@@ -98,7 +130,7 @@ def _load_gmd_diagnostics(result_path, metadata):
         boundaries = result["segment_offsets"] if "segment_offsets" in result else None
     if not counts:
         raise ValueError("Plot TOF again to save the counts per trigger for GMD diagnostics.")
-    return gmd_diagnostics(metadata, counts, boundaries), list(counts)
+    return gmd_diagnostics(metadata, counts, boundaries), counts, boundaries
 
 
 def _drag_interval(event):
@@ -313,7 +345,7 @@ def _gmd_section(jobs, view, save):
             metadata = shared.checked_path(metadata_value)
             result_path = shared.checked_path(job.extra["histogram"])
             with jobs.preview_read_access([result_path, *collection_reads(metadata)]):
-                result, sources = await asyncio.to_thread(_load_gmd_diagnostics, result_path, metadata)
+                result, counts, boundaries = await asyncio.to_thread(_load_gmd_diagnostics, result_path, metadata)
             if view.job is job and metadata_file.value.strip() == metadata_value:
                 reset_gmd()
                 loaded_job, loaded_metadata = job, metadata
@@ -321,7 +353,7 @@ def _gmd_section(jobs, view, save):
                 with gmd_display:
                     ui.label(f'{job.extra["input_name"]} · {REFERENCE_LABELS[job.extra["reference"]]} '
                              f'· {metadata.name}').classes("vmi-caption break-all")
-                    suggested = _gmd_results(result, sources)
+                    suggested = _gmd_results(result, counts, boundaries)
                     if issue := result["gmd_alignment_issue"]:
                         ui.label(f"Cannot filter by GMD2. {issue}").classes("text-negative")
                 gmd_low.value = gmd_high.value = None

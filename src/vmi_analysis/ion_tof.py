@@ -95,36 +95,36 @@ def _gmd_metadata(path, trigger_count, segment_offsets=None):
             "gmd_alignment_issue": issue}
 
 
-def gmd_correlations(gmd2, shot_counts, segment_offsets=None):
-    """Repeat the TPX3 diagnostic pairing GMD2[j] with counts[j + d]."""
-    from scipy.stats import pearsonr, spearmanr
-
+def gmd_count_pairs(gmd2, shot_counts, shift, segment_offsets=None):
+    """Return positive GMD2[j] and counts[j + shift] pairs within each acquisition."""
     if len(gmd2) != len(shot_counts):
         raise ValueError("GMD2 values and shot counts must have the same length.")
+    boundaries = [0, len(gmd2)] if segment_offsets is None else segment_offsets
+    readings, counts = [], []
+    for start, stop in zip(boundaries[:-1], boundaries[1:]):
+        first = start + max(0, -shift)
+        last = stop - max(0, shift)
+        if first < last:
+            readings.append(gmd2[first:last])
+            counts.append(shot_counts[first + shift:last + shift])
+    if not readings:
+        return gmd2[:0], shot_counts[:0]
+    values, counts = np.concatenate(readings), np.concatenate(counts)
+    valid = np.isfinite(values) & (values > 0) & (counts > 0)
+    return values[valid], counts[valid]
+
+
+def gmd_correlations(gmd2, shot_counts, segment_offsets=None):
+    """Calculate Pearson and Spearman correlations for each diagnostic shift."""
+    from scipy.stats import pearsonr, spearmanr
+
     correlations = np.full((len(GMD_SHIFTS), 2), np.nan)
     pairs = np.zeros(len(GMD_SHIFTS), dtype=np.int64)
-    boundaries = np.array([0, len(gmd2)]) if segment_offsets is None else segment_offsets
     for index, shift in enumerate(GMD_SHIFTS):
-        if abs(shift) >= len(gmd2):
-            continue
-        first, second = [], []
-        for start, stop in zip(boundaries[:-1], boundaries[1:]):
-            if abs(shift) >= stop - start:
-                continue
-            if shift < 0:
-                first.append(gmd2[start - shift:stop])
-                second.append(shot_counts[start:stop + shift])
-            else:
-                first.append(gmd2[start:stop - shift])
-                second.append(shot_counts[start + shift:stop])
-        if not first:
-            continue
-        values, counts = np.concatenate(first), np.concatenate(second)
-        use = np.isfinite(values) & (values > 0) & (counts > 0)
-        pairs[index] = use.sum()
+        values, counts = gmd_count_pairs(gmd2, shot_counts, shift, segment_offsets)
+        pairs[index] = len(values)
         if pairs[index] < MIN_GMD_PAIRS:
             continue
-        values, counts = values[use], counts[use]
         if values.min() == values.max() or counts.min() == counts.max():
             continue
         correlations[index] = pearsonr(values, counts).statistic, spearmanr(values, counts).statistic

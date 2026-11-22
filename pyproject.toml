@@ -32,6 +32,11 @@ build-backend = "setuptools.build_meta"
 [project.scripts]
 vmi-analysis = "vmi_analysis.gui.app:main"
 
+[project.optional-dependencies]
+live = [
+    "pyzmq>=26",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["vmi_analysis*"]

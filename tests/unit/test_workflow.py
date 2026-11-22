@@ -46,7 +46,8 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual({key.split(".", 1)[0] for key in values},
                                      {"gmd_map", "movie", "dark", "accumulate", "centroid", "binning",
                                       "calibration", "circularize", "pes", "pipeline", "ion_luna",
-                                      "ion_tof", "ion_pipeline"})
+                                      "ion_tof", "ion_pipeline", "ion_unpack", "ion_tof_fallback",
+                                      "ion_pipeline_fallback"})
                     self.assertEqual(values["accumulate.max_workers"], 6)
                     self.assertIsNone(values["accumulate.frame_index"])
                     self.assertTrue(values["pipeline.skip_existing"])
