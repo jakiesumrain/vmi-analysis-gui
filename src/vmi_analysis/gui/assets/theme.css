@@ -345,14 +345,16 @@ html, body {
   background: var(--vmi-hairline);
 }
 .vmi-field-grid { row-gap: var(--vmi-space-3); }
-.vmi-live-detector-row {
+.vmi-live-detector-row,
+.vmi-ion-detector-row {
   display: grid;
   grid-template-columns: minmax(0, min(53%, 560px)) minmax(0, 1fr);
   gap: var(--vmi-space-2);
   width: 100%;
 }
 @media (max-width: 900px) {
-  .vmi-live-detector-row { grid-template-columns: minmax(0, 1fr); }
+  .vmi-live-detector-row,
+  .vmi-ion-detector-row { grid-template-columns: minmax(0, 1fr); }
 }
 .vmi-check-grid {
   flex-wrap: wrap;

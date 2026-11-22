@@ -185,6 +185,9 @@ def command_access(cmd, cwd=None):
     elif module == "vmi_analysis.ion_verification":
         read(value("--input"))
         write(value("--output"))
+    elif module == "vmi_analysis.ion_momenta":
+        read_collection(value("--input"))
+        write(value("--output"))
     elif module == "vmi_analysis.ion_tof":
         read_collection(value("--input"))
         read_collection(value("--metadata"))
