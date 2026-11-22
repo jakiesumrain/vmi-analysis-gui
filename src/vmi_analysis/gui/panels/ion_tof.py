@@ -18,7 +18,7 @@ from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS
 from .. import shared, theme
 from ..centroid_plots import _style, plot_options
 from ..jobs import Job, ResourceBusyError
-from .common import JobView, action_bar, field_grid, num_input, path_input, persist
+from .common import JobView, action_bar, adopt_agent_form, field_grid, num_input, path_input, persist
 
 
 JOB_NAME = "Ion TOF"
@@ -264,24 +264,19 @@ def peak_fit_job(gated_job, targets, region, estimates, baseline, *, unfiltered_
 def build(jobs, *, ask_agent=None):
     def restore_form(job):
         """Show an Agent run's resolved inputs, as if the user had entered them."""
-        form = job.extra.get("panel_form") if job.extra.get("agent_panel") else None
-        if not isinstance(form, dict) or not form:
+        form = adopt_agent_form(job, "ion_tof")
+        if not form:
             return
         for key, widget in (("input", input_file), ("source", source), ("reference", reference),
                             ("bin_size_ns", bin_size), ("minimum", minimum), ("maximum", maximum)):
             if key in form:
                 widget.value = form[key]
-        if form.get("metadata"):
+        if "metadata" in form:
             set_metadata(form["metadata"])
 
     def show_job(job):
         if job.status == "done" and job.extra.get("agent_panel"):
             reset_gmd()
-            metadata = job.extra.get("metadata")
-            if not metadata and job.extra["source_file"].lower().endswith(".json"):
-                metadata = job.extra["source_file"]
-            if metadata:
-                set_metadata(metadata)
         _results(job)
         if job.status == "done":
             restore_agent_gate(job)

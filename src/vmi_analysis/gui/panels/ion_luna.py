@@ -13,7 +13,7 @@ from vmi_analysis.ion_acquisition import manifest_path, segment_files
 from ..shared import checked_path, workspace_root
 from .. import shared, theme
 from ..jobs import Job, JobManager
-from .common import (REPO_ROOT, JobView, action_bar, check_grid, field_grid, num_input,
+from .common import (REPO_ROOT, JobView, action_bar, adopt_agent_form, check_grid, field_grid, num_input,
                      open_folder_button, path_input, persist)
 from .hdf5_details import file_details
 
@@ -106,8 +106,8 @@ def build(jobs: JobManager):
 
     def restore_form(job):
         """Show an Agent run's resolved inputs, as if the user had entered them."""
-        form = job.extra.get("panel_form") if job.extra.get("agent_panel") else None
-        if not isinstance(form, dict) or not form:
+        form = adopt_agent_form(job, "ion_luna")
+        if not form:
             return
         if not job.extra.get("corrected"):
             stage.value = DUMP

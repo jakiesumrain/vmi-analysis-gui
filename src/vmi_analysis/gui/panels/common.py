@@ -276,6 +276,19 @@ def persist(widget, key: str):
     return widget
 
 
+def adopt_agent_form(job, panel):
+    """Adopt an Agent job's inputs once per workspace, then respect saved edits."""
+    form = job.extra.get("panel_form") if job.extra.get("agent_panel") else None
+    if not isinstance(form, dict) or not form:
+        return {}
+    store = shared.settings_store()
+    marker = f"{panel}._adopted_agent_job"
+    if store.get(marker) == job.id:
+        return {key: store.get(f"{panel}.{key}", value) for key, value in form.items()}
+    store.update({f"{panel}.{key}": value for key, value in form.items()} | {marker: job.id})
+    return form
+
+
 def delete_outputs(paths, *, expected=None):
     """Delete only when no running/queued job reads or writes these files."""
     try:

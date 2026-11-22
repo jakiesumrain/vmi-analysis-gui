@@ -17,6 +17,7 @@ from vmi_analysis.gui import agent_panels, shared
 from vmi_analysis.gui.jobs import Job, JobManager
 from vmi_analysis.gui.resources import job_access
 from vmi_analysis.gui.panels import ion_luna, ion_tof
+from vmi_analysis.gui.panels.common import adopt_agent_form
 
 
 class AgentPanelTests(unittest.TestCase):
@@ -82,6 +83,7 @@ class AgentPanelTests(unittest.TestCase):
         self.assertIs(form["acquisition_prefix"], False)
         self.assertEqual(form["layout"], "quad")
         self.assertIs(form["raw-only"], True)
+        self.assertEqual(form["timewalk_file"], "")
         self.assertNotIn("tof-tdc-reference", form)  # absent from a raw-only run
 
     def test_folder_dump_proposal_marks_the_folder_input_mode(self):
@@ -102,8 +104,21 @@ class AgentPanelTests(unittest.TestCase):
         })
         self.assertEqual(job.extra["panel_form"], {
             "input": str(output), "source": "both", "reference": "TDC2Falling",
-            "bin_size_ns": 10.0, "minimum": 5.0, "maximum": 20000,
+            "bin_size_ns": 10.0, "minimum": 5.0, "maximum": 20000, "metadata": "",
         })
+
+    def test_adoption_replaces_old_inputs_once_and_respects_later_edits(self):
+        saved = {"ion_tof.metadata": "old-metadata.h5", "ion_tof.bin_size_ns": 5}
+        job = Job(ion_tof.JOB_NAME, extra={"agent_panel": True,
+                                          "panel_form": {"metadata": "", "bin_size_ns": 10}})
+        with patch.object(shared, "settings_store", return_value=saved):
+            self.assertEqual(adopt_agent_form(job, "ion_tof"), {"metadata": "", "bin_size_ns": 10})
+            self.assertEqual(saved["ion_tof.metadata"], "")
+            saved["ion_tof.metadata"] = "new-metadata.h5"
+            saved["ion_tof.bin_size_ns"] = 20
+            self.assertEqual(adopt_agent_form(job, "ion_tof"),
+                             {"metadata": "new-metadata.h5", "bin_size_ns": 20})
+            self.assertEqual(job.extra["panel_form"], {"metadata": "", "bin_size_ns": 10})
 
     def test_handoff_keeps_acquisition_metadata_and_owner_scope(self):
         output, metadata = self.workspace / "ions.h5", self.workspace / "meta.h5"
