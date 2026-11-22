@@ -115,14 +115,14 @@ def _fit_controls(plot, source, edges, counts, context, save_peak):
         error = float(np.sqrt(np.mean(model[4] ** 2)))
         with output:
             ui.label(f"Constant baseline · Residual RMS {error:.4g} counts/bin").classes("vmi-caption")
-            ui.label("Review the fitted peaks before assigning species. The ±3σ window is a proposed gate."
+            ui.label("The fit supplies initial values. Edit the zero-momentum reference and TOF gate before saving."
                      ).classes("vmi-subtitle")
             for peak in sorted(model[-1], key=lambda item: item["center"]):
                 center = peak["center"]
                 sigma = peak["gaussian_fwhm"] / (2 * sqrt(2 * log(2)))
                 low, high = center - 3 * sigma, center + 3 * sigma
                 record = dict(context, fit_range_ns=list(region), center_ns=center, sigma_ns=sigma,
-                              fwhm_ns=peak["fwhm"], window_ns=[low, high], profile="Gaussian",
+                              fwhm_ns=peak["fwhm"], fit_window_ns=[low, high], profile="Gaussian",
                               baseline="Constant", residual_rms_counts_per_bin=error, at_bound=peak["bound"])
                 _species_fields(record, save_peak)
 
@@ -133,11 +133,15 @@ def _fit_controls(plot, source, edges, counts, context, save_peak):
 
 
 def _species_fields(record, save_peak):
-    low, high = record["window_ns"]
+    low, high = record["fit_window_ns"]
     with ui.column().classes("w-full gap-1"):
         warning = " · Fit at parameter bound" if record["at_bound"] else ""
         ui.label(f'μ {record["center_ns"]:.6g} ns · σ {record["sigma_ns"]:.6g} ns · '
                  f'μ ± 3σ [{low:.6g}, {high:.6g}] ns{warning}').classes("vmi-caption")
+        with field_grid(3):
+            reference_tof = num_input("Zero-momentum TOF t₀ (ns)", record["center_ns"], step="any")
+            minimum_tof = num_input("Species TOF min (ns)", low, step="any")
+            maximum_tof = num_input("Species TOF max (ns)", high, step="any")
         with ui.row().classes("items-center gap-2"):
             formula = ui.input("Chemical formula", placeholder="Xe").props("outlined dense")
             charge = num_input("Charge (e)", 1, step=1)
@@ -151,7 +155,16 @@ def _species_fields(record, save_peak):
                 if number is None or not isfinite(number) or not float(number).is_integer() or not number:
                     ui.notify("Enter a nonzero integer charge, such as 1 or 2.", type="warning")
                     return
-                save_peak(dict(record, formula=name, charge=int(number)))
+                t0 = reference_tof.value
+                if t0 is None or not isfinite(t0):
+                    ui.notify("Enter a finite zero-momentum TOF.", type="warning")
+                    return
+                try:
+                    window = _interval([minimum_tof.value, maximum_tof.value])
+                except ValueError as exc:
+                    ui.notify(str(exc), type="warning")
+                    return
+                save_peak(dict(record, formula=name, charge=int(number), t0_ns=t0, window_ns=list(window)))
 
             ui.button("Add to species list", on_click=add).props("flat")
 
