@@ -1,6 +1,9 @@
 """Detector-position and TOF workbench for ion momentum reconstruction."""
 
-from math import isfinite
+import asyncio
+import json
+from math import isfinite, log, sqrt
+import re
 import sys
 
 from nicegui import ui
@@ -8,23 +11,25 @@ import numpy as np
 import plotly.graph_objects as go
 
 from vmi_analysis.ion_acquisition import collection_reads
+from vmi_analysis.ion_momenta import gated_preview
 from vmi_analysis.ion_tof import DEFAULT_REFERENCE
+from vmi_analysis.pes import evaluate_fit_for_plot, fit_peaks
 from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS
 
 from .. import shared, theme
 from ..centroid_plots import _style, plot_options
-from ..jobs import Job
+from ..jobs import Job, ResourceBusyError
 from .common import (JobView, action_bar, confirm_clear_outputs, field_grid, num_input,
                      path_input, persist)
-from .ion_tof import REFERENCE_LABELS, SOURCES, _tof_figure
+from .ion_tof import REFERENCE_LABELS, SOURCES, _drag_interval, _mark_interval, _tof_figure
 
 
 JOB_NAME = "Ion momenta"
 PLOT_HEIGHT = 580
 
 
-def _position_figure(image):
-    fig = _style(go.Figure(), "Detector positions")
+def _position_figure(image, title="Detector positions"):
+    fig = _style(go.Figure(), title)
     fig.add_heatmap(z=image, colorscale="Viridis",
                     colorbar=dict(title="Counts", x=1, xanchor="left", thickness=14, xpad=5),
                     hovertemplate="X %{x} px<br>Y %{y} px<br>%{z:,} counts<extra></extra>")
@@ -36,10 +41,263 @@ def _position_figure(image):
     return fig
 
 
-def _results(job):
+def _interval(values):
+    if None in values or not np.isfinite(values).all() or values[0] >= values[1]:
+        raise ValueError("Enter increasing, finite gate limits.")
+    return tuple(values)
+
+
+def _gate_fields(labels):
+    with field_grid(2):
+        return [num_input(label, None, step="any") for label in labels]
+
+
+def _fit_controls(plot, source, edges, counts, context, save_peak):
+    selected_region = model = None
+    with ui.row().classes("items-center gap-2"):
+        mode = ui.toggle(["Zoom", "Select fit range"], value="Zoom")
+        ui.button("Clear fit", on_click=lambda: clear()).props("flat")
+    fields = _gate_fields(("Fit TOF min (ns)", "Fit TOF max (ns)"))
+    output = ui.column().classes("w-full")
+
+    def redraw():
+        fig = _tof_figure(edges, {source: counts}, "Position-filtered TOF",
+                          selecting=mode.value == "Select fit range")
+        fig.update_layout(uirevision="position-fit", showlegend=model is not None)
+        _mark_interval(fig, *(selected_region or (None, None)), mode.value == "Select fit range")
+        if model is not None:
+            x, fitted, background, _, residual, peaks = model
+            grid, total, _, _ = evaluate_fit_for_plot(x, background, peaks)
+            fig.add_scatter(x=grid, y=total, mode="lines", name="Gaussian fit")
+            fig.add_scatter(x=x, y=fitted + residual, mode="markers", name="Fit samples")
+        plot.update_figure(plot_options(fig))
+
+    def clear():
+        nonlocal selected_region, model
+        selected_region = model = None
+        for field in fields:
+            field.value = None
+        output.clear()
+        redraw()
+
+    def selected(event):
+        nonlocal selected_region, model
+        if mode.value == "Select fit range" and (limits := _drag_interval(event)):
+            for field, limit in zip(fields, limits, strict=True):
+                field.value = limit
+            output.clear()
+            selected_region, model = limits, None
+            redraw()
+
+    async def fit():
+        nonlocal selected_region, model
+        try:
+            region = _interval([field.value for field in fields])
+            fit_button.disable()
+            output.clear()
+            centers = (edges[:-1] + edges[1:]) / 2
+            fitted_model = await asyncio.to_thread(fit_peaks, centers, counts, region)
+        except (ValueError, RuntimeError, FloatingPointError) as exc:
+            ui.notify(str(exc), type="warning")
+            return
+        finally:
+            fit_button.enable()
+        if output.is_deleted or region != tuple(field.value for field in fields):
+            return
+        selected_region, model = region, fitted_model
+        redraw()
+        error = float(np.sqrt(np.mean(model[4] ** 2)))
+        with output:
+            ui.label(f"Constant baseline · Residual RMS {error:.4g} counts/bin").classes("vmi-caption")
+            ui.label("Review the fitted peaks before assigning species. The ±3σ window is a proposed gate."
+                     ).classes("vmi-subtitle")
+            for peak in sorted(model[-1], key=lambda item: item["center"]):
+                center = peak["center"]
+                sigma = peak["gaussian_fwhm"] / (2 * sqrt(2 * log(2)))
+                low, high = center - 3 * sigma, center + 3 * sigma
+                record = dict(context, fit_range_ns=list(region), center_ns=center, sigma_ns=sigma,
+                              fwhm_ns=peak["fwhm"], window_ns=[low, high], profile="Gaussian",
+                              baseline="Constant", residual_rms_counts_per_bin=error, at_bound=peak["bound"])
+                _species_fields(record, save_peak)
+
+    mode.on_value_change(lambda _: redraw())
+    plot.on("plotly_selected", selected, js_handler="event => emit(event?.range ?? null)")
+    fit_button = ui.button("Fit Gaussian peaks", on_click=fit)
+    redraw()
+
+
+def _species_fields(record, save_peak):
+    low, high = record["window_ns"]
+    with ui.column().classes("w-full gap-1"):
+        warning = " · Fit at parameter bound" if record["at_bound"] else ""
+        ui.label(f'μ {record["center_ns"]:.6g} ns · σ {record["sigma_ns"]:.6g} ns · '
+                 f'μ ± 3σ [{low:.6g}, {high:.6g}] ns{warning}').classes("vmi-caption")
+        with ui.row().classes("items-center gap-2"):
+            formula = ui.input("Chemical formula", placeholder="Xe").props("outlined dense")
+            charge = num_input("Charge (e)", 1, step=1)
+
+            def add():
+                name = (formula.value or "").strip()
+                number = charge.value
+                if not re.fullmatch(r"(?:[A-Z][a-z]?|[0-9]|[()\[\]]|[·.])+", name) or not re.search("[A-Z]", name):
+                    ui.notify("Enter a chemical formula such as Xe or N2.", type="warning")
+                    return
+                if number is None or not isfinite(number) or not float(number).is_integer() or not number:
+                    ui.notify("Enter a nonzero integer charge, such as 1 or 2.", type="warning")
+                    return
+                save_peak(dict(record, formula=name, charge=int(number)))
+
+            ui.button("Add to species list", on_click=add).props("flat")
+
+
+def _linked_plots(job, jobs, source, result, save_peak):
+    image, edges = result[f"{source}_image"], result["edges"]
+    triggers, offsets = result["trigger_times"], result["segment_offsets"]
+    reference = job.extra["reference"]
+    revisions = {"position": 0, "tof": 0}
+    gates = dict.fromkeys(revisions)
+
+    async def apply(kind, bounds):
+        revisions[kind] += 1
+        revision = revisions[kind]
+        target = filtered_tof if kind == "position" else filtered_image
+        target.clear()
+        if bounds is None:
+            gates[kind] = None
+            redraw()
+            return
+        with target:
+            ui.label("Applying gate…").classes("vmi-caption")
+        try:
+            path = shared.checked_path(job.extra["source_file"])
+            with jobs.preview_read_access(collection_reads(path)) as stopping:
+                filtered = await asyncio.to_thread(
+                    gated_preview, path, reference, source, edges, triggers, offsets, image.shape,
+                    position_gate=bounds if kind == "position" else None,
+                    tof_gate=bounds if kind == "tof" else None,
+                    stopped=lambda: stopping() or revisions[kind] != revision or target.is_deleted,
+                )
+        except (OSError, ValueError, KeyError, ResourceBusyError) as exc:
+            if revisions[kind] == revision and not target.is_deleted:
+                target.clear()
+                with target:
+                    ui.label(str(exc)).classes("text-negative")
+                gates[kind] = None
+                redraw()
+            return
+        if revisions[kind] != revision or target.is_deleted:
+            return
+        gates[kind] = bounds
+        redraw()
+        target.clear()
+        with target:
+            if kind == "tof":
+                ui.label(f"{bounds[0]:.6g}–{bounds[1]:.6g} ns · {filtered.sum():,} mapped positions").classes("vmi-caption")
+                ui.plotly(plot_options(_position_figure(filtered, "TOF-filtered detector positions"))).classes("w-full")
+            else:
+                ui.label(f"{filtered.sum():,} arrivals inside the X/Y gate").classes("vmi-caption")
+                chart = ui.plotly(go.Figure()).classes("w-full")
+                context = dict(source=source, input_file=job.extra["input_name"], trigger_reference=reference,
+                               position_gate_px=dict(zip(("xmin", "xmax", "ymin", "ymax"), bounds, strict=True)),
+                               histogram_range_ns=[float(edges[0]), float(edges[-1])],
+                               bin_size_ns=job.extra["bin_size_ns"])
+                _fit_controls(chart, source, edges, filtered, context, save_peak)
+
+    async def enter(kind, fields):
+        try:
+            values = [field.value for field in fields]
+            bounds = _interval(values[:2])
+            if kind == "position":
+                bounds += _interval(values[2:])
+        except ValueError as exc:
+            ui.notify(str(exc), type="warning")
+            return
+        await apply(kind, bounds)
+
+    async def select(kind, fields, bounds):
+        for field, value in zip(fields, bounds, strict=True):
+            field.value = value
+        await enter(kind, fields)
+
+    async def clear(kind, fields):
+        for field in fields:
+            field.value = None
+        await apply(kind, None)
+
+    async def image_selected(event):
+        ranges = event.args or {}
+        if image_mode.value == "Select area" and "x" in ranges and "y" in ranges:
+            await select("position", xy, sorted(ranges["x"]) + sorted(ranges["y"]))
+
+    async def tof_selected(event):
+        if tof_mode.value == "Select TOF range" and (limits := _drag_interval(event)):
+            await select("tof", times, limits)
+
+    def redraw():
+        fig = _position_figure(image)
+        selecting = image_mode.value == "Select area"
+        if selecting:
+            fig.add_scatter(x=[0, image.shape[1] - 1], y=[0, image.shape[0] - 1], mode="markers",
+                            marker=dict(opacity=0), hoverinfo="skip")
+        if gates["position"] is not None:
+            xmin, xmax, ymin, ymax = gates["position"]
+            fig.add_shape(type="rect", x0=xmin, x1=xmax, y0=ymin, y1=ymax,
+                          line=dict(color="#38bdf8", width=2))
+        fig.update_layout(dragmode="select" if selecting else "zoom", uirevision="positions",
+                          selections=[], selectionrevision=str(gates["position"]))
+        image_plot.update_figure(plot_options(fig))
+        selecting = tof_mode.value == "Select TOF range"
+        fig = _tof_figure(edges, {source: result[source]}, "Time-of-flight spectrum", selecting=selecting)
+        fig.update_layout(height=PLOT_HEIGHT, margin=dict(l=65, r=24, t=90, b=65), uirevision="tof")
+        _mark_interval(fig, *(gates["tof"] or (None, None)), selecting)
+        tof_plot.update_figure(plot_options(fig))
+
+    with ui.element("div").classes("vmi-ion-detector-row"):
+        with ui.column().classes("min-w-0 w-full"):
+            with ui.row().classes("items-center gap-2"):
+                image_mode = ui.toggle(["Zoom", "Select area"], value="Zoom")
+            image_plot = ui.plotly(go.Figure()).classes("w-full min-w-0")
+            with ui.expansion("X/Y gate limits", icon="filter_alt").classes("w-full"):
+                xy = _gate_fields(("X min (px)", "X max (px)", "Y min (px)", "Y max (px)"))
+                ui.button("Apply X/Y gate", on_click=lambda: enter("position", xy)).props("flat")
+                ui.button("Clear X/Y gate", on_click=lambda: clear("position", xy)).props("flat")
+        with ui.column().classes("min-w-0 w-full"):
+            with ui.row().classes("items-center gap-2"):
+                tof_mode = ui.toggle(["Zoom", "Select TOF range"], value="Zoom")
+            tof_plot = ui.plotly(go.Figure()).classes("w-full min-w-0")
+            with ui.expansion("TOF gate limits", icon="filter_alt").classes("w-full"):
+                times = _gate_fields(("Gate TOF min (ns)", "Gate TOF max (ns)"))
+                ui.button("Apply TOF gate", on_click=lambda: enter("tof", times)).props("flat")
+                ui.button("Clear TOF gate", on_click=lambda: clear("tof", times)).props("flat")
+    with ui.element("div").classes("vmi-ion-detector-row"):
+        filtered_image = ui.column().classes("w-full min-w-0")
+        filtered_tof = ui.column().classes("w-full min-w-0")
+    image_mode.on_value_change(lambda _: redraw())
+    tof_mode.on_value_change(lambda _: redraw())
+    image_plot.on("plotly_selected", image_selected, js_handler="event => emit(event?.range ?? null)")
+    tof_plot.on("plotly_selected", tof_selected, js_handler="event => emit(event?.range ?? null)")
+    redraw()
+
+
+def _results(job, jobs):
     if job.status != "done":
         return
-    with np.load(shared.checked_path(job.extra["histogram"]), allow_pickle=False) as result:
+    with np.load(shared.checked_path(job.extra["histogram"]), allow_pickle=False) as data:
+        result = {key: data[key] for key in data.files if not key.endswith("_shot_counts")}
+    saved = []
+
+    def save_peak(peak):
+        if peak not in saved:
+            saved.append(peak)
+            summary.set_text(f"{len(saved)} species assignments ready to download.")
+            download.enable()
+
+    def download_species():
+        document = dict(schema="vmi-ion-species/1", species=saved)
+        ui.download.content(json.dumps(document, indent=2, allow_nan=False) + "\n",
+                            "ion-species.json", "application/json")
+
+    with ui.column().classes("w-full"):
         ui.label(f'{job.extra["input_name"]} · {REFERENCE_LABELS[job.extra["reference"]]} '
                  f'· {int(result["triggers"]):,} triggers').classes("vmi-caption break-all")
         for source in ("pixels", "clusters"):
@@ -52,18 +310,22 @@ def _results(job):
                      f'{int(result[f"{source}_unmatched"]):,} with no preceding trigger · '
                      f'{int(result[f"{source}_outside"]):,} outside the TOF interval · '
                      f'{int(result[f"{source}_invalid_positions"]):,} invalid positions').classes("vmi-caption")
-            with ui.element("div").classes("vmi-ion-detector-row"):
-                ui.plotly(plot_options(_position_figure(image))).classes("w-full min-w-0")
-                fig = _tof_figure(result["edges"], {source: result[source]}, "Time-of-flight spectrum")
-                fig.update_layout(height=PLOT_HEIGHT, margin=dict(l=65, r=24, t=90, b=65))
-                ui.plotly(plot_options(fig)).classes("w-full min-w-0")
-        ui.label("The detector image uses arrivals inside the displayed TOF interval. "
-                 "Positions use one-pixel bins; fractional cluster positions are binned at pixel centers."
-                 ).classes("vmi-subtitle")
+            if "source_file" in job.extra:
+                _linked_plots(job, jobs, source, result, save_peak)
+            else:
+                ui.label("Plot positions and TOF again to enable gating.").classes("vmi-subtitle")
+                with ui.element("div").classes("vmi-ion-detector-row"):
+                    ui.plotly(plot_options(_position_figure(image))).classes("w-full min-w-0")
+                    ui.plotly(plot_options(_tof_figure(result["edges"], {source: result[source]},
+                                                       "Time-of-flight spectrum"))).classes("w-full min-w-0")
+        with ui.row().classes("items-center gap-2"):
+            summary = ui.label("Add fitted peaks to download a species list.").classes("vmi-caption")
+            download = ui.button("Download species JSON", on_click=download_species, icon="download")
+            download.disable()
 
 
 def build(jobs):
-    view = JobView(jobs, job_name=JOB_NAME, results_builder=_results)
+    view = JobView(jobs, job_name=JOB_NAME, results_builder=lambda job: _results(job, jobs))
     theme.panel_header(JOB_NAME, "Inspect detector positions and time of flight for ion momentum analysis.", view=view)
 
     def save(widget, key):
@@ -101,7 +363,8 @@ def build(jobs):
                        "--bin-size", str(width), "--minimum", str(low)]
             if high is not None:
                 job.cmd += ["--maximum", str(high)]
-            job.extra.update(histogram=str(result), reference=reference.value, input_name=source_file.name)
+            job.extra.update(histogram=str(result), reference=reference.value, input_name=source_file.name,
+                             source_file=str(source_file), bin_size_ns=width)
             view.attach(jobs.submit(job))
         except (OSError, ValueError) as exc:
             ui.notify(str(exc), type="warning")

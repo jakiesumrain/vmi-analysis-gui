@@ -9,7 +9,7 @@ import numpy as np
 
 from vmi_analysis.gui.resources import command_access
 from vmi_analysis.ion_acquisition import SCHEMA, collection_reads
-from vmi_analysis.ion_momenta import main, position_histograms
+from vmi_analysis.ion_momenta import gated_preview, main, position_histograms
 from vmi_analysis.ion_tof import histogram
 
 
@@ -49,6 +49,19 @@ class IonMomentaTests(unittest.TestCase):
             self.assertEqual(image.shape, (401, 302))
             self.assertEqual(image.sum(), 2)
             self.assertEqual((image[9, 12], image[400, 301]), (1, 1))
+
+    def test_independent_gates_use_unrounded_positions_and_unbinned_tof(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "dump.h5"
+            self.create_dump(path)
+            result = position_histograms(path, ("clusters",), minimum=0, maximum=.006, bin_size_ns=.003)
+            args = (path, "TDC1Rising", "clusters", result["edges"], result["trigger_times"],
+                    result["segment_offsets"], result["clusters_image"].shape)
+            counts = gated_preview(*args, position_gate=(12.2, 12.3, 8.7, 8.8))
+            np.testing.assert_array_equal(counts, [1, 0])
+            image = gated_preview(*args, tof_gate=(.0039, .0041))
+            self.assertEqual(image.sum(), 1)
+            self.assertEqual(image[400, 301], 1)
 
     def test_segment_clock_resets_and_file_reservations(self):
         with tempfile.TemporaryDirectory() as folder:
