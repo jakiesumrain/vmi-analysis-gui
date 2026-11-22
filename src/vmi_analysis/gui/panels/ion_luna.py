@@ -13,7 +13,7 @@ from vmi_analysis.ion_acquisition import manifest_path, segment_files
 from ..shared import checked_path, workspace_root
 from .. import shared, theme
 from ..jobs import Job, JobManager
-from .common import (REPO_ROOT, JobView, action_bar, check_grid, field_grid, num_input,
+from .common import (REPO_ROOT, JobView, action_bar, adopt_agent_form, check_grid, field_grid, num_input,
                      open_folder_button, path_input, persist)
 from .hdf5_details import file_details
 
@@ -104,7 +104,25 @@ def build(jobs: JobManager):
                     ui.button("Inspect metadata", on_click=inspect_metadata).props("flat")
                 open_folder_button(path.parent, "Open output folder")
 
-    view = JobView(jobs, job_name=JOB_NAME, results_builder=results, command_key=COMMAND_KEY)
+    def restore_form(job):
+        """Show an Agent run's resolved inputs, as if the user had entered them."""
+        form = adopt_agent_form(job, "ion_luna")
+        if not form:
+            return
+        if not job.extra.get("corrected"):
+            stage.value = DUMP
+        for key, widget in (("input_mode", file_mode), ("input", source), ("output", output),
+                            ("acquisition_prefix", prefixed), ("timewalk_file", timewalk),
+                            ("correction_input", correction_input),
+                            ("corrected_output", corrected_output)):
+            if key in form:
+                widget.value = form[key]
+        for flag, value in form.items():
+            if flag in fields:
+                fields[flag].value = value
+
+    view = JobView(jobs, job_name=JOB_NAME, results_builder=results, command_key=COMMAND_KEY,
+                   attach_builder=restore_form)
     theme.panel_header(JOB_NAME, "Unpack and cluster Timepix3 data or apply a timewalk correction.", view=view)
     fields = {}
 

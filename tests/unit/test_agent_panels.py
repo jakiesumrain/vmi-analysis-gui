@@ -17,6 +17,7 @@ from vmi_analysis.gui import agent_panels, shared
 from vmi_analysis.gui.jobs import Job, JobManager
 from vmi_analysis.gui.resources import job_access
 from vmi_analysis.gui.panels import ion_luna, ion_tof
+from vmi_analysis.gui.panels.common import adopt_agent_form
 
 
 class AgentPanelTests(unittest.TestCase):
@@ -68,6 +69,56 @@ class AgentPanelTests(unittest.TestCase):
         self.assertIn("--wsl-distribution=Ubuntu-20.04", job.cmd)
         self.assertIn(f"--wsl-executable={executable}", job.cmd)
         self.assertEqual(summary["Linux LUNA executable"], executable)
+
+    def test_dump_proposal_records_the_panel_form(self):
+        (self.datasets / "sample.tpx3").touch()
+        job, _ = agent_panels.prepare(self.jobs, "tpx3_dump", {
+            "input": "/datasets/sample.tpx3", "output": "/workspace/ions.h5", "prefixed": False,
+            "options": {"layout": "quad", "raw-only": True, "ctot-cut": 250},
+        })
+        form = job.extra["panel_form"]
+        self.assertEqual(form["input_mode"], "File")
+        self.assertEqual(form["input"], str(self.datasets / "sample.tpx3"))
+        self.assertEqual(form["output"], str(self.workspace / "ions.h5"))
+        self.assertIs(form["acquisition_prefix"], False)
+        self.assertEqual(form["layout"], "quad")
+        self.assertIs(form["raw-only"], True)
+        self.assertEqual(form["timewalk_file"], "")
+        self.assertNotIn("tof-tdc-reference", form)  # absent from a raw-only run
+
+    def test_folder_dump_proposal_marks_the_folder_input_mode(self):
+        self.datasets.joinpath("frames").mkdir()
+        job, _ = agent_panels.prepare(self.jobs, "tpx3_dump", {
+            "input": "/datasets/frames", "output": "/workspace/ions.h5",
+        })
+        self.assertEqual(job.extra["panel_form"]["input_mode"], "Folder")
+
+    def test_spectrum_proposal_records_the_panel_form(self):
+        output = self.workspace / "ions.h5"
+        output.touch()
+        dump = Job(ion_luna.JOB_NAME, status="done", owner=self.account.name, extra={"output": str(output)})
+        self.jobs._jobs[dump.id] = dump
+        job, _ = agent_panels.prepare(self.jobs, "ion_tof", {
+            "dump_job_id": dump.id, "source": "both", "reference": "TDC2Falling",
+            "bin_size_ns": 10, "minimum_ns": 5, "maximum_ns": 20000,
+        })
+        self.assertEqual(job.extra["panel_form"], {
+            "input": str(output), "source": "both", "reference": "TDC2Falling",
+            "bin_size_ns": 10.0, "minimum": 5.0, "maximum": 20000, "metadata": "",
+        })
+
+    def test_adoption_replaces_old_inputs_once_and_respects_later_edits(self):
+        saved = {"ion_tof.metadata": "old-metadata.h5", "ion_tof.bin_size_ns": 5}
+        job = Job(ion_tof.JOB_NAME, extra={"agent_panel": True,
+                                          "panel_form": {"metadata": "", "bin_size_ns": 10}})
+        with patch.object(shared, "settings_store", return_value=saved):
+            self.assertEqual(adopt_agent_form(job, "ion_tof"), {"metadata": "", "bin_size_ns": 10})
+            self.assertEqual(saved["ion_tof.metadata"], "")
+            saved["ion_tof.metadata"] = "new-metadata.h5"
+            saved["ion_tof.bin_size_ns"] = 20
+            self.assertEqual(adopt_agent_form(job, "ion_tof"),
+                             {"metadata": "new-metadata.h5", "bin_size_ns": 20})
+            self.assertEqual(job.extra["panel_form"], {"metadata": "", "bin_size_ns": 10})
 
     def test_handoff_keeps_acquisition_metadata_and_owner_scope(self):
         output, metadata = self.workspace / "ions.h5", self.workspace / "meta.h5"

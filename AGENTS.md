@@ -31,6 +31,8 @@ and [GUI design](docs/DESIGN.md) for implementation context.
 - Launch analysis scripts as subprocesses. Use one `JobView.run_button` per
   job panel and match its `job_name` to the submitted job name for reconnect.
   Preserve job snapshots and stop all process trees during server shutdown.
+  An approved Agent run records `job.extra["panel_form"]`; the panel adopts it
+  through `attach_builder` so its fields match the submitted run.
 - Trig Calibration runs interactive fitting in the web process. Use the
   same detector origin in Trig Calibration and Circularize. Circularize
   preserves the input matrix shape and the selected origin.
