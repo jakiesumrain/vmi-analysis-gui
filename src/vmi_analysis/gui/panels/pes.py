@@ -447,20 +447,36 @@ def build(jobs: JobManager) -> None:
             ui.label("Choose the detector quadrants used by the inversion and optional symmetry averaging. "
                      "All four quadrants with no symmetry is the default full-image inversion.") \
                 .classes("vmi-subtitle")
-            with check_grid():
-                quadrant_fields = {
-                    name: persist(ui.checkbox(f"{QUADRANT_LABELS[name]} (Q{index})", value=True),
-                                  f"pes.quadrant_{name}")
-                    for index, name in enumerate(QUADRANT_ORDER)
-                }
-            with field_grid():
-                symmetry_axis = persist(ui.select(
-                    {"none": "None (independent quadrants)", "vertical": "Vertical axis",
-                     "horizontal": "Horizontal axis", "both": "Both axes"},
-                    value="none", label="Symmetry axis").props("outlined dense"), "pes.symmetry_axis")
-            ui.label("Selecting a subset of quadrants requires a symmetry axis. "
-                     "Symmetry averaging combines the selected quadrants before inversion.") \
-                .classes("vmi-subtitle")
+            with ui.row().classes("w-full items-start gap-x-8 gap-y-4"):
+                with ui.column().classes("flex-1 min-w-64"):
+                    with check_grid():
+                        quadrant_fields = {
+                            name: persist(ui.checkbox(f"{QUADRANT_LABELS[name]} (Q{index})", value=True),
+                                          f"pes.quadrant_{name}")
+                            for index, name in enumerate(QUADRANT_ORDER)
+                        }
+                    with field_grid():
+                        symmetry_axis = persist(ui.select(
+                            {"none": "None (independent quadrants)", "vertical": "Vertical axis",
+                             "horizontal": "Horizontal axis", "both": "Both axes"},
+                            value="none", label="Symmetry axis").props("outlined dense"), "pes.symmetry_axis")
+                    ui.label("Selecting a subset of quadrants requires a symmetry axis. "
+                             "Symmetry averaging combines the selected quadrants before inversion.") \
+                        .classes("vmi-subtitle")
+                with ui.column().classes("shrink-0 max-w-full gap-1"):
+                    ui.label("Unrotated image (0°)").classes("vmi-caption")
+                    ui.label(
+                        "     Column increases →\n"
+                        "┌────────────┬────────────┐\n"
+                        "│ Q1         │ Q0         │\n"
+                        "│ Upper left │ Upper right│\n"
+                        "├────────────┼────────────┤ ← Center\n"
+                        "│ Q2         │ Q3         │\n"
+                        "│ Lower left │ Lower right│\n"
+                        "└────────────┴────────────┘\n"
+                        "Row increases ↓"
+                    ).classes("font-mono text-xs whitespace-pre max-w-full overflow-x-auto")
+            ui.label("Quadrant selection applies after the rotation specified above.").classes("vmi-subtitle")
         ui.label("Align the symmetry axis vertically before inversion. β includes even orders up to the selected maximum.") \
             .classes("vmi-subtitle")
         with action_bar(view, "Generate spectra", on_click=run):
