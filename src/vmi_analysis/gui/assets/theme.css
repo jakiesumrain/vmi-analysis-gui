@@ -501,7 +501,8 @@ html, body {
   min-width: 0;
   padding-right: 10px;
 }
-.vmi-abel-options .q-expansion-item__toggle-icon { display: none !important; }
+.vmi-abel-options .q-expansion-item__toggle-icon,
+.vmi-hide-expand-icon .q-expansion-item__toggle-icon { display: none !important; }
 
 /* ---- tabs and menus ---- */
 .q-tabs {

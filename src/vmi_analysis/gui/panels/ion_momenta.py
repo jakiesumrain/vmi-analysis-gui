@@ -74,7 +74,7 @@ def _image_color_controls(plot, image):
         plot.figure["data"][0].update(applied)
         plot.run_plot_method("restyle", {key: [value] for key, value in applied.items()}, [0])
 
-    with ui.expansion("Image colors", icon="palette", value=False).classes("w-full"):
+    with ui.expansion("Image colors", icon="palette", value=False).classes("w-full vmi-hide-expand-icon"):
         with field_grid(3):
             colors = ui.select(list(COLORMAPS), value="Viridis", label="Colormap").props("outlined dense")
             lower = num_input("vmin (counts)", None, step="any")
@@ -335,7 +335,7 @@ def _linked_plots(job, jobs, source, result, save_peak, register_peak, species_f
                 image_mode = ui.toggle(["Zoom", "Select area"], value="Zoom")
             image_plot = ui.plotly(go.Figure()).classes("w-full min-w-0")
             draw_image = _image_color_controls(image_plot, image)
-            with ui.expansion("X/Y gate limits", icon="filter_alt").classes("w-full"):
+            with ui.expansion("X/Y gate limits", icon="filter_alt").classes("w-full vmi-hide-expand-icon"):
                 ui.label("Blank limits use the data range.").classes("vmi-caption")
                 xy = _gate_fields(("X min (px)", "X max (px)", "Y min (px)", "Y max (px)"))
                 ui.button("Apply X/Y gate", on_click=lambda: enter("position", xy)).props("flat")
@@ -344,7 +344,7 @@ def _linked_plots(job, jobs, source, result, save_peak, register_peak, species_f
             with ui.row().classes("items-center gap-2"):
                 tof_mode = ui.toggle(["Zoom", "Select TOF range"], value="Zoom")
             tof_plot = ui.plotly(go.Figure()).classes("w-full min-w-0")
-            with ui.expansion("TOF gate limits", icon="filter_alt").classes("w-full"):
+            with ui.expansion("TOF gate limits", icon="filter_alt").classes("w-full vmi-hide-expand-icon"):
                 ui.label("Blank limits use the data range.").classes("vmi-caption")
                 times = _gate_fields(("Gate TOF min (ns)", "Gate TOF max (ns)"))
                 ui.button("Apply TOF gate", on_click=lambda: enter("tof", times)).props("flat")
@@ -553,7 +553,9 @@ def _momentum_controls(job, jobs, result, species_file, read_current):
     model = ui.toggle(MOMENTUM_MODELS, value="simple")
     ui.label("Uses the species TOF window across the whole detector. TOF is used directly. "
              "The initial center comes from the brightest detector bin.").classes("vmi-subtitle")
-    with ui.expansion("Momentum formulas and units", icon="functions", value=False).classes("w-full"):
+    with ui.expansion("Momentum formulas and units", icon="functions", value=False).classes(
+        "w-full vmi-hide-expand-icon"
+    ):
         with ui.column().classes("w-full gap-1").bind_visibility_from(model, "value", lambda value: value == "simple"):
             ui.label(f"p_x = {TRANSVERSE_CONVERSION:.9f} × M × s × (x − x₀) / t").classes("font-mono")
             ui.label(f"p_y = {TRANSVERSE_CONVERSION:.9f} × M × s × (y − y₀) / t").classes("font-mono")
