@@ -53,9 +53,8 @@
   --vmi-sidebar-w: 15.5rem;
   --vmi-sidebar-collapsed-w: 4rem;
   --vmi-log-h: 260px;
-  --vmi-agent-transcript-h: clamp(24rem, calc(100dvh - 26rem), 48rem);
   --vmi-agent-measure: 76rem;
-  --vmi-agent-reading-measure: 72ch;
+  --vmi-agent-reading-measure: 56rem;
   /* small text sizes */
   --vmi-text-overline: 0.65rem;
   --vmi-text-xs: 0.72rem;
@@ -342,6 +341,20 @@ html, body {
 .vmi-panel-head { min-height: 34px; }
 .vmi-panel-head-actions { margin-left: auto; flex: 0 0 auto; }
 .vmi-panel-subtitle { margin-top: var(--vmi-space-1); }
+.nicegui-content:has(.vmi-agent-page) { padding-bottom: var(--vmi-space-2); }
+.vmi-workspace:has(.vmi-agent-page),
+.vmi-tab-panels .q-tab-panel:has(> .vmi-agent-page) { padding-bottom: 0; }
+.vmi-tab-panels:has(.vmi-agent-page),
+.vmi-tab-panels > .q-panel:has(.vmi-agent-page) { overflow: visible; }
+html:has(.vmi-agent-page) { overflow-anchor: none; }
+.vmi-agent-page {
+  min-height: max(0px, calc(100dvh - var(--vmi-header-h) - var(--vmi-footer-h) - 4rem));
+}
+.vmi-agent-header {
+  padding-bottom: var(--vmi-space-3);
+  border-bottom: 1px solid var(--vmi-hairline);
+}
+.vmi-agent-header .vmi-panel-head-actions { margin-left: 0; }
 .vmi-agent-connection-toggle { color: var(--vmi-muted); }
 .vmi-agent-connection-toggle:hover,
 .vmi-agent-connection-open { color: var(--vmi-primary) !important; background: var(--vmi-surface-soft); }
@@ -355,28 +368,21 @@ html, body {
 }
 .vmi-agent-notice,
 .vmi-agent-approval,
-.vmi-agent-diagnostics,
 .vmi-agent-workflow {
   max-width: var(--vmi-agent-measure);
   margin-inline: auto;
 }
 .vmi-agent-notice { margin-top: var(--vmi-space-3); }
-.vmi-agent-timeline {
-  position: relative;
-  max-width: var(--vmi-agent-measure);
-  margin: var(--vmi-space-2) auto 0;
-}
-.vmi-agent-transcript {
-  height: var(--vmi-agent-transcript-h);
-  padding: var(--vmi-space-3) var(--vmi-space-4) var(--vmi-space-8);
-}
+.vmi-agent-timeline { flex: 1 0 auto; }
 .vmi-agent-entries {
+  flex: 1 0 auto;
   max-width: var(--vmi-agent-reading-measure);
   margin-inline: auto;
+  padding-block: var(--vmi-space-5);
   gap: var(--vmi-space-5);
 }
 .vmi-agent-empty {
-  min-height: calc(var(--vmi-agent-transcript-h) - var(--vmi-space-8));
+  flex: 1 0 10rem;
   color: var(--vmi-muted-soft);
 }
 .vmi-agent-entry { gap: var(--vmi-space-1); }
@@ -384,6 +390,7 @@ html, body {
 .vmi-agent-entry-assistant { align-items: stretch; }
 .vmi-agent-message {
   color: var(--vmi-body);
+  font-size: 1rem;
   line-height: 1.65;
   overflow-wrap: anywhere;
   user-select: text;
@@ -413,32 +420,58 @@ html, body {
 }
 .vmi-agent-latest {
   position: absolute;
-  bottom: var(--vmi-space-4);
+  bottom: calc(100% + var(--vmi-space-2));
   left: 50%;
-  z-index: 2;
   transform: translateX(-50%);
-  opacity: 0;
-  pointer-events: none;
   background: var(--vmi-surface-elevated) !important;
   border: 1px solid var(--vmi-hairline);
   box-shadow: var(--vmi-shadow-2);
-  transition: opacity var(--vmi-speed) var(--vmi-ease);
 }
-.vmi-agent-latest-visible { opacity: 1; pointer-events: auto; }
+.vmi-agent-latest[hidden] { display: none !important; }
 .vmi-agent-approval { margin-bottom: var(--vmi-space-3); }
 .vmi-agent-composer {
   position: sticky;
-  bottom: var(--vmi-space-3);
+  bottom: calc(var(--vmi-footer-h) + var(--vmi-space-1));
   z-index: 3;
   max-width: var(--vmi-agent-reading-measure);
-  margin: 0 auto var(--vmi-space-3);
-  padding: var(--vmi-space-2) var(--vmi-space-3);
-  gap: var(--vmi-space-1);
+  margin: var(--vmi-space-4) auto 0;
+  padding: var(--vmi-space-1) var(--vmi-space-3);
+  gap: 0;
   background: var(--vmi-surface-elevated);
   border: 1px solid var(--vmi-hairline-strong);
-  border-radius: var(--vmi-radius-xl);
+  border-radius: 1.5rem;
   box-shadow: var(--vmi-shadow-1);
 }
+.vmi-agent-completions {
+  position: absolute;
+  bottom: calc(100% + var(--vmi-space-2));
+  left: 0;
+  width: min(32rem, 100%);
+  max-height: min(18rem, 45dvh);
+  overflow-y: auto;
+  padding: var(--vmi-space-1);
+  color: var(--vmi-body);
+  background: var(--vmi-surface-elevated);
+  border: 1px solid var(--vmi-hairline);
+  border-radius: var(--vmi-radius-lg);
+  box-shadow: var(--vmi-shadow-2);
+}
+.vmi-agent-completions[hidden] { display: none !important; }
+.vmi-agent-composer:has(.vmi-agent-completions:not([hidden])) .vmi-agent-latest { visibility: hidden; }
+.vmi-agent-completion-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--vmi-space-2);
+  min-height: 32px;
+  padding: var(--vmi-space-1) var(--vmi-space-2);
+  border-radius: var(--vmi-radius-md);
+  cursor: pointer;
+}
+.vmi-agent-completion-option > span { min-width: 0; overflow-wrap: anywhere; }
+.vmi-agent-completion-option[aria-selected="true"],
+.vmi-agent-completion-option:hover { background: var(--vmi-surface-soft); }
+.vmi-agent-completion-detail { color: var(--vmi-muted); font-size: var(--vmi-text-xs); }
 .vmi-agent-composer:focus-within {
   border-color: var(--vmi-primary);
   box-shadow: var(--vmi-shadow-2);
@@ -454,13 +487,55 @@ html, body {
   border-radius: var(--vmi-radius-md);
 }
 .vmi-agent-prompt .q-field__control { height: auto; min-height: 0; padding: 0; }
-.vmi-agent-prompt .q-field__native { padding: var(--vmi-space-2); line-height: 1.5; }
+.vmi-agent-prompt .q-field__native {
+  padding: var(--vmi-space-2);
+  min-height: 2rem;
+  font-size: 1rem;
+  line-height: 1.5;
+  max-height: min(12rem, 30dvh);
+  overflow-y: auto !important;
+}
 .vmi-agent-prompt .q-field__label { display: none; }
 .vmi-agent-prompt .q-placeholder::placeholder { color: var(--vmi-muted-soft); opacity: 1; }
-.vmi-agent-composer-status { min-width: 0; }
-.q-btn.vmi-agent-send { flex: 0 0 auto; }
+.vmi-agent-composer-actions { gap: var(--vmi-space-2); }
+.vmi-agent-composer-status { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
+.vmi-agent-composer-status > [aria-hidden="true"] { display: none; }
+.vmi-agent-composer-status [role="status"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.vmi-agent-model { min-width: 4rem; max-width: 42%; }
+.vmi-agent-model:not(.q-field--disabled) .q-field__control { cursor: pointer; }
+.vmi-agent-model .q-field__control { padding-inline: var(--vmi-space-2); }
+.vmi-agent-model.q-field--float .q-field__label { display: none; }
+.vmi-agent-model.q-field--labeled.q-field--float .q-field__control-container,
+.vmi-agent-model.q-field--labeled.q-field--float .q-field__native { padding-block: 0; }
+.vmi-agent-model .q-field__native { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vmi-agent-model .q-field__native > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vmi-agent-attachments { padding: var(--vmi-space-1) var(--vmi-space-2); }
+.vmi-agent-attachment {
+  max-width: 100%;
+  gap: var(--vmi-space-1);
+  padding-left: var(--vmi-space-2);
+  color: var(--vmi-muted);
+  background: var(--vmi-surface-soft);
+  border: 1px solid var(--vmi-hairline);
+  border-radius: var(--vmi-radius-md);
+  font-size: var(--vmi-text-xs);
+}
+.q-btn.vmi-agent-attach,
+.q-btn.vmi-agent-send { flex: 0 0 auto; width: 36px; height: 36px; border-radius: 50%; }
+.q-btn.vmi-agent-attach { color: var(--vmi-muted); }
 .q-btn.vmi-agent-send .q-icon { margin: 0; }
-.vmi-agent-diagnostics { margin-top: var(--vmi-space-3); }
+.vmi-agent-diagnostics { --vmi-log-h: 9rem; }
 .vmi-agent-error {
   color: var(--vmi-error);
   overflow-wrap: anywhere;
@@ -934,11 +1009,8 @@ html, body {
   .vmi-panel-head { gap: var(--vmi-space-2); }
   .vmi-agent-connection { padding: var(--vmi-space-3); }
   .vmi-agent-connection .vmi-field-grid { grid-template-columns: minmax(0, 1fr) !important; }
-  .vmi-agent-transcript { padding-inline: 0; }
   .vmi-agent-user { max-width: 92%; }
-  .vmi-agent-composer { bottom: var(--vmi-space-2); padding-inline: var(--vmi-space-2); }
-  .vmi-agent-keyboard-hint { display: none; }
-  .vmi-agent-composer-status { max-width: 55%; }
+  .vmi-agent-composer { padding-inline: var(--vmi-space-2); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

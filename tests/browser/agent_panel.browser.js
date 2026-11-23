@@ -16,23 +16,44 @@ async page => {
   const connectionBox = await connectionButton.boundingBox();
   const headerBox = await header.boundingBox();
   check(connectionBox.x > titleBox.x + titleBox.width, 'Connection is not to the right of the title');
-  check(Math.abs(connectionBox.x + connectionBox.width - headerBox.x - headerBox.width) < 2,
-    'Connection is not aligned to the title row trailing edge');
+  check(connectionBox.x - headerBox.x < headerBox.width / 2, 'Connection is too far from the title');
 
   const drawer = panel.locator('.vmi-agent-connection');
   const baseUrl = drawer.getByRole('textbox', {name: 'Base URL', exact: true});
+  const diagnostics = drawer.locator('.vmi-agent-diagnostics');
+  check(!await diagnostics.isVisible(), 'Diagnostics is visible with Connection closed');
   check(!await baseUrl.isVisible(), 'Connection drawer should start closed');
   await connectionButton.press('Enter');
   await baseUrl.waitFor({state: 'visible'});
+  await diagnostics.waitFor({state: 'visible'});
+  await drawer.getByRole('textbox', {name: 'Model IDs', exact: true}).fill('test-model');
   check(await connectionButton.getAttribute('aria-expanded') === 'true', 'Drawer state is not announced');
   await connectionButton.press('Space');
   await baseUrl.waitFor({state: 'hidden'});
+  await diagnostics.waitFor({state: 'hidden'});
 
   const composer = panel.locator('.vmi-agent-composer');
   const prompt = composer.getByRole('textbox', {name: 'Instruction', exact: true});
   const send = composer.getByRole('button', {name: 'Send', exact: true});
-  check(await composer.evaluate(element => getComputedStyle(element).position) === 'sticky',
-    'Composer is not sticky');
+  check(await composer.evaluate(element => element.getBoundingClientRect().bottom <= innerHeight),
+    'Composer starts below the viewport');
+  const modelSelector = composer.locator('.vmi-agent-model');
+  const modelBox = await modelSelector.boundingBox();
+  const sendBox = await send.boundingBox();
+  check(modelBox.x + modelBox.width <= sendBox.x && sendBox.x - modelBox.x - modelBox.width < 16,
+    'The model selector is too far from Send');
+  const modelText = modelSelector.getByText('test-model', {exact: true});
+  const checkToolbarAlignment = async () => {
+    await modelText.waitFor();
+    const icons = [composer.locator('.vmi-agent-attach .q-icon'), send.locator('.q-icon')];
+    const centers = await Promise.all([modelText, ...icons].map(async control => {
+      const box = await control.boundingBox();
+      return box.y + box.height / 2;
+    }));
+    check(Math.max(...centers) - Math.min(...centers) <= 1, 'Composer controls are vertically misaligned');
+  };
+  await checkToolbarAlignment();
+  check(!await modelSelector.locator('.q-select__dropdown-icon').isVisible(), 'Model selector shows a chevron');
   check(await prompt.isVisible() && await send.isVisible(), 'Composer controls are missing');
   check(await prompt.evaluate(element => getComputedStyle(element, '::placeholder').color) !== 'rgba(0, 0, 0, 0)',
     'Composer placeholder is hidden');
@@ -41,37 +62,76 @@ async page => {
   check(await panel.locator('.vmi-agent-empty').isVisible(), 'Conversation empty state is missing');
   check(await panel.locator('.vmi-agent-empty').evaluate(element => getComputedStyle(element).borderWidth) === '0px',
     'Conversation still uses the old boxed empty state');
+  check((await composer.boundingBox()).height <= 115, 'Empty composer is taller than expected');
+  const attachmentButton = composer.getByRole('button', {name: 'Attach file or folder', exact: true});
+  await attachmentButton.click();
+  const attachFile = page.getByText('Attach file', {exact: true});
+  await attachFile.waitFor();
+  const attachmentBox = await attachmentButton.boundingBox();
+  const menuItemBox = await attachFile.boundingBox();
+  check(Math.abs(attachmentBox.x - menuItemBox.x) < 36, 'Attachment menu opened far from its button');
+  await page.keyboard.press('Escape');
   await page.screenshot({path: '.cache/vmi-analysis/agent_panel_desktop.png'});
 
-  await panel.locator('.vmi-agent-entries').evaluate(entries => {
-    entries.replaceChildren();
-    for (let i = 0; i < 30; i++) {
+  const suggestions = composer.getByRole('listbox', {name: 'Suggestions'});
+  await prompt.fill('/mo');
+  await suggestions.getByRole('option', {name: '/model Choose a model'}).waitFor();
+  await prompt.press('Tab');
+  check(await prompt.inputValue() === '/model ', 'Slash command did not complete with Tab');
+  await suggestions.waitFor({state: 'hidden'});
+  await prompt.fill('/');
+  await suggestions.waitFor({state: 'visible'});
+  await prompt.press('Escape');
+  await suggestions.waitFor({state: 'hidden'});
+  await prompt.fill('');
+
+  const timeline = panel.locator('.vmi-agent-timeline');
+  const tabPanel = panel.locator('.vmi-agent-page');
+  check(await timeline.evaluate(element => element.scrollHeight <= element.clientHeight + 1),
+    'The transcript has a nested scrollbar');
+  check(Math.abs((await timeline.boundingBox()).width - (await tabPanel.boundingBox()).width) < 2,
+    'The conversation does not fill the work area');
+
+  const addMessages = async count => panel.locator('.vmi-agent-entries').evaluate((entries, count) => {
+    for (let i = 0; i < count; i++) {
       const entry = document.createElement('div');
-      entry.className = `vmi-agent-entry vmi-agent-entry-${i % 2 ? 'assistant' : 'user'} w-full`;
-      const message = document.createElement('div');
-      message.className = `vmi-agent-message ${i % 2 ? '' : 'vmi-agent-user'}`;
-      message.textContent = `${i % 2 ? 'Agent response' : 'User message'} ${i}: conversation scrolling test`;
-      entry.appendChild(message);
+      entry.className = 'vmi-agent-entry';
+      entry.style.minHeight = '42px';
+      entry.textContent = 'Conversation scrolling test';
       entries.appendChild(entry);
     }
-    const scroller = document.querySelector('.vmi-agent-transcript .q-scrollarea__container');
-    scroller.scrollTop = 0;
-    scroller.dispatchEvent(new Event('scroll'));
-  });
+  }, count);
+  const atBottom = () => {
+    const scroller = document.scrollingElement;
+    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 5;
+  };
+
+  await addMessages(40);
+  await page.waitForFunction(atBottom);
+  await page.evaluate(() => scrollBy(0, -400));
   const latest = panel.getByRole('button', {name: 'Latest messages', exact: true});
-  await page.waitForFunction(() => document.querySelector('.vmi-agent-latest')?.getAttribute('aria-hidden') === 'false');
-  await latest.click();
-  await page.waitForFunction(() => {
-    const scroller = document.querySelector('.vmi-agent-transcript .q-scrollarea__container');
-    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 100;
-  });
-  await page.waitForFunction(() => document.querySelector('.vmi-agent-latest')?.getAttribute('aria-hidden') === 'true');
+  await latest.waitFor({state: 'visible'});
+  const anchored = await page.evaluate(() => scrollY);
+  const before = await composer.boundingBox();
+  check(before.y + before.height <= 1000, 'Composer is clipped while reading earlier messages');
+  await addMessages(10);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  check(Math.abs((await page.evaluate(() => scrollY)) - anchored) <= 1,
+    'New messages move the page while reading earlier messages');
+  await latest.press('Enter');
+  await page.waitForFunction(atBottom);
+  await latest.waitFor({state: 'hidden'});
+  check(await prompt.evaluate(element => document.activeElement === element),
+    'Keyboard focus was lost after using Latest messages');
 
   await page.setViewportSize({width: 390, height: 844});
   const composerBox = await composer.boundingBox();
   check(composerBox.x >= 0 && composerBox.x + composerBox.width <= 390, 'Composer overflows the narrow viewport');
   check(await connectionButton.isVisible(), 'Connection is hidden on narrow screens');
-  check(!await panel.locator('.vmi-agent-keyboard-hint').isVisible(), 'Keyboard hint crowds the narrow composer');
+  check(!await composer.getByText('Enter to send', {exact: false}).isVisible(), 'Keyboard hint crowds the composer');
+  check(await composer.getByRole('button', {name: 'Attach file or folder', exact: true}).isVisible(),
+    'Attachment control is missing');
+  await checkToolbarAlignment();
   await connectionButton.click();
   await baseUrl.waitFor({state: 'visible'});
   const drawerBox = await drawer.boundingBox();
@@ -82,5 +142,5 @@ async page => {
     'Connection fields do not collapse to one column on narrow screens');
   await page.screenshot({path: '.cache/vmi-analysis/agent_panel_mobile.png'});
   check(errors.length === 0, errors.join('; '));
-  return {passed: true, checks: ['title action', 'keyboard drawer', 'sticky composer', 'latest messages', 'narrow layout']};
+  return {passed: true, checks: ['title action', 'keyboard drawer', 'visible composer', 'page scroll', 'latest messages', 'narrow layout']};
 }
