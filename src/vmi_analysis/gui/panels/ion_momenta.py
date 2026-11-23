@@ -141,7 +141,8 @@ def _fit_controls(plot, source, edges, counts, context, save_peak, register_peak
     with ui.row().classes("w-full items-center gap-2"):
         path_input("Species JSON file (append assignments)", browse="save", filters=[".json"],
                    default_name="ion-species.json").bind_value(species_file).classes("grow basis-72")
-        ui.button("Clear species JSON path", on_click=lambda: species_file.set_value("")).props("flat")
+        ui.button("Delete species JSON", icon="delete",
+                  on_click=lambda: _delete_species_file(species_file)).props("flat color=negative")
     output = ui.column().classes("w-full")
     redraw()
 
@@ -516,15 +517,44 @@ def _momentum_controls(job, jobs, result, species_file, read_current):
     return append_assignment
 
 
-def _append_species_file(path, peak):
+def _read_species_file(path):
     if path.suffix.lower() != ".json":
         raise ValueError("Choose a species file ending in .json.")
-    document = dict(schema=SPECIES_SCHEMA, species=[])
-    if path.exists():
-        document = json.loads(path.read_text(encoding="utf-8-sig"))
-        if (not isinstance(document, dict) or document.get("schema") != SPECIES_SCHEMA
-                or not isinstance(document.get("species"), list)):
-            raise ValueError("Choose an ion-species JSON file or a new filename.")
+    document = json.loads(path.read_text(encoding="utf-8-sig"))
+    if (not isinstance(document, dict) or document.get("schema") != SPECIES_SCHEMA
+            or not isinstance(document.get("species"), list)):
+        raise ValueError("Choose a valid ion-species JSON file.")
+    return document
+
+
+def _delete_species_file(field):
+    selection = field.value
+    if not selection.strip():
+        ui.notify("Choose a Species JSON file first.", type="warning")
+        return
+    try:
+        path = shared.checked_path(selection.strip(), write=True, cwd=shared.workspace_root())
+        _read_species_file(path)
+    except FileNotFoundError:
+        field.set_value("")
+        ui.notify("The selected species file is already absent.", type="info")
+        return
+    except (OSError, ValueError, RecursionError) as exc:
+        ui.notify(str(exc), type="warning")
+        return
+
+    def clear_path():
+        if field.value == selection and not path.exists():
+            field.set_value("")
+
+    confirm_clear_outputs([path], "Delete the selected species JSON file?", on_cleared=clear_path)
+
+
+def _append_species_file(path, peak):
+    try:
+        document = _read_species_file(path)
+    except FileNotFoundError:
+        document = dict(schema=SPECIES_SCHEMA, species=[])
     assignments = document["species"]
     if peak in assignments:
         return
