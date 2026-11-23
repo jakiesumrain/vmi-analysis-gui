@@ -13,6 +13,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, replace
+from http.client import HTTPConnection, HTTPException, HTTPSConnection
 from importlib.resources import files
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -29,6 +30,11 @@ MAX_RECORD_BYTES = 4 * 1024 * 1024
 PROVIDER = "vmi-custom"
 PANEL_REQUEST_TITLE = "VMI panel operation"
 PANEL_REQUEST_TIMEOUT = 300
+SLASH_CONTROLS = {
+    "new": ("new_session", "Start a new conversation"),
+    "compact": ("compact", "Compact the current conversation"),
+    "session": ("get_session_stats", "Show session statistics"),
+}
 PANEL_EXTENSION = files("vmi_analysis.gui.assets") / "agent_panels.js"
 
 
@@ -42,15 +48,20 @@ class AgentRequest:
     api_key: str
     api: str = "openai-completions"
     datasets: Path | None = None
+    additional_models: tuple[str, ...] = ()
+
+    @property
+    def model_ids(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((self.model, *self.additional_models)))
 
 
-def validate_request(request: AgentRequest) -> None:
-    if not request.base_url:
+def _validate_base_url(base_url):
+    if not base_url:
         raise ValueError("Enter the model endpoint's base URL.")
-    if len(request.base_url) > 2048:
+    if len(base_url) > 2048:
         raise ValueError("Keep the base URL below 2048 characters.")
     try:
-        parsed = urlsplit(request.base_url)
+        parsed = urlsplit(base_url)
         parsed.port
     except ValueError as exc:
         raise ValueError("Enter a valid base URL.") from exc
@@ -58,14 +69,61 @@ def validate_request(request: AgentRequest) -> None:
         raise ValueError("The base URL must use http or https and include a host.")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError("The base URL cannot contain credentials, a query, or a fragment.")
-    if not request.model.strip() or len(request.model) > 256 or any(
-            char in request.model for char in "\r\n\x00"):
-        raise ValueError("Enter a valid model ID.")
-    if not request.api_key or len(request.api_key) > 16384 or any(
-            char in request.api_key for char in "\r\n\x00"):
+    return parsed
+
+
+def _validate_api_key(api_key):
+    if not api_key or len(api_key) > 16384 or any(c in api_key for c in "\r\n\x00"):
         raise ValueError("Enter an API key without line breaks.")
+
+
+def _valid_model_id(model):
+    return isinstance(model, str) and bool(model.strip()) and len(model) <= 256 and not any(
+        char in model for char in "\r\n\x00"
+    )
+
+
+def validate_request(request: AgentRequest) -> None:
+    _validate_base_url(request.base_url)
+    if not all(map(_valid_model_id, request.model_ids)):
+        raise ValueError("Enter valid model IDs.")
+    _validate_api_key(request.api_key)
     if request.api not in API_FORMATS:
         raise ValueError("Choose a supported API format.")
+
+
+def list_provider_models(base_url: str, api_key: str) -> list[str]:
+    """Read model IDs from an OpenAI-compatible endpoint, without following redirects."""
+    endpoint = _validate_base_url(base_url)
+    _validate_api_key(api_key)
+    connection_type = HTTPSConnection if endpoint.scheme == "https" else HTTPConnection
+    connection = connection_type(endpoint.hostname, endpoint.port, timeout=8)
+    try:
+        connection.request("GET", f"{endpoint.path.rstrip('/')}/models",
+                           headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"})
+        response = connection.getresponse()
+        if response.status != 200:
+            raise ValueError(f"The provider's model list returned HTTP {response.status}.")
+        raw = response.read(MAX_RECORD_BYTES + 1)
+    except (OSError, HTTPException, UnicodeError) as exc:
+        raise ValueError("Could not load the model list from this endpoint.") from exc
+    finally:
+        connection.close()
+    if len(raw) > MAX_RECORD_BYTES:
+        raise ValueError("The provider's model list is too large.")
+    try:
+        payload = json.loads(raw)
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            raise ValueError("Missing models.")
+    except (ValueError, UnicodeError) as exc:
+        raise ValueError("The provider did not return a model list.") from exc
+    models = list(dict.fromkeys(item["id"] for item in data
+                               if isinstance(item, dict) and _valid_model_id(item.get("id"))
+                               and "," not in item["id"]))
+    if not models:
+        raise ValueError("The provider returned no model IDs.")
+    return models
 
 
 def write_models_config(config_dir: Path, request: AgentRequest) -> Path:
@@ -78,7 +136,7 @@ def write_models_config(config_dir: Path, request: AgentRequest) -> Path:
                 "baseUrl": request.base_url,
                 "api": request.api,
                 "apiKey": "$VMI_AGENT_API_KEY",
-                "models": [{"id": request.model, "name": request.model}],
+                "models": [{"id": model, "name": model} for model in request.model_ids],
             }
         }
     }
@@ -272,6 +330,13 @@ class AgentSession:
         self._command_counter = 0
         self._panel_requests = {}
         self._activity = ""
+        self._model = request.model
+        self._pending_model: tuple[str, str] | None = None
+        self._commands = ()
+        self._command_catalog_request = None
+        self._command_catalog_ready = threading.Event()
+        self._pending_control = None
+        self._transcript_revision = 0
         self._active_tools = {}
 
     @property
@@ -332,17 +397,76 @@ class AgentSession:
                 self._assistant_index = len(self.entries) - 1
             self.entries[self._assistant_index]["text"] += self._redact(delta)
 
-    def prompt(self, message: str, *, model_context: str = "") -> None:
+    def slash_commands(self):
+        with self._lock:
+            if (not self._command_catalog_ready.is_set() and self._command_catalog_request is None
+                    and self.status in ("ready", "running")):
+                self._command_catalog_request = self.send({"type": "get_commands"})
+        self._command_catalog_ready.wait(timeout=2)
+        with self._lock:
+            return self._commands
+
+    def run_slash_control(self, name: str, argument: str):
+        command, _ = SLASH_CONTROLS[name]
+        payload = {"type": command}
+        if argument:
+            if name != "compact":
+                raise ValueError(f"/{name} takes no argument.")
+            payload["customInstructions"] = argument
+        with self._lock:
+            if self.status != "ready" or self._pending_model or self._pending_control:
+                raise RuntimeError("Wait for the Agent to finish before running this command.")
+            self._pending_control = (self.send(payload), name)
+
+    def _control_response(self, record):
+        with self._lock:
+            pending = self._pending_control
+            if pending is None or record.get("id") != pending[0]:
+                return
+            self._pending_control = None
+            if record.get("success") is not True:
+                self._append("error", record.get("error", "The Agent rejected the command."))
+                return
+            name = pending[1]
+            data = record.get("data") or {}
+            if name == "new" and not data.get("cancelled"):
+                self.entries.clear()
+                self._assistant_index = None
+                self._transcript_revision += 1
+            elif name == "compact":
+                self._append("status", "Conversation compacted.")
+            elif name == "session":
+                summary = {"Model": self._model, "Messages": data.get("totalMessages"), "Tokens": data.get("tokens")}
+                self._append("status", "Session statistics", json.dumps(summary, ensure_ascii=False))
+
+    def set_model(self, model: str) -> None:
+        with self._lock:
+            if self.status != "ready" or self._pending_model is not None or self._pending_control:
+                raise RuntimeError("Wait for the Agent to finish before changing the model.")
+            if model not in self.request.model_ids:
+                raise ValueError("Choose a model configured for this session.")
+            if model != self._model:
+                request_id = self.send({"type": "set_model", "provider": PROVIDER, "modelId": model})
+                self._pending_model = (request_id, model)
+
+    def prompt(self, message: str, *, model_context: str = "", attachments: tuple[str, ...] = ()) -> None:
         if not message.strip():
             raise ValueError("Enter an instruction first.")
         if len(message) > 100_000:
             raise ValueError("Keep each instruction below 100,000 characters.")
+        context = model_context
+        if attachments:
+            context += ("\n\n[Files and folders selected by the user. These paths are available to the Agent.]\n"
+                        + json.dumps(attachments, ensure_ascii=False))
+        command = {"type": "prompt", "message": message + context}
         with self._lock:
             if self.status not in ("ready", "running"):
                 raise RuntimeError("Start an agent session before sending an instruction.")
-        self._append("user", message)
-        command = {"type": "prompt", "message": message + model_context}
-        with self._lock:
+            if self._pending_model is not None:
+                raise RuntimeError("Wait for the model change to finish before sending an instruction.")
+            if self._pending_control is not None:
+                raise RuntimeError("Wait for the current command to finish.")
+            self._append("user", message, "\n".join(attachments))
             follow_up = self.status == "running"
             if follow_up:
                 command["streamingBehavior"] = "followUp"
@@ -435,6 +559,28 @@ class AgentSession:
             self._record_panel_request(record)
             return
         if kind == "response":
+            command = record.get("command")
+            if command == "get_commands":
+                with self._lock:
+                    if record.get("id") == self._command_catalog_request:
+                        if record.get("success") is True:
+                            self._commands = tuple(
+                                (entry["name"], str(entry.get("description") or ""))
+                                for entry in (record.get("data") or {}).get("commands", [])
+                                if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+                            )
+                        self._command_catalog_ready.set()
+                return
+            if command in (control[0] for control in SLASH_CONTROLS.values()):
+                self._control_response(record)
+                return
+            if command == "set_model":
+                with self._lock:
+                    if self._pending_model is None or record.get("id") != self._pending_model[0]:
+                        return
+                    if record.get("success") is True:
+                        self._model = self._pending_model[1]
+                    self._pending_model = None
             if record.get("success") is False:
                 if record.get("command") == "prompt":
                     with self._lock:
@@ -553,6 +699,9 @@ class AgentSession:
             if self._finalized:
                 return
             self._finalized = True
+            self._pending_model = None
+            self._pending_control = None
+            self._command_catalog_ready.set()
             self.status = status
             self._panel_requests.clear()
             self.error = self._redact(error)
@@ -619,12 +768,16 @@ class AgentSession:
             return {
                 "id": self.id,
                 "status": self.status,
+                "transcript_id": f"{self.id}:{self._transcript_revision}",
+                "control_pending": self._pending_control is not None,
                 "activity": (
                     f"Running {next(iter(self._active_tools.values()))}…"
                     if self._active_tools else self._activity
                 ),
                 "error": self.error,
-                "model": self.request.model,
+                "model": self._model,
+                "models": self.request.model_ids,
+                "model_pending": self._pending_model is not None,
                 "base_url": self.request.base_url,
                 "entries": [dict(entry) for entry in self.entries],
                 "diagnostics": list(self.diagnostics),

@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,6 +17,7 @@ from vmi_analysis.agent_backend import (
     AgentSession,
     ContainerLauncher,
     SubprocessLauncher,
+    list_provider_models,
     process_options,
     validate_request,
     write_models_config,
@@ -86,6 +88,103 @@ class AgentBackendTests(unittest.TestCase):
         self.assertEqual(provider["apiKey"], "$VMI_AGENT_API_KEY")
         self.assertEqual(provider["baseUrl"], request.base_url)
         self.assertNotIn(request.api_key, raw)
+
+    def test_model_switch_waits_for_the_matching_rpc_response(self):
+        request = replace(self.request(), additional_models=("model-b", "model-a"))
+        config = write_models_config(self.root / "models", request)
+        models = json.loads(config.read_text(encoding="utf-8"))["providers"]["vmi-custom"]["models"]
+        self.assertEqual([model["id"] for model in models], ["model-a", "model-b"])
+        session = AgentSession(request, FakeLauncher())
+        session.process = FakeProcess()
+        session.status = "ready"
+
+        with self.assertRaisesRegex(ValueError, "configured"):
+            session.set_model("another-model")
+        session.set_model("model-b")
+        command = json.loads(session.process.stdin.getvalue())
+        self.assertEqual((command["type"], command["provider"], command["modelId"]),
+                         ("set_model", "vmi-custom", "model-b"))
+        self.assertTrue(session.snapshot()["model_pending"])
+        with self.assertRaisesRegex(RuntimeError, "model change"):
+            session.prompt("Use the selected model")
+        response = {"id": command["id"], "type": "response", "command": "set_model"}
+        session.handle_record({**response, "id": "unrelated", "success": True})
+        self.assertEqual(session.snapshot()["model"], "model-a")
+        session.handle_record({**response, "success": False, "error": "Unavailable"})
+        self.assertFalse(session.snapshot()["model_pending"])
+        self.assertEqual(session.snapshot()["model"], "model-a")
+
+        session.set_model("model-b")
+        latest = json.loads(session.process.stdin.getvalue().splitlines()[-1])
+        session.handle_record({**response, "id": latest["id"], "success": True})
+        self.assertEqual(session.snapshot()["model"], "model-b")
+        self.assertFalse(session.snapshot()["model_pending"])
+
+    def test_prompt_passes_attached_paths_without_changing_the_user_message(self):
+        session = AgentSession(self.request(), FakeLauncher())
+        session.process = FakeProcess()
+        session.status = "ready"
+        paths = ("/workspace/sample file.h5", "/datasets/ODL1")
+        session.prompt("Inspect these", model_context="\nPanel context", attachments=paths)
+        command = json.loads(session.process.stdin.getvalue())
+        self.assertEqual(json.loads(command["message"].splitlines()[-1]), list(paths))
+        self.assertEqual(session.snapshot()["entries"][-1], {
+            "kind": "user", "text": "Inspect these", "detail": "\n".join(paths),
+        })
+
+    def test_pi_command_catalog_and_new_conversation_use_rpc(self):
+        session = AgentSession(self.request(), FakeLauncher())
+        session.process = FakeProcess()
+        session.status = "ready"
+        with patch.object(session._command_catalog_ready, "wait"):
+            self.assertEqual(session.slash_commands(), ())
+        command = json.loads(session.process.stdin.getvalue())
+        self.assertEqual(command["type"], "get_commands")
+        session.handle_record({
+            "id": command["id"], "type": "response", "command": "get_commands", "success": True,
+            "data": {"commands": [{"name": "skill:analysis", "description": "Describe the analysis"}]},
+        })
+        self.assertEqual(session.slash_commands(), (("skill:analysis", "Describe the analysis"),))
+
+        session._append("user", "Old message")
+        previous = session.snapshot()["transcript_id"]
+        session.run_slash_control("new", "")
+        command = json.loads(session.process.stdin.getvalue().splitlines()[-1])
+        self.assertEqual(command["type"], "new_session")
+        self.assertTrue(session.snapshot()["control_pending"])
+        session.handle_record({"id": command["id"], "type": "response", "command": "new_session",
+                               "success": True, "data": {"cancelled": False}})
+        self.assertFalse(session.snapshot()["control_pending"])
+        self.assertEqual(session.snapshot()["entries"], [])
+        self.assertNotEqual(session.snapshot()["transcript_id"], previous)
+
+    def test_model_discovery_reads_ids_from_the_configured_models_route(self):
+        with patch("vmi_analysis.agent_backend.HTTPSConnection") as connect:
+            connection = connect.return_value
+            response = connection.getresponse.return_value
+            response.status = 200
+            response.read.return_value = json.dumps({
+                "data": [{"id": "model-a"}, {"id": "model-b"}, {"id": "model-a"}, {}, {"id": 5}]
+            }).encode()
+            self.assertEqual(list_provider_models("https://llm.example/v1/", "local-key"), ["model-a", "model-b"])
+            connect.assert_called_once_with("llm.example", None, timeout=8)
+            connection.request.assert_called_once_with("GET", "/v1/models", headers={
+                "Authorization": "Bearer local-key", "Accept": "application/json",
+            })
+            connection.close.assert_called_once()
+
+    def test_model_discovery_rejects_redirects_and_invalid_catalogs(self):
+        with patch("vmi_analysis.agent_backend.HTTPSConnection") as connect:
+            connection = connect.return_value
+            response = connection.getresponse.return_value
+            response.status = 302
+            with self.assertRaisesRegex(ValueError, "HTTP 302"):
+                list_provider_models("https://llm.example/v1", "local-key")
+            response.read.assert_not_called()
+            response.status = 200
+            response.read.return_value = b'{"error": "unavailable"}'
+            with self.assertRaisesRegex(ValueError, "did not return a model list"):
+                list_provider_models("https://llm.example/v1", "local-key")
 
     def test_connection_validation_rejects_credentials_in_url(self):
         request = self.request()

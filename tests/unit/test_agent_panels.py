@@ -16,6 +16,7 @@ from nicegui import Client, ui
 
 from vmi_analysis.agent_backend import AgentRequest, AgentSession, ContainerLauncher, PANEL_REQUEST_TITLE
 from vmi_analysis.gui import shared
+from vmi_analysis.gui.agent_completion import path_completions
 from vmi_analysis.gui.panel_operations import build_registry
 from vmi_analysis.gui.jobs import Job, JobManager
 from vmi_analysis.gui.resources import job_access
@@ -235,6 +236,33 @@ class AgentPanelTests(unittest.TestCase):
         clock[0] = 301
         self.assertFalse(session.take_panel_request("test-id"))
 
+    def test_at_completion_matches_nested_paths_and_stays_within_the_workspace(self):
+        folder = self.workspace / "Results"
+        folder.mkdir()
+        expected = folder / "ion spectrum.h5"
+        expected.touch()
+        hidden = self.workspace / ".ion-secret"
+        hidden.touch()
+        outside = self.root / "ion-external.h5"
+        outside.touch()
+        roots = (("workspace", self.workspace), ("datasets", self.datasets))
+        self.assertEqual(path_completions("iospc", roots)[0]["value"], str(expected))
+        self.assertEqual(path_completions("/workspace/Results/ion sp", roots)[0]["label"],
+                         "/workspace/Results/ion spectrum.h5")
+        self.assertEqual(path_completions("../ion", roots), [])
+
+    def test_agent_attachment_paths_respect_workspace_and_dataset_mounts(self):
+        path = self.workspace / "data file.h5"
+        path.touch()
+        self.assertEqual(agent._attachment_reference(path, container=True), "/workspace/data file.h5")
+        self.assertEqual(agent._attachment_reference(self.datasets, container=True), "/datasets")
+        outside = self.root / "outside.h5"
+        outside.touch()
+        with self.assertRaises(shared.WorkspaceDenied):
+            agent._attachment_reference(outside, container=True)
+        with self.assertRaisesRegex(ValueError, "no longer available"):
+            agent._attachment_reference(self.workspace / "deleted.h5", container=True)
+
     def test_contextual_fit_stays_in_its_tab_and_submits_the_edited_bounds(self):
         data = self.datasets / "sample.h5"
         data.touch()
@@ -246,9 +274,9 @@ class AgentPanelTests(unittest.TestCase):
         jobs.jobs.return_value = []
         jobs.submit.side_effect = lambda job: job
 
-        session = Mock(id="session", status="running")
+        session = Mock(id="session", status="ready")
         session.snapshot.return_value = {
-            "id": session.id, "status": "running", "activity": "", "entries": [], "diagnostics": [],
+            "id": session.id, "status": "ready", "activity": "", "entries": [], "diagnostics": [],
         }
         page = ui.page("/_test_agent_view")
         origin, other = Client(page), Client(page)
@@ -263,11 +291,11 @@ class AgentPanelTests(unittest.TestCase):
                 element = real_button(text, **kwargs)
                 if callback := kwargs.get("on_click"):
                     buttons[text] = callback
-                if text == "Send":
+                if text == "Send" or kwargs.get("icon") == "arrow_upward":
                     on_click = element.on_click
 
                     def connect(callback):
-                        buttons[text] = callback
+                        buttons["Send"] = callback
                         return on_click(callback)
 
                     element.on_click = connect
@@ -296,6 +324,8 @@ class AgentPanelTests(unittest.TestCase):
                 asyncio.run(buttons["Send"]())
             context = session.prompt.call_args.kwargs["model_context"]
             view_id = json.loads(context.splitlines()[-1])["view_id"]
+            session.status = "running"
+            session.snapshot.return_value["status"] = "running"
             session.panel_request.return_value = ("draft", {
                 "action": "propose", "operation": "ion_tof_fit", "view_id": view_id,
                 "parameters": {"gate_job_id": "different-run", "region_ns": [3, 7]},
