@@ -693,8 +693,23 @@ def build(jobs):
     def clear():
         outputs = [job.extra["histogram"] for job in jobs.jobs()
                    if job.name == JOB_NAME and "histogram" in job.extra]
+        selection = species_file.value
+        optional = None
+        if selection.strip():
+            try:
+                path = shared.checked_path(selection.strip(), write=True, cwd=shared.workspace_root())
+                _read_species_file(path)
+                optional = (path, "Also delete the selected species JSON")
+            except (OSError, ValueError, RecursionError):
+                pass
+
+        def clear_species_path():
+            if species_file.value == selection:
+                species_file.set_value("")
+
         confirm_clear_outputs(outputs, "Delete the generated Ion momenta position and TOF results?",
-                              on_cleared=view.clear_results)
+                              on_cleared=view.clear_results, optional=optional,
+                              on_optional_cleared=clear_species_path)
 
     with theme.panel_card():
         input_file = save(path_input("LUNA HDF5 file or acquisition collection", browse="file",
@@ -713,5 +728,6 @@ def build(jobs):
         ui.label("Momentum reconstruction requires the ion mass and charge, detector center, "
                  "and spectrometer calibration or flight-field model.").classes("vmi-subtitle")
         with action_bar(view, "Plot positions and TOF", on_click=run):
-            ui.button("Clear outputs", icon="delete", on_click=clear).props("flat color=negative")
+            ui.button("Clear outputs", icon="delete", on_click=clear).props("flat color=negative") \
+                .classes("vmi-action-danger")
     view.place_console()
