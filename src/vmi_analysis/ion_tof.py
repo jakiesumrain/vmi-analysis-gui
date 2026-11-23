@@ -57,16 +57,24 @@ def _trigger_times(file, reference):
     return times
 
 
-def _tof_blocks(table, field, triggers):
-    arrival_column = table.fields(field)
+def assigned_arrival_blocks(table, field, triggers, *, coordinates=()):
+    """Keep selected record fields aligned with their trigger-relative TOFs."""
+    arrival_columns = table.fields((field, *coordinates))
     for start in range(0, len(table), BLOCK_SIZE):
-        arrivals = _ticks(arrival_column[start:start + BLOCK_SIZE])
+        records = arrival_columns[start:start + BLOCK_SIZE]
+        arrivals = _ticks(records[field])
         indices = np.searchsorted(triggers, arrivals, side="right") - 1
         matched = indices >= 0
         # Subtract on the integer detector clock to retain single-tick differences.
         matched_indices = indices[matched]
         differences = arrivals[matched] - triggers[matched_indices]
-        yield differences * NS_PER_TICK, matched_indices, int(arrivals.size - differences.size)
+        yield (records[matched], differences * NS_PER_TICK, matched_indices,
+               int(arrivals.size - differences.size))
+
+
+def _tof_blocks(table, field, triggers):
+    for _, values, indices, unmatched in assigned_arrival_blocks(table, field, triggers):
+        yield values, indices, unmatched
 
 
 def _gmd_metadata(path, trigger_count, segment_offsets=None):

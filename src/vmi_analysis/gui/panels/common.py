@@ -300,10 +300,19 @@ def delete_outputs(paths, *, expected=None):
         return None
 
 
-def confirm_clear_outputs(paths, title, *, on_cleared=None):
+def confirm_clear_outputs(paths, title, *, on_cleared=None, optional=None, on_optional_cleared=None):
     """Confirm the exact files to remove, leaving folders and other files alone."""
+    regular = dict.fromkeys(map(Path, paths))
+    optional_path, label = optional if optional is not None else (None, None)
+    if optional_path is not None:
+        optional_path = Path(optional_path)
+    selected_paths = dict(regular)
+    if optional_path is not None:
+        selected_paths[optional_path] = None
     targets = {}
-    for path in dict.fromkeys(map(Path, paths)):
+    optional_target = None
+    for path in selected_paths:
+        is_optional = path == optional_path and path not in regular
         if shared.SERVER:
             try:
                 path = shared.checked_path(path, write=True)
@@ -313,6 +322,8 @@ def confirm_clear_outputs(paths, title, *, on_cleared=None):
         if path.is_file():
             try:
                 targets[path] = path.lstat()
+                if is_optional:
+                    optional_target = path
             except OSError as exc:
                 ui.notify(f"Could not inspect {path}: {exc}", type="negative")
                 return
@@ -321,24 +332,34 @@ def confirm_clear_outputs(paths, title, *, on_cleared=None):
         return
 
     def clear():
-        failed = delete_outputs(targets, expected=targets)
+        include_optional = optional_target is not None and selection.value
+        chosen = {path: stat for path, stat in targets.items() if path != optional_target or include_optional}
+        failed = delete_outputs(chosen, expected=chosen)
         if failed is None:
             return
         dialog.close()
-        if on_cleared is not None:
+        if on_cleared is not None and any(path != optional_target for path in chosen):
             on_cleared()
+        if include_optional and on_optional_cleared is not None and not optional_target.exists():
+            on_optional_cleared()
         if failed:
             ui.notify("Could not delete: " + "; ".join(failed), type="negative")
         else:
-            ui.notify(f"Cleared {len(targets)} output file(s).", type="positive")
+            ui.notify(f"Cleared {len(chosen)} output file(s).", type="positive")
 
     with ui.dialog() as dialog, ui.card().classes("w-full max-w-2xl"):
         ui.label(title).classes("vmi-caption")
         with ui.column().classes("w-full max-h-64 overflow-auto gap-1"):
             for target in targets:
-                ui.label(str(target)).classes("break-all")
+                if target != optional_target:
+                    ui.label(str(target)).classes("break-all")
+            if optional_target is not None:
+                selection = ui.checkbox(label, value=False)
+                ui.label(str(optional_target)).classes("break-all vmi-caption")
         with ui.row().classes("gap-2"):
-            ui.button("Delete", color="negative", on_click=clear)
+            button = ui.button("Delete", color="negative", on_click=clear)
+            if optional_target is not None and len(targets) == 1:
+                button.bind_enabled_from(selection, "value")
             ui.button("Cancel", on_click=dialog.close).props("flat")
     dialog.open()
 

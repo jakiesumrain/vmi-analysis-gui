@@ -1,0 +1,173 @@
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import h5py
+import numpy as np
+
+from vmi_analysis.gui.resources import command_access
+from vmi_analysis.gui.panels.ion_momenta import SPECIES_SCHEMA, _interval, _species_entries
+from vmi_analysis.ion_acquisition import SCHEMA, collection_reads
+from vmi_analysis.ion_momenta import (DEFAULT_MM_PER_PIXEL, LONGITUDINAL_CONVERSION, SpeciesMomentum,
+                                     gated_preview, main, momentum_components, momentum_projections,
+                                     oxygen_scaled_t0, polynomial_momentum_components, position_histograms)
+from vmi_analysis.ion_tof import histogram
+
+
+class IonMomentaTests(unittest.TestCase):
+    def create_dump(self, path, base=2**60):
+        with h5py.File(path, "w") as file:
+            file["TDCEvents"] = np.array([(1, base + 100), (1, base + 200)],
+                                         dtype=[("tdc_type", "u1"), ("timestamp", "u8")])
+            # Deliberately unsorted arrival rows exercise position/TOF alignment.
+            file["PixelHits"] = np.array([
+                (base + 240, 18., 22.), (base + 99, 1., 1.), (base + 110, 12., 8.),
+                (base + 150, 30., 30.), (base + 120, np.nan, 2.),
+            ], dtype=[("toa", "u8"), ("x", "f8"), ("y", "f8")])
+            file["Clusters"] = np.array([
+                (base + 110, 12.25, 8.75), (base + 150, 10., 10.),
+                (base + 240, 300.75, 400.25),
+            ], dtype=[("ctoa", "u8"), ("cx", "f8"), ("cy", "f8")])
+
+    def test_positions_match_tof_window_and_preserve_clock_precision(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "dump.h5"
+            self.create_dump(path)
+            with patch("vmi_analysis.ion_tof.BLOCK_SIZE", 2):
+                result = position_histograms(path, ("pixels", "clusters"), minimum=.001,
+                                             maximum=.004, bin_size_ns=.001)
+            original = histogram(path, ("pixels", "clusters"), minimum=.001, maximum=.004, bin_size_ns=.001)
+            for source in ("pixels", "clusters"):
+                np.testing.assert_array_equal(result[source], original[source])
+            self.assertEqual(result["pixels"].sum(), 3)
+            self.assertEqual(result["pixels_unmatched"], 1)
+            self.assertEqual(result["pixels_outside"], 1)
+            self.assertEqual(result["pixels_invalid_positions"], 1)
+            image = result["pixels_image"]
+            self.assertEqual(image.sum(), 2)
+            self.assertEqual((image[8, 12], image[22, 18]), (1, 1))
+            image = result["clusters_image"]
+            self.assertEqual(image.shape, (401, 302))
+            self.assertEqual(image.sum(), 2)
+            self.assertEqual((image[9, 12], image[400, 301]), (1, 1))
+
+    def test_momenta_use_pixel_center_tof_reference_and_longitudinal_scale(self):
+        ion = SpeciesMomentum("clusters", (.0039, .0041), 131.293, 2, .005, 1.5)
+        momenta = momentum_components(np.array([14], dtype="u2"), np.array([6], dtype="u2"), np.array([1000.]),
+                                      SpeciesMomentum("clusters", (0, 2000), 131.293, 2, 1010, 1.5),
+                                      (12, 8), DEFAULT_MM_PER_PIXEL)
+        expected = 349.7122801734099 * 131.293 * 2 / 1000
+        np.testing.assert_allclose(momenta, [[expected], [-expected], [LONGITUDINAL_CONVERSION * 30]])
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "dump.h5"
+            self.create_dump(path)
+            result = position_histograms(path, ("clusters",), minimum=0, maximum=.003)
+            edges, maps, counts = momentum_projections(
+                path, "TDC1Rising", [ion], (300.75, 400.25), DEFAULT_MM_PER_PIXEL,
+                result["trigger_times"], result["segment_offsets"], stopped=lambda: False,
+            )
+            np.testing.assert_array_equal(counts, [1])
+            np.testing.assert_array_equal(maps.sum(axis=(2, 3)), [[1, 1]])
+            zero_bin = np.searchsorted(edges[0], 0, side="right") - 1
+            self.assertEqual(maps[0, 0, zero_bin, zero_bin], 1)
+
+    def test_oxygen_polynomial_matches_reference_and_scaled_species(self):
+        oxygen = SpeciesMomentum("clusters", (4500, 6000), 16, 1, 4885.76)
+        x, y = np.array([3, 0], dtype="u2"), np.array([4, 0], dtype="u2")
+        tof = np.array([5085.76, 4885.76])
+        px, py, pz = polynomial_momentum_components(x, y, tof, oxygen, (0, 0), 1)
+        tau, r = .2, 5
+        transverse = (4.5586*r - .097123*r*tau + 1.1114e-4*r**3 - .025513*r*tau**2
+                      + 1.7719e-4*r**3*tau - .25058*r*tau**3)
+        longitudinal = (312.68*tau + .011545*r**2 + 6.8175*tau**2 - .0016119*r**2*tau
+                        - .61458*tau**3 + 3.2141e-7*r**4 - .010424*r**2*tau**2 - 5.2163*tau**4)
+        np.testing.assert_allclose([px, py, pz], [[.6*transverse, 0], [.8*transverse, 0], [longitudinal, 0]])
+        t0 = oxygen_scaled_t0(128, 2)
+        self.assertAlmostEqual(t0, 2 * oxygen.t0_ns)
+        heavy = SpeciesMomentum("clusters", (9000, 12000), 128, 2, t0)
+        scaled = polynomial_momentum_components(x, y, 2 * tof, heavy, (0, 0), 1)
+        np.testing.assert_allclose(scaled, 4 * np.array([px, py, pz]))
+
+    def test_polynomial_projection_reports_events_outside_calibration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "dump.h5"
+            self.create_dump(path, base=0)
+            result = position_histograms(path, ("clusters",), minimum=0, maximum=.006)
+            oxygen = SpeciesMomentum("clusters", (0, 1), 16, 1, 0)
+            outside = np.zeros(1, dtype=int)
+            _, maps, counts = momentum_projections(
+                path, "TDC1Rising", [oxygen], (12.25, 8.75), DEFAULT_MM_PER_PIXEL,
+                result["trigger_times"], result["segment_offsets"], stopped=lambda: False,
+                model="oxygen", outside_domain=outside,
+            )
+            np.testing.assert_array_equal(counts, [2])
+            np.testing.assert_array_equal(outside, [1])
+            np.testing.assert_array_equal(maps.sum(axis=(2, 3)), [[2, 2]])
+
+    def test_independent_gates_use_unrounded_positions_and_unbinned_tof(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "dump.h5"
+            self.create_dump(path)
+            result = position_histograms(path, ("clusters",), minimum=0, maximum=.006, bin_size_ns=.003)
+            x_limits, y_limits, tof_limits = result["clusters_data_limits"]
+            self.assertEqual(_interval([None, None], x_limits), (10, 300.75))
+            self.assertEqual(_interval([None, 20], y_limits), (8.75, 20))
+            np.testing.assert_allclose(_interval([None, None], tof_limits), [.001, .005])
+            args = (path, "TDC1Rising", "clusters", result["edges"], result["trigger_times"],
+                    result["segment_offsets"], result["clusters_image"].shape)
+            counts = gated_preview(*args, position_gate=(12.2, 12.3, 8.7, 8.8))
+            np.testing.assert_array_equal(counts, [1, 0])
+            image = gated_preview(*args, tof_gate=(.0039, .0041))
+            self.assertEqual(image.sum(), 1)
+            self.assertEqual(image[400, 301], 1)
+
+    def test_fitted_numpy_values_can_be_used_for_species_assignments(self):
+        item = {"formula": "Xe", "charge": 2, "source": "clusters", "trigger_reference": "TDC1Rising",
+                "window_ns": [np.float64(8900), np.float64(9100)], "t0_ns": np.float64(9000)}
+        document = {"schema": SPECIES_SCHEMA, "species": [item]}
+        row, = _species_entries(document, ("clusters",), "TDC1Rising")
+        self.assertEqual(row, ("Xe", 2, "clusters", (8900., 9100.), 9000.))
+        self.assertIs(type(row[-1]), float)
+        item["t0_ns"] = np.float64(np.nan)
+        with self.assertRaisesRegex(ValueError, "finite TOF"):
+            _species_entries(document, ("clusters",), "TDC1Rising")
+
+    def test_segment_clock_resets_and_file_reservations(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            segments = []
+            for index in range(2):
+                path = root / f"dump-{index}.h5"
+                self.create_dump(path, base=0)
+                metadata = root / f"metadata-{index}.h5"
+                with h5py.File(metadata, "w"):
+                    pass
+                segments.append({"data": path.name, "metadata": metadata.name})
+            collection = root / "dump.segments.json"
+            collection.write_text(json.dumps({"schema": SCHEMA, "segments": segments}))
+            output = root / "result.npz"
+            main(["--input", str(collection), "--output", str(output), "--source", "both",
+                  "--minimum", ".001", "--maximum", ".004", "--bin-size", ".001"])
+            with np.load(output, allow_pickle=False) as result:
+                self.assertEqual(result["triggers"], 4)
+                self.assertEqual(result["pixels_image"].sum(), 4)
+                self.assertEqual(result["clusters_image"].sum(), 4)
+            access = command_access(["python", "-m", "vmi_analysis.ion_momenta",
+                                     "--input", str(collection), "--output", str(output)])
+            self.assertEqual(access.reads, frozenset(collection_reads(collection)))
+            self.assertEqual(access.writes, frozenset([output]))
+
+    def test_failed_input_preserves_previous_output(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "dump.h5"
+            self.create_dump(path)
+            with h5py.File(path, "a") as file:
+                del file["Clusters"]
+            output = Path(folder) / "result.npz"
+            output.write_bytes(b"previous result")
+            with self.assertRaises(SystemExit):
+                main(["--input", str(path), "--output", str(output), "--source", "both",
+                      "--maximum", "1", "--bin-size", ".1"])
+            self.assertEqual(output.read_bytes(), b"previous result")
