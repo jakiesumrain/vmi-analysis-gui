@@ -1,4 +1,4 @@
-// Read-only Agent layout check against the full application; no session is started.
+// Agent layout and attachment checks in an isolated workspace; no session or job is started.
 async page => {
   const check = (ok, message) => { if (!ok) throw new Error(message); };
   const errors = [];
@@ -73,6 +73,36 @@ async page => {
   const menuItemBox = await attachFile.boundingBox();
   check(Math.abs(attachmentBox.x - menuItemBox.x) < 36, 'Attachment menu opened far from its button');
   await page.keyboard.press('Escape');
+
+  await prompt.evaluate(element => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array([137, 80, 78, 71])], 'image.png', {type: 'image/png'}));
+    const event = new Event('paste', {bubbles: true, cancelable: true});
+    Object.defineProperty(event, 'clipboardData', {value: transfer});
+    element.dispatchEvent(event);
+  });
+  const screenshotChip = composer.locator('.vmi-agent-attachment').filter({hasText: /screenshot-.*\.png/});
+  await screenshotChip.waitFor();
+  check(await screenshotChip.count() === 1, 'Pasted screenshot was not attached exactly once');
+
+  const dropTransfer = await page.evaluateHandle(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['drop contents'], 'dropped.txt', {type: 'text/plain'}));
+    return transfer;
+  });
+  await composer.dispatchEvent('dragenter', {dataTransfer: dropTransfer});
+  check(await composer.evaluate(element => element.classList.contains('vmi-agent-composer-receiving')),
+    'Dragging files does not show the drop target');
+  await composer.dispatchEvent('drop', {dataTransfer: dropTransfer});
+  await dropTransfer.dispose();
+  await composer.locator('.vmi-agent-attachment').filter({hasText: 'dropped.txt'}).waitFor();
+  check(!await composer.evaluate(element => element.classList.contains('vmi-agent-composer-receiving')),
+    'Drop target remains active after the drop');
+  await page.waitForFunction(() => {
+    const element = document.querySelector('.vmi-agent-composer');
+    return element?.getAttribute('aria-busy') === 'false' && !document.querySelector('.vmi-agent-upload-status')?.checkVisibility();
+  });
+  check(await composer.locator('.vmi-agent-attachment').count() === 2, 'Uploaded attachments are missing');
   await page.screenshot({path: '.cache/vmi-analysis/agent_panel_desktop.png'});
 
   const suggestions = composer.getByRole('listbox', {name: 'Suggestions'});
@@ -144,5 +174,5 @@ async page => {
     'Connection fields do not collapse to one column on narrow screens');
   await page.screenshot({path: '.cache/vmi-analysis/agent_panel_mobile.png'});
   check(errors.length === 0, errors.join('; '));
-  return {passed: true, checks: ['title action', 'keyboard drawer', 'visible composer', 'page scroll', 'latest messages', 'narrow layout']};
+  return {passed: true, checks: ['title action', 'keyboard drawer', 'visible composer', 'screenshot paste', 'file drop', 'page scroll', 'latest messages', 'narrow layout']};
 }
