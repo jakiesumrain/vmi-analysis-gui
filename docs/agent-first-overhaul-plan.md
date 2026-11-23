@@ -1,9 +1,12 @@
 # Agent-first overhaul plan
 
-**Starting point** — `feature/agent-panel` at `534c219`. The embedded Agent
-can propose and track TPX3 Dump and Ion TOF jobs, draft an Ion TOF fit from a
-plot selection, and run Dump → TOF with one approval. The panels can adopt
-the submitted settings and show the results of Agent runs. The
+**Current baseline** — `feature/agent-panel` at `6f8938a` after PR #83.
+The PR updated the conversation layout and composer and added model
+switching, Pi command discovery, and path completion. Panel registration
+and execution still use the Phase 2A design.
+
+**Next milestone** — Phase 2B uses Dark Frame to verify that a panel can
+join through registration alone. The
 [Agent-first design guide](agent-first-design.md) defines the product goals.
 
 ## Scope
@@ -37,19 +40,16 @@ test. The ion prototypes established contextual fit drafts, one-approval
 Dump → TOF, activity reporting, and form adoption. Use these flows as
 regression checks when moving their registration and view hooks.
 
-### 2A. Move existing ion support behind panel-owned registrations
+### 2A. Completed panel-owned ion registrations
 
-Move TPX3 Dump and Ion TOF operation definitions and dispatch out of the
-central Agent module. Move Ion TOF-specific prompt context, draft review,
-and result navigation out of the Agent chat UI and into the Ion TOF
-integration. Register Dump → TOF as a workflow composed of those
-operations. Keep the existing GUI and Agent flows on the same validation
-and execution paths.
+TPX3 Dump and Ion TOF now own their operation definitions and use shared
+validation and job builders for manual and Agent runs. Ion TOF owns its
+plot context and fit draft review. Dump → TOF composes the registered
+operations and runs with one approval.
 
-**Acceptance** — The Agent discovers the operations at runtime. A manual
-run and an Agent run with the same resolved settings agree. A proposed fit
-still opens on the correct plot and remains tied to the original tab and
-run. Inputs and results appear in the normal panel after approval, with
+**Regression checks** — The Agent discovers the operations at runtime.
+Manual and Agent runs with the same resolved settings agree. A proposed
+fit opens on the correct plot and stays tied to the original tab and run. Inputs and results appear in the normal panel after approval, with
 later manual edits preserved across reload. Invalid inputs and access to
 another workspace are rejected on the server.
 
