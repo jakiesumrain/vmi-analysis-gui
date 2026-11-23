@@ -52,11 +52,13 @@ def path_completions(query: str, roots: tuple[tuple[str, Path], ...]) -> list[di
                         rank = _match_rank(entry.name, pattern)
                         if rank < 3:
                             relative = path.relative_to(root)
-                            label = f"/{name}/{relative.as_posix()}" if len(roots) > 1 else relative.as_posix()
-                            results.append((rank, len(relative.parts), label.casefold(), {
-                                "label": label + ("/" if folder else ""),
+                            reference = f"/{name}/{relative.as_posix()}" if len(roots) > 1 else relative.as_posix()
+                            if folder:
+                                reference += "/"
+                            results.append((rank, len(relative.parts), reference.casefold(), {
+                                "label": reference,
                                 "detail": "Folder" if folder else "File",
-                                "value": str(path),
+                                "value": reference,
                             }))
             except OSError:
                 continue

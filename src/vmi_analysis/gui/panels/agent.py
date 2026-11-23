@@ -310,16 +310,6 @@ def _build_page(jobs, *, registry, navigate):
         if not isinstance(payload, dict):
             return
         kind, query, request_id = payload.get("kind"), payload.get("query"), payload.get("id")
-        if kind == "attach":
-            try:
-                if not isinstance(query, str):
-                    return
-                path = shared.checked_path(query)
-                if any(path.is_relative_to(root) for _, root in completion_roots()):
-                    add_attachment(path)
-            except (OSError, RuntimeError, ValueError) as exc:
-                show_error(exc)
-            return
         if type(request_id) is not int or not isinstance(query, str) or len(query) > 256:
             return
         if kind == "@":

@@ -459,19 +459,25 @@ html:has(.vmi-agent-page) { overflow-anchor: none; }
 .vmi-agent-completions[hidden] { display: none !important; }
 .vmi-agent-composer:has(.vmi-agent-completions:not([hidden])) .vmi-agent-latest { visibility: hidden; }
 .vmi-agent-completion-option {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--vmi-space-2);
+  display: grid;
+  gap: 2px;
   min-height: 32px;
   padding: var(--vmi-space-1) var(--vmi-space-2);
   border-radius: var(--vmi-radius-md);
   cursor: pointer;
 }
-.vmi-agent-completion-option > span { min-width: 0; overflow-wrap: anywhere; }
+.vmi-agent-completion-label { min-width: 0; overflow-wrap: anywhere; }
 .vmi-agent-completion-option[aria-selected="true"],
 .vmi-agent-completion-option:hover { background: var(--vmi-surface-soft); }
-.vmi-agent-completion-detail { color: var(--vmi-muted); font-size: var(--vmi-text-xs); }
+.vmi-agent-completion-detail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--vmi-muted);
+  font-size: var(--vmi-text-xs);
+}
 .vmi-agent-composer:focus-within {
   border-color: var(--vmi-primary);
   box-shadow: var(--vmi-shadow-2);
@@ -486,6 +492,9 @@ html:has(.vmi-agent-page) { overflow-anchor: none; }
   background: var(--vmi-surface-soft);
   border-radius: var(--vmi-radius-md);
 }
+.vmi-agent-prompt,
+.vmi-agent-prompt .q-field__control,
+.vmi-agent-prompt .q-field__native { cursor: text; }
 .vmi-agent-prompt .q-field__control { height: auto; min-height: 0; padding: 0; }
 .vmi-agent-prompt .q-field__native {
   padding: var(--vmi-space-2);

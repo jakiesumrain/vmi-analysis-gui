@@ -57,9 +57,11 @@
       if (!request || !items[indexToSelect]) return;
       const {kind, start, end} = request;
       const choice = items[indexToSelect].value;
+      const quoted = prompt.value[start + 1] === '"' || /[\s"\\]/.test(choice);
+      const value = kind === '/' ? choice : '@' + (quoted ? JSON.stringify(choice) : choice);
+      const separator = /\s/.test(prompt.value[end] ?? '') ? '' : ' ';
       hide();
-      if (kind === '@') emitEvent(eventName, {kind: 'attach', query: choice});
-      prompt.setRangeText(kind === '/' ? choice + ' ' : '', start, end, 'end');
+      prompt.setRangeText(value + separator, start, end, 'end');
       prompt.dispatchEvent(new Event('input', {bubbles:true}));
       prompt.focus({preventScroll:true});
     }
@@ -85,6 +87,7 @@
         option.setAttribute('role', 'option');
         option.className = 'vmi-agent-completion-option';
         const label = document.createElement('span');
+        label.className = 'vmi-agent-completion-label';
         label.textContent = choice.label;
         option.append(label);
         if (choice.detail) {

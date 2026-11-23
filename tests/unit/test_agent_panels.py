@@ -246,7 +246,8 @@ class AgentPanelTests(unittest.TestCase):
         outside = self.root / "ion-external.h5"
         outside.touch()
         roots = (("workspace", self.workspace), ("datasets", self.datasets))
-        self.assertEqual(path_completions("iospc", roots)[0]["value"], str(expected))
+        self.assertEqual(path_completions("iospc", roots)[0]["value"], "/workspace/Results/ion spectrum.h5")
+        self.assertEqual(path_completions("iospc", roots[:1])[0]["value"], "Results/ion spectrum.h5")
         self.assertEqual(path_completions("/workspace/Results/ion sp", roots)[0]["label"],
                          "/workspace/Results/ion spectrum.h5")
         self.assertEqual(path_completions("../ion", roots), [])

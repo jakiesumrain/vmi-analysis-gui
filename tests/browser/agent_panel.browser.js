@@ -54,6 +54,8 @@ async page => {
   };
   await checkToolbarAlignment();
   check(!await modelSelector.locator('.q-select__dropdown-icon').isVisible(), 'Model selector shows a chevron');
+  check(await prompt.evaluate(element => getComputedStyle(element).cursor) === 'text',
+    'The instruction field does not show a text cursor');
   check(await prompt.isVisible() && await send.isVisible(), 'Composer controls are missing');
   check(await prompt.evaluate(element => getComputedStyle(element, '::placeholder').color) !== 'rgba(0, 0, 0, 0)',
     'Composer placeholder is hidden');
@@ -75,7 +77,7 @@ async page => {
 
   const suggestions = composer.getByRole('listbox', {name: 'Suggestions'});
   await prompt.fill('/mo');
-  await suggestions.getByRole('option', {name: '/model Choose a model'}).waitFor();
+  await suggestions.getByRole('option').filter({has: page.getByText('/model', {exact: true})}).waitFor();
   await prompt.press('Tab');
   check(await prompt.inputValue() === '/model ', 'Slash command did not complete with Tab');
   await suggestions.waitFor({state: 'hidden'});
