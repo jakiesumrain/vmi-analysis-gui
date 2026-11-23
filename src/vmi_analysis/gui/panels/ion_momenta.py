@@ -13,6 +13,7 @@ from tempfile import NamedTemporaryFile
 from nicegui import ui
 import numpy as np
 import plotly.graph_objects as go
+from plotly.colors import get_colorscale
 
 from vmi_analysis.ion_acquisition import collection_reads
 from vmi_analysis.ion_momenta import (DEFAULT_MM_PER_PIXEL, LONGITUDINAL_CONVERSION,
@@ -24,7 +25,7 @@ from vmi_analysis.pes import evaluate_fit_for_plot, fit_peaks
 from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS
 
 from .. import shared, theme
-from ..centroid_plots import _style, plot_options
+from ..centroid_plots import COLORMAPS, _style, plot_options
 from ..jobs import Job, ResourceBusyError
 from .common import (JobView, action_bar, confirm_clear_outputs, field_grid, num_input,
                      path_input, persist)
@@ -54,6 +55,43 @@ def _position_figure(image, title="Detector positions"):
     fig.update_yaxes(title_text="Y (pixels)", range=[-0.5, image.shape[0] - 0.5],
                      constrain="domain", scaleanchor="x", scaleratio=1)
     return fig
+
+
+def _image_color_controls(plot, image):
+    data_min, data_max = float(image.min()), float(image.max())
+    applied = dict(colorscale=get_colorscale("Viridis"), zauto=True, zmin=None, zmax=None)
+
+    def apply():
+        low, high = lower.value, upper.value
+        automatic = low is None and high is None
+        if not automatic:
+            low = data_min if low is None else low
+            high = data_max if high is None else high
+            if not isfinite(low) or not isfinite(high) or low >= high:
+                ui.notify("Enter finite color limits with vmin below vmax.", type="warning")
+                return
+        applied.update(colorscale=get_colorscale(colors.value), zauto=automatic, zmin=low, zmax=high)
+        plot.figure["data"][0].update(applied)
+        plot.run_plot_method("restyle", {key: [value] for key, value in applied.items()}, [0])
+
+    with ui.expansion("Image colors", icon="palette", value=False).classes("w-full"):
+        with field_grid(3):
+            colors = ui.select(list(COLORMAPS), value="Viridis", label="Colormap").props("outlined dense")
+            lower = num_input("vmin (counts)", None, step="any")
+            upper = num_input("vmax (counts)", None, step="any")
+        ui.label("Blank limits use the image minimum or maximum.").classes("vmi-caption")
+        ui.button("Apply colors", on_click=apply).props("flat")
+
+    def draw(figure):
+        figure.update_traces(**applied)
+        plot.update_figure(plot_options(figure))
+
+    return draw
+
+
+def _image_plot(figure, image):
+    plot = ui.plotly(plot_options(figure)).classes("w-full min-w-0")
+    _image_color_controls(plot, image)
 
 
 def _interval(values, defaults=None):
@@ -236,7 +274,7 @@ def _linked_plots(job, jobs, source, result, save_peak, register_peak, species_f
         with target:
             if kind == "tof":
                 ui.label(f"{bounds[0]:.6g}–{bounds[1]:.6g} ns · {filtered.sum():,} mapped positions").classes("vmi-caption")
-                ui.plotly(plot_options(_position_figure(filtered, "TOF-filtered detector positions"))).classes("w-full")
+                _image_plot(_position_figure(filtered, "TOF-filtered detector positions"), filtered)
             else:
                 ui.label(f"{filtered.sum():,} arrivals inside the X/Y gate").classes("vmi-caption")
                 chart = ui.plotly(go.Figure()).classes("w-full")
@@ -282,7 +320,7 @@ def _linked_plots(job, jobs, source, result, save_peak, register_peak, species_f
             fig.add_shape(type="rect", x0=xmin, x1=xmax, y0=ymin, y1=ymax,
                           line=dict(color="#38bdf8", width=2))
         fig.update_layout(uirevision="positions")
-        image_plot.update_figure(plot_options(fig))
+        draw_image(fig)
 
     def redraw_tof():
         selecting = tof_mode.value == "Select TOF range"
@@ -296,6 +334,7 @@ def _linked_plots(job, jobs, source, result, save_peak, register_peak, species_f
             with ui.row().classes("items-center gap-2"):
                 image_mode = ui.toggle(["Zoom", "Select area"], value="Zoom")
             image_plot = ui.plotly(go.Figure()).classes("w-full min-w-0")
+            draw_image = _image_color_controls(image_plot, image)
             with ui.expansion("X/Y gate limits", icon="filter_alt").classes("w-full"):
                 ui.label("Blank limits use the data range.").classes("vmi-caption")
                 xy = _gate_fields(("X min (px)", "X max (px)", "Y min (px)", "Y max (px)"))
@@ -503,8 +542,8 @@ def _momentum_controls(job, jobs, result, species_file, read_current):
                 if count:
                     with ui.element("div").classes("grid grid-cols-1 md:grid-cols-2 gap-4 w-full"):
                         for image, horizontal, vertical in zip(maps, ("pₓ", "pᵧ"), ("pᵧ", "p_z"), strict=True):
-                            ui.plotly(plot_options(_momentum_figure(bins, image, horizontal, vertical))
-                                      ).classes("w-full min-w-0")
+                            with ui.column().classes("w-full min-w-0"):
+                                _image_plot(_momentum_figure(bins, image, horizontal, vertical), image)
                 else:
                     message = ("No arrivals inside the polynomial model’s momentum limit." if omitted
                                else "No arrivals with positive TOF inside this species window.")
@@ -679,7 +718,8 @@ def _results(job, jobs, species_file):
             else:
                 ui.label("Plot positions and TOF again to enable gating.").classes("vmi-subtitle")
                 with ui.element("div").classes("vmi-ion-detector-row"):
-                    ui.plotly(plot_options(_position_figure(image))).classes("w-full min-w-0")
+                    with ui.column().classes("w-full min-w-0"):
+                        _image_plot(_position_figure(image), image)
                     ui.plotly(plot_options(_tof_figure(result["edges"], {source: result[source]},
                                                        "Time-of-flight spectrum"))).classes("w-full min-w-0")
         with ui.row().classes("items-center gap-2"):
