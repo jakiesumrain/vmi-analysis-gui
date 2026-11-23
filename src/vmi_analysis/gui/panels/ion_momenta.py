@@ -16,8 +16,9 @@ import plotly.graph_objects as go
 
 from vmi_analysis.ion_acquisition import collection_reads
 from vmi_analysis.ion_momenta import (DEFAULT_MM_PER_PIXEL, LONGITUDINAL_CONVERSION,
+                                     OXYGEN_MASS_U, OXYGEN_TOF_NS, POLYNOMIAL_LIMIT_AU,
                                      TRANSVERSE_CONVERSION, SpeciesMomentum, gated_preview,
-                                     momentum_projections)
+                                     momentum_projections, oxygen_scaled_t0)
 from vmi_analysis.ion_tof import DEFAULT_REFERENCE
 from vmi_analysis.pes import evaluate_fit_for_plot, fit_peaks
 from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS
@@ -32,6 +33,7 @@ from .ion_tof import REFERENCE_LABELS, SOURCES, _drag_interval, _mark_interval, 
 
 JOB_NAME = "Ion momenta"
 PLOT_HEIGHT = 580
+MOMENTUM_MODELS = {"simple": "Simple formula", "oxygen": "O⁺ reference polynomial"}
 MAX_SPECIES = 64
 SPECIES_SCHEMA = "vmi-ion-species/1"
 
@@ -376,7 +378,8 @@ def _momentum_controls(job, jobs, result, species_file, read_current):
             with field_grid(3):
                 mass = num_input("Ion mass (u)", 131.293 if formula == "Xe" else None, step="any")
                 reference = num_input("Momentum t₀ (ns)", t0, step="any")
-                pz_scale = num_input("p_z scale factor", 1, step="any")
+                pz_scale = num_input("p_z scale factor", 1, step="any").bind_visibility_from(
+                    model, "value", lambda value: value == "simple")
         rows.append((formula, charge, source, window, mass, reference, pz_scale))
         plot_button.set_enabled(not plotting)
 
@@ -384,7 +387,8 @@ def _momentum_controls(job, jobs, result, species_file, read_current):
         nonlocal assignment_source
         assignment_source = source
         calibrations.clear()
-        plots.clear()
+        for panel in projections.values():
+            panel.clear()
         rows.clear()
         plot_button.disable()
         for entry in entries:
@@ -432,18 +436,33 @@ def _momentum_controls(job, jobs, result, species_file, read_current):
         if plotting:
             return
         plotting = True
+        method = model.value
+        simple = method == "simple"
+        plots = projections[method]
         try:
             calibration = [center_x.value, center_y.value, pixel_scale.value]
             if not all(value is not None and isfinite(value) for value in calibration) or calibration[-1] <= 0:
                 raise ValueError("Enter a finite detector center and a positive pixel scale.")
             species, labels = [], []
             for formula, charge, source, window, mass, reference, scale in rows:
-                values = [mass.value, reference.value, scale.value]
-                if not all(value is not None and isfinite(value) for value in values) or min(values[0], values[2]) <= 0:
-                    raise ValueError(f"Enter a positive mass and p_z scale and a finite t₀ for {formula} {charge:+d}.")
-                species.append(SpeciesMomentum(source, window, values[0], charge, values[1], values[2]))
+                name = f"{formula} {charge:+d}"
+                if mass.value is None or not isfinite(mass.value) or mass.value <= 0:
+                    raise ValueError(f"Enter a positive ion mass for {name}.")
+                if not simple and charge <= 0:
+                    raise ValueError(f"The O⁺ reference model requires positive ion charge for {name}.")
+                t0 = reference.value
+                if t0 is None and not simple:
+                    t0 = oxygen_scaled_t0(mass.value, charge)
+                if t0 is None or not isfinite(t0):
+                    raise ValueError(f"Enter a finite t₀ for {name}.")
+                factor = scale.value if simple else 1
+                if factor is None or not isfinite(factor) or factor <= 0:
+                    raise ValueError(f"Enter a positive p_z scale for {name}.")
+                species.append(SpeciesMomentum(source, window, mass.value, charge, t0, factor))
                 labels.append((formula, charge, source))
+            outside_domain = np.zeros(len(species), dtype=np.int64)
             plot_button.disable()
+            model.disable()
             load_button.disable()
             current_button.disable()
             plots.clear()
@@ -454,6 +473,7 @@ def _momentum_controls(job, jobs, result, species_file, read_current):
                 edges, images, totals = await asyncio.to_thread(
                     momentum_projections, path, job.extra["reference"], species, tuple(calibration[:2]),
                     calibration[2], result["trigger_times"], result["segment_offsets"],
+                    model=method, outside_domain=outside_domain,
                     stopped=lambda: stopping() or plots.is_deleted,
                 )
         except (ValueError, OSError, KeyError, ResourceBusyError) as exc:
@@ -465,16 +485,20 @@ def _momentum_controls(job, jobs, result, species_file, read_current):
             plotting = False
             if not plots.is_deleted:
                 plot_button.set_enabled(bool(rows))
+                model.enable()
                 load_button.enable()
                 current_button.enable()
         if plots.is_deleted:
             return
         plots.clear()
         with plots:
-            for label, bins, maps, count, calibration in zip(labels, edges, images, totals, species, strict=True):
+            for label, bins, maps, count, calibration, omitted in zip(
+                    labels, edges, images, totals, species, outside_domain, strict=True):
                 formula, charge, source = label
+                detail = (f"p_z scale {calibration.pz_scale:.6g}" if simple
+                          else f"{omitted:,} arrivals outside the {POLYNOMIAL_LIMIT_AU:g} a.u. model limit")
                 ui.label(f"{formula} · charge {charge:+d} · {SOURCES[source]} · {count:,} arrivals · "
-                         f"t₀ {calibration.t0_ns:.6g} ns · p_z scale {calibration.pz_scale:.6g}"
+                         f"t₀ {calibration.t0_ns:.6g} ns · {detail}"
                          ).classes("vmi-caption")
                 if count:
                     with ui.element("div").classes("grid grid-cols-1 md:grid-cols-2 gap-4 w-full"):
@@ -482,13 +506,16 @@ def _momentum_controls(job, jobs, result, species_file, read_current):
                             ui.plotly(plot_options(_momentum_figure(bins, image, horizontal, vertical))
                                       ).classes("w-full min-w-0")
                 else:
-                    ui.label("No arrivals with positive TOF inside this species window.").classes("vmi-subtitle")
+                    message = ("No arrivals inside the polynomial model’s momentum limit." if omitted
+                               else "No arrivals with positive TOF inside this species window.")
+                    ui.label(message).classes("vmi-subtitle")
 
     theme.form_section("Momentum projections")
+    model = ui.toggle(MOMENTUM_MODELS, value="simple")
     ui.label("Uses the species TOF window across the whole detector. TOF is used directly. "
              "The initial center comes from the brightest detector bin.").classes("vmi-subtitle")
-    with ui.expansion("Momentum formulas and units", icon="functions", value=True).classes("w-full"):
-        with ui.column().classes("w-full gap-1"):
+    with ui.expansion("Momentum formulas and units", icon="functions", value=False).classes("w-full"):
+        with ui.column().classes("w-full gap-1").bind_visibility_from(model, "value", lambda value: value == "simple"):
             ui.label(f"p_x = {TRANSVERSE_CONVERSION:.9f} × M × s × (x − x₀) / t").classes("font-mono")
             ui.label(f"p_y = {TRANSVERSE_CONVERSION:.9f} × M × s × (y − y₀) / t").classes("font-mono")
             ui.label(f"p_z = {LONGITUDINAL_CONVERSION:.6f} × Z × f_z × (t₀ − t)").classes("font-mono")
@@ -503,6 +530,23 @@ def _momentum_controls(job, jobs, result, species_file, read_current):
             ui.label("The transverse model assumes negligible transverse forces. The longitudinal formula is linear "
                      "near t₀ and uses the first extraction field of 22.2 V/mm. For positive ions, an earlier arrival "
                      "gives positive p_z toward the detector.").classes("vmi-subtitle")
+        with ui.column().classes("w-full gap-1").bind_visibility_from(model, "value", lambda value: value == "oxygen"):
+            ui.label("X = s(x − x₀), Y = s(y − y₀), R = √(X² + Y²)").classes("font-mono")
+            ui.label(f"a = M / {OXYGEN_MASS_U:g}, b = Z, τ = √(b/a) × (t − t₀)/1000, S = √(ab)").classes("font-mono")
+            ui.label("P_z = S F_z(τ, R), P_x = S (X/R) F_⊥(τ, R), P_y = S (Y/R) F_⊥(τ, R)").classes("font-mono")
+            ui.label("F_z = 312.68τ + 0.011545R² + 6.8175τ² − 0.0016119R²τ − 0.61458τ³ "
+                     "+ 3.2141×10⁻⁷R⁴ − 0.010424R²τ² − 5.2163τ⁴").classes("font-mono")
+            ui.label("F_⊥ = 4.5586R − 0.097123Rτ + 1.1114×10⁻⁴R³ − 0.025513Rτ² "
+                     "+ 1.7719×10⁻⁴R³τ − 0.25058Rτ³").classes("font-mono")
+            ui.label("X, Y and R are in mm. M is the ion mass in u and Z is the positive charge number. "
+                     "The panel takes t and t₀ in ns and converts τ to μs. Momenta are in atomic units. "
+                     "At R = 0, P_x = P_y = 0. Near the reference on axis, later arrivals give positive P_z."
+                     ).classes("vmi-subtitle")
+            ui.label(f"A blank t₀ uses {OXYGEN_TOF_NS:g} × √(a/b) ns. The O⁺ reference uses the nominal mass "
+                     f"{OXYGEN_MASS_U:g} u and charge +1.").classes("vmi-subtitle")
+    ui.label(f"Use the O⁺ coefficients with their calibrated electrode geometry and voltages. "
+             f"Arrivals with |P| above {POLYNOMIAL_LIMIT_AU:g} a.u. are omitted. Blank t₀ uses the scaled O⁺ reference."
+             ).classes("vmi-subtitle").bind_visibility_from(model, "value", lambda value: value == "oxygen")
     with field_grid(3):
         center_x = num_input("Detector center X (px)", None if x is None else int(x), step="any")
         center_y = num_input("Detector center Y (px)", None if y is None else int(y), step="any")
@@ -513,7 +557,8 @@ def _momentum_controls(job, jobs, result, species_file, read_current):
     status = ui.label("Add fitted peaks or load a species file.").classes("vmi-caption")
     calibrations = ui.column().classes("w-full")
     plot_button = ui.button("Plot momenta", on_click=plot, icon="scatter_plot").disable()
-    plots = ui.column().classes("w-full")
+    projections = {method: ui.column().classes("w-full").bind_visibility_from(
+        model, "value", lambda value, method=method: value == method) for method in MOMENTUM_MODELS}
     return append_assignment
 
 

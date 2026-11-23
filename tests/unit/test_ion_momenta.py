@@ -12,7 +12,7 @@ from vmi_analysis.gui.panels.ion_momenta import SPECIES_SCHEMA, _interval, _spec
 from vmi_analysis.ion_acquisition import SCHEMA, collection_reads
 from vmi_analysis.ion_momenta import (DEFAULT_MM_PER_PIXEL, LONGITUDINAL_CONVERSION, SpeciesMomentum,
                                      gated_preview, main, momentum_components, momentum_projections,
-                                     position_histograms)
+                                     oxygen_scaled_t0, polynomial_momentum_components, position_histograms)
 from vmi_analysis.ion_tof import histogram
 
 
@@ -72,6 +72,39 @@ class IonMomentaTests(unittest.TestCase):
             np.testing.assert_array_equal(maps.sum(axis=(2, 3)), [[1, 1]])
             zero_bin = np.searchsorted(edges[0], 0, side="right") - 1
             self.assertEqual(maps[0, 0, zero_bin, zero_bin], 1)
+
+    def test_oxygen_polynomial_matches_reference_and_scaled_species(self):
+        oxygen = SpeciesMomentum("clusters", (4500, 6000), 16, 1, 4885.76)
+        x, y = np.array([3, 0], dtype="u2"), np.array([4, 0], dtype="u2")
+        tof = np.array([5085.76, 4885.76])
+        px, py, pz = polynomial_momentum_components(x, y, tof, oxygen, (0, 0), 1)
+        tau, r = .2, 5
+        transverse = (4.5586*r - .097123*r*tau + 1.1114e-4*r**3 - .025513*r*tau**2
+                      + 1.7719e-4*r**3*tau - .25058*r*tau**3)
+        longitudinal = (312.68*tau + .011545*r**2 + 6.8175*tau**2 - .0016119*r**2*tau
+                        - .61458*tau**3 + 3.2141e-7*r**4 - .010424*r**2*tau**2 - 5.2163*tau**4)
+        np.testing.assert_allclose([px, py, pz], [[.6*transverse, 0], [.8*transverse, 0], [longitudinal, 0]])
+        t0 = oxygen_scaled_t0(128, 2)
+        self.assertAlmostEqual(t0, 2 * oxygen.t0_ns)
+        heavy = SpeciesMomentum("clusters", (9000, 12000), 128, 2, t0)
+        scaled = polynomial_momentum_components(x, y, 2 * tof, heavy, (0, 0), 1)
+        np.testing.assert_allclose(scaled, 4 * np.array([px, py, pz]))
+
+    def test_polynomial_projection_reports_events_outside_calibration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "dump.h5"
+            self.create_dump(path, base=0)
+            result = position_histograms(path, ("clusters",), minimum=0, maximum=.006)
+            oxygen = SpeciesMomentum("clusters", (0, 1), 16, 1, 0)
+            outside = np.zeros(1, dtype=int)
+            _, maps, counts = momentum_projections(
+                path, "TDC1Rising", [oxygen], (12.25, 8.75), DEFAULT_MM_PER_PIXEL,
+                result["trigger_times"], result["segment_offsets"], stopped=lambda: False,
+                model="oxygen", outside_domain=outside,
+            )
+            np.testing.assert_array_equal(counts, [2])
+            np.testing.assert_array_equal(outside, [1])
+            np.testing.assert_array_equal(maps.sum(axis=(2, 3)), [[2, 2]])
 
     def test_independent_gates_use_unrounded_positions_and_unbinned_tof(self):
         with tempfile.TemporaryDirectory() as folder:

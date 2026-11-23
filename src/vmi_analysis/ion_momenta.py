@@ -22,6 +22,9 @@ DEFAULT_MM_PER_PIXEL = 75 / 180
 TRANSVERSE_CONVERSION = 839.3094724161837
 LONGITUDINAL_CONVERSION = 1.784795
 MOMENTUM_BINS = 161
+OXYGEN_MASS_U = 16.0
+OXYGEN_TOF_NS = 4885.76
+POLYNOMIAL_LIMIT_AU = 160.0
 
 
 @dataclass(frozen=True)
@@ -41,16 +44,47 @@ def momentum_components(x, y, tof, species, center, mm_per_pixel):
             LONGITUDINAL_CONVERSION * species.charge * species.pz_scale * (species.t0_ns - tof))
 
 
-def momentum_projections(path, reference, species, center, mm_per_pixel, triggers, offsets, *, stopped):
+def oxygen_scaled_t0(mass_u, charge):
+    return OXYGEN_TOF_NS * np.sqrt(mass_u / (OXYGEN_MASS_U * charge))
+
+
+def polynomial_momentum_components(x, y, tof, species, center, mm_per_pixel):
+    """Evaluate the supplied oxygen-reference model with mm and μs inputs."""
+    a = species.mass_u / OXYGEN_MASS_U
+    b = species.charge
+    scale = np.sqrt(a * b)
+    tau = np.sqrt(b / a) * (tof - species.t0_ns) / 1000
+    X = (x.astype(float) - center[0]) * mm_per_pixel
+    Y = (y.astype(float) - center[1]) * mm_per_pixel
+    radius_sq = X**2 + Y**2
+    longitudinal = scale * (
+        312.68 * tau + 0.011545 * radius_sq + 6.8175 * tau**2
+        - 0.0016119 * radius_sq * tau - 0.61458 * tau**3 + 3.2141e-7 * radius_sq**2
+        - 0.010424 * radius_sq * tau**2 - 5.2163 * tau**4
+    )
+    # Factor R out of F_perp and cancel it against X/R or Y/R, including at R=0.
+    transverse = scale * (
+        4.5586 - 0.097123 * tau + 1.1114e-4 * radius_sq - 0.025513 * tau**2
+        + 1.7719e-4 * radius_sq * tau - 0.25058 * tau**3
+    )
+    return transverse * X, transverse * Y, longitudinal
+
+
+def momentum_projections(path, reference, species, center, mm_per_pixel, triggers, offsets, *,
+                         stopped, model="simple", outside_domain=None):
     """Accumulate both projections with the same bin scale, using bounded working memory."""
     paths = segment_files(path)
     if len(paths) + 1 != len(offsets):
         raise ValueError("The acquisition segments changed. Plot positions and TOF again.")
     by_source = {source: [] for source in ARRIVALS}
+    polynomial = model == "oxygen"
+    convert = polynomial_momentum_components if polynomial else momentum_components
     for index, item in enumerate(species):
+        if polynomial and item.charge <= 0:
+            raise ValueError("The O⁺ reference model requires positive ion charge.")
         by_source[item.source].append((index, item))
 
-    def blocks():
+    def blocks(outside=None):
         for (data, _), start, stop in zip(paths, offsets[:-1], offsets[1:], strict=True):
             with h5py.File(data, "r") as file:
                 actual = _trigger_times(file, reference)
@@ -67,15 +101,22 @@ def momentum_projections(path, reference, species, center, mm_per_pixel, trigger
                             low, high = item.window_ns
                             mask = valid & (tof >= low) & (tof <= high)
                             if np.any(mask):
-                                values = momentum_components(x[mask], y[mask], tof[mask],
-                                                             item, center, mm_per_pixel)
+                                values = convert(x[mask], y[mask], tof[mask], item, center, mm_per_pixel)
                                 if not np.isfinite(values).all():
                                     raise ValueError("Momentum values overflowed. Check the scales and ion mass.")
+                                if polynomial:
+                                    px, py, pz = values
+                                    inside = np.hypot(np.hypot(px, py), pz) <= POLYNOMIAL_LIMIT_AU
+                                    if outside is not None:
+                                        outside[index] += np.count_nonzero(~inside)
+                                    if not np.any(inside):
+                                        continue
+                                    values = tuple(axis[inside] for axis in values)
                                 yield index, values
 
     extents = np.zeros(len(species))
     totals = np.zeros(len(species), dtype=np.int64)
-    for index, values in blocks():
+    for index, values in blocks(outside_domain):
         extents[index] = max(extents[index], *(np.max(np.abs(axis)) for axis in values))
         totals[index] += len(values[0])
     edges = [np.linspace(-bound, bound, MOMENTUM_BINS + 1) for bound in np.maximum(extents, 1)]
