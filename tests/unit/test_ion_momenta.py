@@ -8,6 +8,7 @@ import h5py
 import numpy as np
 
 from vmi_analysis.gui.resources import command_access
+from vmi_analysis.gui.panels.ion_momenta import SPECIES_SCHEMA, _interval, _species_entries
 from vmi_analysis.ion_acquisition import SCHEMA, collection_reads
 from vmi_analysis.ion_momenta import (DEFAULT_MM_PER_PIXEL, LONGITUDINAL_CONVERSION, SpeciesMomentum,
                                      gated_preview, main, momentum_components, momentum_projections,
@@ -54,9 +55,9 @@ class IonMomentaTests(unittest.TestCase):
 
     def test_momenta_use_pixel_center_tof_reference_and_longitudinal_scale(self):
         ion = SpeciesMomentum("clusters", (.0039, .0041), 131.293, 2, .005, 1.5)
-        momenta = momentum_components(np.array([14.]), np.array([6.]), np.array([1000.]),
+        momenta = momentum_components(np.array([14], dtype="u2"), np.array([6], dtype="u2"), np.array([1000.]),
                                       SpeciesMomentum("clusters", (0, 2000), 131.293, 2, 1010, 1.5),
-                                      (12., 8.), DEFAULT_MM_PER_PIXEL)
+                                      (12, 8), DEFAULT_MM_PER_PIXEL)
         expected = 349.7122801734099 * 131.293 * 2 / 1000
         np.testing.assert_allclose(momenta, [[expected], [-expected], [LONGITUDINAL_CONVERSION * 30]])
         with tempfile.TemporaryDirectory() as folder:
@@ -77,6 +78,10 @@ class IonMomentaTests(unittest.TestCase):
             path = Path(folder) / "dump.h5"
             self.create_dump(path)
             result = position_histograms(path, ("clusters",), minimum=0, maximum=.006, bin_size_ns=.003)
+            x_limits, y_limits, tof_limits = result["clusters_data_limits"]
+            self.assertEqual(_interval([None, None], x_limits), (10, 300.75))
+            self.assertEqual(_interval([None, 20], y_limits), (8.75, 20))
+            np.testing.assert_allclose(_interval([None, None], tof_limits), [.001, .005])
             args = (path, "TDC1Rising", "clusters", result["edges"], result["trigger_times"],
                     result["segment_offsets"], result["clusters_image"].shape)
             counts = gated_preview(*args, position_gate=(12.2, 12.3, 8.7, 8.8))
@@ -84,6 +89,17 @@ class IonMomentaTests(unittest.TestCase):
             image = gated_preview(*args, tof_gate=(.0039, .0041))
             self.assertEqual(image.sum(), 1)
             self.assertEqual(image[400, 301], 1)
+
+    def test_fitted_numpy_values_can_be_used_for_species_assignments(self):
+        item = {"formula": "Xe", "charge": 2, "source": "clusters", "trigger_reference": "TDC1Rising",
+                "window_ns": [np.float64(8900), np.float64(9100)], "t0_ns": np.float64(9000)}
+        document = {"schema": SPECIES_SCHEMA, "species": [item]}
+        row, = _species_entries(document, ("clusters",), "TDC1Rising")
+        self.assertEqual(row, ("Xe", 2, "clusters", (8900., 9100.), 9000.))
+        self.assertIs(type(row[-1]), float)
+        item["t0_ns"] = np.float64(np.nan)
+        with self.assertRaisesRegex(ValueError, "finite TOF"):
+            _species_entries(document, ("clusters",), "TDC1Rising")
 
     def test_segment_clock_resets_and_file_reservations(self):
         with tempfile.TemporaryDirectory() as folder:

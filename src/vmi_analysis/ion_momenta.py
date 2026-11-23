@@ -37,7 +37,7 @@ class SpeciesMomentum:
 def momentum_components(x, y, tof, species, center, mm_per_pixel):
     """Return the three momentum components in atomic units for positive TOF."""
     transverse = TRANSVERSE_CONVERSION * species.mass_u * mm_per_pixel / tof
-    return (transverse * (x - center[0]), transverse * (y - center[1]),
+    return (transverse * (x.astype(float) - center[0]), transverse * (y.astype(float) - center[1]),
             LONGITUDINAL_CONVERSION * species.charge * species.pz_scale * (species.t0_ns - tof))
 
 
@@ -147,6 +147,8 @@ def position_histograms(path, sources, reference=DEFAULT_REFERENCE, *, minimum=0
     for source in sources:
         image = np.zeros((256, 256), dtype=np.int64)
         invalid = 0
+        lower = np.full(3, np.inf)
+        upper = np.full(3, -np.inf)
         name, _ = ARRIVALS[source]
         for data, _ in segment_files(path):
             with h5py.File(data, "r") as file:
@@ -159,6 +161,9 @@ def position_histograms(path, sources, reference=DEFAULT_REFERENCE, *, minimum=0
                     x, y = x[valid].astype(float), y[valid].astype(float)
                     if not x.size:
                         continue
+                    coordinates = (x, y, tof[selected][valid])
+                    lower = np.minimum(lower, [axis.min() for axis in coordinates])
+                    upper = np.maximum(upper, [axis.max() for axis in coordinates])
                     width = max(image.shape[1], int(np.floor(x.max() + 0.5)) + 1)
                     height = max(image.shape[0], int(np.floor(y.max() + 0.5)) + 1)
                     if width * height > MAX_IMAGE_BINS:
@@ -167,6 +172,8 @@ def position_histograms(path, sources, reference=DEFAULT_REFERENCE, *, minimum=0
                     image = np.pad(image, ((0, height - image.shape[0]), (0, width - image.shape[1])))
                     add_positions(image, x, y)
         result[f"{source}_image"] = image
+        if np.isfinite(lower).all():
+            result[f"{source}_data_limits"] = np.column_stack((lower, upper))
         result[f"{source}_invalid_positions"] = invalid
         print(f"{source}: {int(image.sum()):,} mapped positions, {invalid:,} invalid positions.")
     return result

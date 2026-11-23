@@ -4,6 +4,7 @@ import asyncio
 from importlib.resources import files
 import json
 from math import isfinite, log, sqrt
+from numbers import Real
 from pathlib import Path
 import re
 import sys
@@ -53,10 +54,13 @@ def _position_figure(image, title="Detector positions"):
     return fig
 
 
-def _interval(values):
-    if None in values or not np.isfinite(values).all() or values[0] >= values[1]:
+def _interval(values, defaults=None):
+    if defaults is not None:
+        values = [default if value is None else value for value, default in zip(values, defaults, strict=True)]
+    if (None in values or not np.isfinite(values).all() or values[0] > values[1]
+            or (defaults is None and values[0] == values[1])):
         raise ValueError("Enter increasing, finite gate limits.")
-    return tuple(values)
+    return tuple(float(value) for value in values)
 
 
 def _gate_fields(labels):
@@ -64,13 +68,12 @@ def _gate_fields(labels):
         return [num_input(label, None, step="any") for label in labels]
 
 
-def _fit_controls(plot, source, edges, counts, context, save_peak, register_peak):
+def _fit_controls(plot, source, edges, counts, context, save_peak, register_peak, species_file):
     selected_region = model = None
     with ui.row().classes("items-center gap-2"):
         mode = ui.toggle(["Zoom", "Select fit range"], value="Zoom")
         ui.button("Clear fit", on_click=lambda: clear()).props("flat")
     fields = _gate_fields(("Fit TOF min (ns)", "Fit TOF max (ns)"))
-    output = ui.column().classes("w-full")
 
     def redraw():
         fig = _tof_figure(edges, {source: counts}, "Position-filtered TOF",
@@ -135,6 +138,11 @@ def _fit_controls(plot, source, edges, counts, context, save_peak, register_peak
     mode.on_value_change(lambda _: redraw())
     plot.on("plotly_selected", selected, js_handler="event => emit(event?.range ?? null)")
     fit_button = ui.button("Fit Gaussian peaks", on_click=fit)
+    with ui.row().classes("w-full items-center gap-2"):
+        path_input("Species JSON file (append assignments)", browse="save", filters=[".json"],
+                   default_name="ion-species.json").bind_value(species_file).classes("grow basis-72")
+        ui.button("Clear species JSON path", on_click=lambda: species_file.set_value("")).props("flat")
+    output = ui.column().classes("w-full")
     redraw()
 
 
@@ -165,7 +173,7 @@ def _species_fields(record, save_peak):
                 if t0 is None or not isfinite(t0):
                     raise ValueError(f"Enter a finite zero-momentum TOF for {name}.")
                 window = _interval([minimum_tof.value, maximum_tof.value])
-                return dict(record, formula=name, charge=int(number), t0_ns=t0, window_ns=list(window))
+                return dict(record, formula=name, charge=int(number), t0_ns=float(t0), window_ns=list(window))
 
             def add():
                 try:
@@ -179,8 +187,10 @@ def _species_fields(record, save_peak):
     return row, read_peak
 
 
-def _linked_plots(job, jobs, source, result, save_peak, register_peak):
+def _linked_plots(job, jobs, source, result, save_peak, register_peak, species_file):
     image, edges = result[f"{source}_image"], result["edges"]
+    fallback_limits = ((-0.5, image.shape[1] - 0.5), (-0.5, image.shape[0] - 0.5), (edges[0], edges[-1]))
+    x_limits, y_limits, tof_limits = result.get(f"{source}_data_limits", fallback_limits)
     triggers, offsets = result["trigger_times"], result["segment_offsets"]
     reference = job.extra["reference"]
     revisions = {"position": 0, "tof": 0}
@@ -231,14 +241,13 @@ def _linked_plots(job, jobs, source, result, save_peak, register_peak):
                                position_gate_px=dict(zip(("xmin", "xmax", "ymin", "ymax"), bounds, strict=True)),
                                histogram_range_ns=[float(edges[0]), float(edges[-1])],
                                bin_size_ns=job.extra["bin_size_ns"])
-                _fit_controls(chart, source, edges, filtered, context, save_peak, register_peak)
+                _fit_controls(chart, source, edges, filtered, context, save_peak, register_peak, species_file)
 
     async def enter(kind, fields):
         try:
             values = [field.value for field in fields]
-            bounds = _interval(values[:2])
-            if kind == "position":
-                bounds += _interval(values[2:])
+            bounds = (_interval(values[:2], x_limits) + _interval(values[2:], y_limits)
+                      if kind == "position" else _interval(values, tof_limits))
         except ValueError as exc:
             ui.notify(str(exc), type="warning")
             return
@@ -285,6 +294,7 @@ def _linked_plots(job, jobs, source, result, save_peak, register_peak):
                 image_mode = ui.toggle(["Zoom", "Select area"], value="Zoom")
             image_plot = ui.plotly(go.Figure()).classes("w-full min-w-0")
             with ui.expansion("X/Y gate limits", icon="filter_alt").classes("w-full"):
+                ui.label("Blank limits use the data range.").classes("vmi-caption")
                 xy = _gate_fields(("X min (px)", "X max (px)", "Y min (px)", "Y max (px)"))
                 ui.button("Apply X/Y gate", on_click=lambda: enter("position", xy)).props("flat")
                 ui.button("Clear X/Y gate", on_click=lambda: clear("position", xy)).props("flat")
@@ -293,6 +303,7 @@ def _linked_plots(job, jobs, source, result, save_peak, register_peak):
                 tof_mode = ui.toggle(["Zoom", "Select TOF range"], value="Zoom")
             tof_plot = ui.plotly(go.Figure()).classes("w-full min-w-0")
             with ui.expansion("TOF gate limits", icon="filter_alt").classes("w-full"):
+                ui.label("Blank limits use the data range.").classes("vmi-caption")
                 times = _gate_fields(("Gate TOF min (ns)", "Gate TOF max (ns)"))
                 ui.button("Apply TOF gate", on_click=lambda: enter("tof", times)).props("flat")
                 ui.button("Clear TOF gate", on_click=lambda: clear("tof", times)).props("flat")
@@ -338,10 +349,11 @@ def _species_entries(document, sources, reference):
         window = item.get("window_ns")
         t0 = item.get("t0_ns", item.get("center_ns"))
         if (not isinstance(window, list) or len(window) != 2
-                or any(type(value) not in (int, float) or not -1e100 < value < 1e100 for value in (*window, t0))
+                or any(isinstance(value, (bool, np.bool_)) or not isinstance(value, Real)
+                       or not -1e100 < value < 1e100 for value in (*window, t0))
                 or window[0] >= window[1]):
             raise ValueError("Each assignment needs finite TOF limits and a zero-momentum TOF.")
-        entries.append((item["formula"], item["charge"], item["source"], tuple(window), t0))
+        entries.append((item["formula"], item["charge"], item["source"], tuple(map(float, window)), float(t0)))
     return entries
 
 
@@ -549,6 +561,7 @@ def _results(job, jobs, species_file):
 
     def save_peak(peak):
         try:
+            _species_entries(dict(schema=SPECIES_SCHEMA, species=[peak]), tuple(SOURCES), job.extra["reference"])
             destination = species_file.value.strip()
             if not destination:
                 raise ValueError("Choose a Species JSON file in the Ion momenta form.")
@@ -587,7 +600,7 @@ def _results(job, jobs, species_file):
                      f'{int(result[f"{source}_outside"]):,} outside the TOF interval · '
                      f'{int(result[f"{source}_invalid_positions"]):,} invalid positions').classes("vmi-caption")
             if "source_file" in job.extra:
-                _linked_plots(job, jobs, source, result, save_peak, register_peak)
+                _linked_plots(job, jobs, source, result, save_peak, register_peak, species_file)
             else:
                 ui.label("Plot positions and TOF again to enable gating.").classes("vmi-subtitle")
                 with ui.element("div").classes("vmi-ion-detector-row"):
@@ -666,8 +679,7 @@ def build(jobs):
             bin_size = save(num_input("TOF bin size (ns)", DEFAULT_BIN_SIZE_NS, step="any"), "bin_size_ns")
             minimum = save(num_input("TOF minimum (ns)", 0, min=0, step="any"), "minimum")
             maximum = save(num_input("TOF maximum (ns, blank = auto)", None, step="any"), "maximum")
-        species_file = save(path_input("Species JSON file (append assignments)", browse="save",
-                                       filters=[".json"], default_name="ion-species.json"), "species_file")
+        species_file = save(ui.input(), "species_file").set_visibility(False)
         ui.label("Momentum reconstruction requires the ion mass and charge, detector center, "
                  "and spectrometer calibration or flight-field model.").classes("vmi-subtitle")
         with action_bar(view, "Plot positions and TOF", on_click=run):
