@@ -284,6 +284,30 @@ class GuiSubmissionTests(unittest.TestCase):
         self.assertEqual(cfg["vmi_picasso"]["spectrum_plot"]["x_max"], -1)
         self.assertEqual(Path(job.extra["output_dir"]), ROOT / "centroiding/vmi_output")
 
+    def test_ion_momenta_submits_its_own_inputs_and_reservations(self):
+        from vmi_analysis.gui.panels import ion_momenta
+        from vmi_analysis.gui.resources import canonical_path, job_access
+
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "ions.h5"
+            source.touch()
+            store = {MIGRATED_KEY: True, "ion_momenta.input": str(source),
+                     "ion_momenta.source": "both", "ion_momenta.reference": "TDC2Falling",
+                     "ion_momenta.bin_size_ns": 10, "ion_momenta.minimum": 8000,
+                     "ion_momenta.maximum": 12000,
+                     "ion_tof.source": "pixels", "ion_tof.minimum": 0}
+            job = self.submit_form(ion_momenta, store, label="Plot positions and TOF")
+            self.assertEqual(job.name, "Ion momenta")
+            self.assertEqual(job.cmd[2], "vmi_analysis.ion_momenta")
+            options = dict(zip(job.cmd[3::2], job.cmd[4::2]))
+            self.assertEqual(options["--source"], "both")
+            self.assertEqual(options["--reference"], "TDC2Falling")
+            for flag, value in (("--bin-size", 10), ("--minimum", 8000), ("--maximum", 12000)):
+                self.assertEqual(float(options[flag]), value)
+            access = job_access(job)
+            self.assertIn(canonical_path(source), access.reads)
+            self.assertIn(canonical_path(job.extra["histogram"]), access.writes)
+
     def test_pes_abel_options_are_folded_by_default(self):
         from nicegui import Client, app, ui
         from vmi_analysis.gui.panels import pes
