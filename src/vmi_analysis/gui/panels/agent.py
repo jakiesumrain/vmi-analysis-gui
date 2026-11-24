@@ -423,7 +423,7 @@ def _build_page(jobs, *, registry, navigate):
         except RuntimeError as exc:
             show_error(exc)
 
-    async def decide(session, key, job, approved, *, rebuild=None):
+    async def decide(session, key, job, approved, *, rebuild=None, interactive=None):
         nonlocal approval, view_context
         with approval_view:
             if approved and rebuild is not None:
@@ -446,6 +446,9 @@ def _build_page(jobs, *, registry, navigate):
                 await answer(session, key, {"status": "declined"})
                 return
             try:
+                if interactive is not None:
+                    await answer(session, key, await interactive())
+                    return
                 submitted = jobs.submit(job)
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 show_error(exc)
@@ -493,9 +496,17 @@ def _build_page(jobs, *, registry, navigate):
                         if operation != view.operation or not isinstance(parameters, dict):
                             raise ValueError(f"Use {view.operation} with this view.")
                         parameters = view.bind(parameters)
-                    job, inputs = registry.prepare(jobs, operation, parameters)
+                    interactive = view.run_interactive if view is not None else None
+                    job, inputs = (None, parameters) if interactive is not None else registry.prepare(
+                        jobs, operation, parameters)
                     if view is not None:
                         async def approve(edits):
+                            if interactive is not None:
+                                async def run():
+                                    return await interactive(view.bind({**parameters, **edits}))
+
+                                await decide(session, key, None, True, interactive=run)
+                                return
                             await decide(session, key, job, True, rebuild=lambda: registry.prepare(
                                 jobs, operation, view.bind({**parameters, **edits})
                             ))
@@ -731,7 +742,8 @@ def _build_page(jobs, *, registry, navigate):
                 identifier, view = view_context
                 model_context = (f"\n\n[App context from {view.panel}. Call vmi_panel with action propose, "
                                  f"operation {view.operation}, and this view_id. {view.instruction}]\n"
-                                 + json.dumps({"view_id": identifier, "parameters": view.settings}))
+                                 + json.dumps({"view_id": identifier, "parameters": view.settings,
+                                               **({"context": view.context} if view.context is not None else {})}))
             await asyncio.to_thread(session.prompt, message, model_context=model_context, attachments=references)
             if prompt.value == message:
                 prompt.value = ""

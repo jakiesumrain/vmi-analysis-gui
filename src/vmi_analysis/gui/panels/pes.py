@@ -16,20 +16,24 @@ from plotly.subplots import make_subplots
 
 from vmi_analysis.centroiding.plot_data import load_plot_data
 from vmi_analysis.pes import (ABEL_METHODS, BASELINE_PARAMETERS, BETA_ORDERS, QUADRANT_LABELS,
-                              QUADRANT_ORDER, Geometry, PeakGuess, anisotropy_values,
+                              QUADRANT_ORDER, SYMMETRY_AXES, Geometry, PeakGuess, anisotropy_values,
                               average_anisotropy, evaluate_fit_for_plot, fit_peaks)
 
-from ..shared import circularization_dir, generated_dir, workspace_root
+from ..agent_panels import PanelOperation, PanelView, number as finite_number, require_completed_job, resolve_path
+from ..shared import checked_path, circularization_dir, generated_dir, workspace_root
 from .. import theme
 from ..centroid_plots import _style, linear_axis_limits, plot_options
 from ..jobs import Job, JobManager
 from ..resources import canonical_path
 from .binning import BIN_LABEL_PATTERN
-from .common import (GENERATED, REPO_ROOT, JobView, action_bar, check_grid,
+from .common import (GENERATED, REPO_ROOT, JobView, action_bar, adopt_agent_form, check_grid,
                      confirm_clear_outputs, field_grid, num_input, persist)
 from .picker import LocalFilePicker
 
 CIRC_DIR = REPO_ROOT / "circularization"
+JOB_NAME = "PES"
+FIT_OPERATION = "pes_fit"
+PROFILES = ("Gaussian", "Voigt")
 PES_PLOTS = ("gmd_bins-energy-spectrum.png", "gmd_bins-energy-spectrum-normalized.png", "gmd_bins-betas.png")
 _AXIS_SCRIPT = (files("vmi_analysis.gui.assets") / "pes_axes.js").read_text(encoding="utf-8")
 
@@ -86,11 +90,194 @@ def _style_comparison_plot(fig, height):
     fig.update_yaxes(automargin=False)
 
 
-def build(jobs: JobManager) -> None:
+def spectra_job(paths, geometry, overrides, *, alpha=None, abel_method="hansenlaw", beta_order=0,
+                quadrants=QUADRANT_ORDER, symmetry_axis="none"):
+    cwd = workspace_root(REPO_ROOT)
+    paths = list(dict.fromkeys(str(canonical_path(checked_path(path, cwd=cwd))) for path in paths))
+    if not paths:
+        raise ValueError("Add one or more VMI images.")
+    if alpha is not None and finite_number(alpha) <= 0:
+        raise ValueError("Alpha must be positive.")
+    if (abel_method not in tuple(ABEL_METHODS) or type(beta_order) is not int or beta_order not in BETA_ORDERS
+            or symmetry_axis not in tuple(SYMMETRY_AXES)):
+        raise ValueError("Choose a valid Abel method, maximum β order, and symmetry axis.")
+    if not quadrants or any(name not in QUADRANT_ORDER for name in quadrants):
+        raise ValueError("Choose detector quadrants from ur, ul, ll, and lr.")
+    chosen = [name for name in QUADRANT_ORDER if name in quadrants]
+    if len(chosen) < len(QUADRANT_ORDER) and symmetry_axis == "none":
+        raise ValueError("Select a symmetry axis when using only some quadrants.")
+    cmd = [sys.executable, "-m", "vmi_analysis.pes", "--abel-method", abel_method, "--beta-order", str(beta_order),
+           "--quadrants", ",".join(chosen), "--symmetry-axis", symmetry_axis]
+    for path in paths:
+        spec = Geometry(**overrides[path]) if path in overrides else geometry
+        if spec is None:
+            raise ValueError("Enter shared geometry or an override for every image.")
+        x, y = spec.center or ("auto", "auto")
+        cmd += ["--image", path, str(x), str(y), str(spec.angle), str(spec.resolution)]
+    if alpha is not None:
+        cmd += ["--alpha", str(alpha)]
+    job = Job(JOB_NAME, cmd=cmd, cwd=str(cwd), reads=paths)
+    result = generated_dir(GENERATED) / f"pes-spectra-{job.id}.npz"
+    job.cmd += ["--output", str(result)]
+    job.writes.append(str(result))
+    job.extra["pes_spectra"] = str(result)
+    return job
+
+
+def _geometry(values, defaults=Geometry()):
+    if not isinstance(values, dict) or values.keys() - {"center", "angle", "resolution"}:
+        raise ValueError("Use center, angle, and resolution for image geometry.")
+    center = values.get("center", defaults.center)
+    if center is not None:
+        if not isinstance(center, (list, tuple)) or len(center) != 2:
+            raise ValueError("Enter a center as [X, Y] or null for the brightest pixel.")
+        center = tuple(map(finite_number, center))
+    return Geometry(center, finite_number(values.get("angle", defaults.angle)),
+                    finite_number(values.get("resolution", defaults.resolution)))
+
+
+def _prepare_spectra(jobs, params):
+    requested = params.get("images", [])
+    if not isinstance(requested, list):
+        raise ValueError("Provide a list of VMI image paths.")
+    paths = [resolve_path(path) for path in requested]
+    if "source_job_id" in params:
+        job_id = params["source_job_id"]
+        parent = jobs.get(job_id) if isinstance(job_id, str) else None
+        defaults = {"Centroiding": "raw_image", "GMD binning": "all_bins_image", "Circularize": "output"}
+        if parent is None or parent.name not in defaults:
+            raise ValueError("Choose a completed Centroiding, Binning, or Circularize job from your workspace.")
+        parent = require_completed_job(jobs, job_id, name=parent.name)
+        key = params.get("image_artifact", defaults[parent.name])
+        allowed_bin = parent.name == "GMD binning" and isinstance(key, str) and re.fullmatch(r"bin_\d+", key)
+        if key != defaults[parent.name] and not allowed_bin:
+            raise ValueError("Choose a VMI image artifact from the completed job.")
+        if key not in parent.extra:
+            raise ValueError("The completed job has no image for the requested artifact.")
+        paths.append(resolve_path(parent.extra[key]))
+    elif "image_artifact" in params:
+        raise ValueError("An image artifact requires a source job ID.")
+    if any(not path.is_file() or path.suffix.lower() not in (".npy", ".txt") for path in paths):
+        raise ValueError("Choose existing VMI images (.npy or .txt).")
+    geometry = _geometry(params.get("geometry", {}))
+    requested_overrides = params.get("image_geometry", {})
+    if not isinstance(requested_overrides, dict):
+        raise ValueError("Use an object mapping image paths to their geometry overrides.")
+    overrides = {}
+    for image, values in requested_overrides.items():
+        path = resolve_path(image)
+        if path not in paths:
+            raise ValueError("An image geometry override must refer to a selected image.")
+        spec = _geometry(values, geometry)
+        overrides[str(canonical_path(path))] = {"center": spec.center, "angle": spec.angle, "resolution": spec.resolution}
+    quadrants = params.get("quadrants", list(QUADRANT_ORDER))
+    if not isinstance(quadrants, list):
+        raise ValueError("Provide the selected quadrants as a list.")
+    options = {key: params[key] for key in ("alpha", "abel_method", "beta_order", "symmetry_axis") if key in params}
+    try:
+        job = spectra_job(paths, geometry, overrides, quadrants=quadrants, **options)
+    except OverflowError as exc:
+        raise ValueError("Enter finite PES settings.") from exc
+    form = dict(images="\n".join(job.reads), image_geometry=json.dumps(overrides),
+                brightest_center=geometry.center is None, center_x=geometry.center[0] if geometry.center else None,
+                center_y=geometry.center[1] if geometry.center else None, rotation=geometry.angle,
+                resolution=geometry.resolution, alpha=options.get("alpha"),
+                abel_method=options.get("abel_method", "hansenlaw"), beta_order=options.get("beta_order", 0),
+                symmetry_axis=options.get("symmetry_axis", "none"))
+    form.update({f"quadrant_{name}": name in quadrants for name in QUADRANT_ORDER})
+    job.extra["panel_form"] = form
+    return job, {
+        "VMI images": job.reads,
+        "Shared geometry": {"center": geometry.center or "Brightest pixel",
+                            "rotation (degrees)": geometry.angle, "resolution": geometry.resolution},
+        "Image geometry overrides": overrides or None,
+        "Energy calibration": form["alpha"] if form["alpha"] is not None else "Uncalibrated (pixel²)",
+        "Abel method": ABEL_METHODS[form["abel_method"]], "Maximum β order": form["beta_order"],
+        "Quadrants": quadrants, "Symmetry axis": form["symmetry_axis"],
+    }
+
+
+def agent_operations():
+    spectra = {
+        "panel": JOB_NAME, "manual": JOB_NAME,
+        "summary": "Generate spectra and optional angular anisotropy from one or more VMI images.",
+        "parameters": {
+            "images": {"type": "list of paths", "description": "VMI images (.npy or .txt)"},
+            "source_job_id": {"type": "job ID", "description": "Optional completed Centroiding, Binning, or Circularize job"},
+            "image_artifact": {"type": "string", "description": "Optional Binning artifact such as bin_0. "
+                               "Defaults to the combined image."},
+            "geometry": {"type": "object", "description": "Shared center [X, Y] or null for brightest pixel, "
+                         "angle in degrees, and resolution factor. Defaults to auto center, 0°, and factor 1."},
+            "image_geometry": {"type": "object", "description": "Optional geometry overrides keyed by image path"},
+            "alpha": {"type": "number or null", "unit": "eV/detector pixel²", "default": None},
+            "abel_method": {"type": "string", "choices": list(ABEL_METHODS), "default": "hansenlaw"},
+            "beta_order": {"type": "integer", "choices": list(BETA_ORDERS), "default": 0},
+            "quadrants": {"type": "list of strings", "default": list(QUADRANT_ORDER)},
+            "symmetry_axis": {"type": "string", "choices": list(SYMMETRY_AXES), "default": "none"},
+        },
+    }
+    fit = {
+        "panel": JOB_NAME, "manual": JOB_NAME,
+        "summary": "Fit Gaussian or Voigt peaks in the current spectrum selection. Open Ask Agent in PES first.",
+        "parameters": {
+            "region": {"type": "pair of numbers", "description": "Fit range in the displayed axis units"},
+            "targets": {"type": "list of strings", "description": "Spectrum names from the current selection"},
+            "baseline": {"type": "string", "choices": list(BASELINE_PARAMETERS)},
+            "peaks": {"type": "list of objects", "description": "Each peak uses profile, center, gaussian_fwhm, "
+                      "and optional lorentzian_fwhm. Empty means automatic."},
+            "auto_profile": {"type": "string", "choices": list(PROFILES)},
+        },
+    }
+    return (PanelOperation("pes", spectra, _prepare_spectra, (JOB_NAME,), outputs=("pes_spectra",)),
+            PanelOperation(FIT_OPERATION, fit, None, ()))
+
+
+def _fit_settings(params, spectra):
+    if params.keys() - {"region", "targets", "baseline", "peaks", "auto_profile"}:
+        raise ValueError("Use the peak fit settings listed for PES.")
+    region = params["region"]
+    if not isinstance(region, (list, tuple)) or len(region) != 2 or None in region:
+        raise ValueError("Select a fit range or enter both endpoints.")
+    low, high = map(finite_number, region)
+    if not low < high or not np.isfinite(high - low):
+        raise ValueError("Enter an increasing, finite fit range.")
+    targets = params["targets"]
+    if not isinstance(targets, list) or not targets or any(type(name) is not str or name not in spectra for name in targets):
+        raise ValueError("Select at least one of the displayed spectra to fit.")
+    if params["baseline"] not in tuple(BASELINE_PARAMETERS) or params["auto_profile"] not in PROFILES:
+        raise ValueError("Choose a valid baseline and peak profile.")
+    peaks = params["peaks"]
+    if not isinstance(peaks, list):
+        raise ValueError("Provide one object per peak estimate.")
+    guesses = []
+    for item in peaks:
+        if not isinstance(item, dict) or item.keys() - {"profile", "center", "gaussian_fwhm", "lorentzian_fwhm"}:
+            raise ValueError("Enter a peak profile, center, and full widths at half maximum.")
+        profile = item.get("profile", "Gaussian")
+        if profile not in PROFILES or item.get("center") is None or item.get("gaussian_fwhm") is None:
+            raise ValueError("Enter a center and Gaussian FWHM for each peak.")
+        center = finite_number(item["center"])
+        width = finite_number(item["gaussian_fwhm"])
+        wing = finite_number(item.get("lorentzian_fwhm") or 0) if profile == "Voigt" else 0
+        if not low <= center <= high or not 0 < width <= high - low or not 0 <= wing <= high - low:
+            raise ValueError("Keep peak centers inside the fit range and widths within its span.")
+        guesses.append(dict(profile=profile, center=center, gaussian_fwhm=width, lorentzian_fwhm=wing))
+    return dict(region=[low, high], targets=list(dict.fromkeys(targets)), baseline=params["baseline"],
+                auto_profile=params["auto_profile"], peaks=guesses)
+
+
+def build(jobs: JobManager, *, ask_agent=None) -> None:
     state = {"spectra": {}, "angular": {}, "beta_orders": (), "plot": None, "units": "pixel²",
-             "revision": 0, "selecting": False}
-    view = JobView(jobs, job_name="PES", results_builder=lambda job: show_job(job))
-    theme.panel_header("PES", "Generate photoelectron spectra from VMI images and fit selected peaks.", view=view)
+             "revision": 0, "selecting": False, "fit_busy": False}
+
+    def restore_form(job):
+        reset()
+        for key, value in adopt_agent_form(job, "pes").items():
+            if key in fields:
+                fields[key].value = value
+
+    view = JobView(jobs, job_name=JOB_NAME, results_builder=lambda job: show_job(job), attach_builder=restore_form)
+    theme.panel_header(JOB_NAME, "Generate photoelectron spectra from VMI images and fit selected peaks.", view=view)
 
     def number(label, key, value=None):
         return persist(num_input(label, value, step="any"), f"pes.{key}")
@@ -181,41 +368,17 @@ def build(jobs: JobManager) -> None:
     def run():
         try:
             files = paths()
-            if not files:
-                raise ValueError("Add one or more VMI images.")
             saved = overrides()
-            shared = shared_geometry() if any(path not in saved for path in files) else None
-            if alpha.value is not None and (not np.isfinite(alpha.value) or alpha.value <= 0):
-                raise ValueError("Alpha must be finite and positive.")
-            selected_quadrants = tuple(bool(field.value) for field in quadrant_fields.values())
-            if not any(selected_quadrants):
-                raise ValueError("Select at least one detector quadrant.")
-            if not all(selected_quadrants) and symmetry_axis.value == "none":
-                raise ValueError("Select a symmetry axis when using only some quadrants.")
-            cmd = [sys.executable, "-m", "vmi_analysis.pes",
-                   "--abel-method", abel_method.value, "--beta-order", str(beta_order.value),
-                   "--quadrants", ",".join(name for name, active in zip(QUADRANT_ORDER, selected_quadrants) if active),
-                   "--symmetry-axis", symmetry_axis.value]
-            for path in files:
-                geometry = Geometry(**saved[path]) if path in saved else shared
-                x, y = geometry.center or ("auto", "auto")
-                cmd += ["--image", path, str(x), str(y), str(geometry.angle), str(geometry.resolution)]
-            if alpha.value is not None:
-                cmd += ["--alpha", str(alpha.value)]
-        except (OSError, TypeError, ValueError) as exc:
+            geometry = shared_geometry() if any(path not in saved for path in files) else None
+            job = spectra_job(files, geometry, saved, alpha=alpha.value, abel_method=abel_method.value,
+                              beta_order=beta_order.value, symmetry_axis=symmetry_axis.value,
+                              quadrants=[name for name, field in quadrant_fields.items() if field.value])
+            view.attach(jobs.submit(job))
+        except (OSError, TypeError, ValueError, OverflowError) as exc:
             ui.notify(str(exc), type="warning")
-            return
-        job = Job(name="PES", cmd=cmd, cwd=str(workspace_root(REPO_ROOT)), reads=files)
-        result = generated_dir(GENERATED) / f"pes-spectra-{job.id}.npz"
-        job.cmd += ["--output", str(result)]
-        job.writes.append(str(result))
-        job.extra["pes_spectra"] = str(result)
-        jobs.submit(job)
-        reset()
-        view.attach(job)
 
     def latest():
-        return next((job for job in reversed(jobs.jobs()) if job.name == "PES" and job.status == "done"
+        return next((job for job in reversed(jobs.jobs()) if job.name == JOB_NAME and job.status == "done"
                      and (path := job.extra.get("pes_spectra")) and Path(path).is_file()), None)
 
     def show_latest():
@@ -232,7 +395,7 @@ def build(jobs: JobManager) -> None:
 
     def clear():
         results = [job.extra["pes_spectra"] for job in jobs.jobs()
-                   if job.name == "PES" and "pes_spectra" in job.extra]
+                   if job.name == JOB_NAME and "pes_spectra" in job.extra]
         confirm_clear_outputs(results, "Delete generated PES spectra from this server session?",
                               on_cleared=clear_display)
 
@@ -463,6 +626,11 @@ def build(jobs: JobManager) -> None:
                 .classes("vmi-subtitle")
         ui.label("Align the symmetry axis vertically before inversion. β includes even orders up to the selected maximum.") \
             .classes("vmi-subtitle")
+        fields = {"images": images, "image_geometry": override_store, "brightest_center": automatic,
+                  "center_x": cx, "center_y": cy, "rotation": angle, "resolution": scale,
+                  "alpha": alpha, "abel_method": abel_method, "beta_order": beta_order,
+                  "symmetry_axis": symmetry_axis,
+                  **{f"quadrant_{key}": field for key, field in quadrant_fields.items()}}
         with action_bar(view, "Generate spectra", on_click=run):
             ui.button("View latest spectra", icon="insights", on_click=show_latest).props("flat")
             ui.button("Clear outputs", icon="delete", on_click=clear).props("flat color=negative").classes("vmi-action-danger")
@@ -496,31 +664,31 @@ def build(jobs: JobManager) -> None:
         for field in entry[1:]:
             field.on_value_change(save_peaks)
 
+    def fit_form():
+        values = peak_values()
+        entered = [item for item in values if item["center"] is not None or item["gaussian_fwhm"] is not None
+                   or (item["profile"] == "Voigt" and item["lorentzian_fwhm"])]
+        return {"region": [fit_low.value, fit_high.value], "targets": list(fit_targets.value or []),
+                "baseline": baseline.value, "peaks": entered,
+                "auto_profile": values[0]["profile"] if values else "Gaussian"}
+
     async def fit():
-        spectra = state["spectra"]
         try:
-            if fit_low.value is None or fit_high.value is None:
-                raise ValueError("Select a fit range or enter both endpoints.")
-            region = float(fit_low.value), float(fit_high.value)
-            if not fit_targets.value:
-                raise ValueError("Select at least one spectrum to fit.")
-            values = peak_values()
-            auto_profile = values[0]["profile"] if values else "Gaussian"
-            entered = [item for item in values if item["center"] is not None or item["gaussian_fwhm"] is not None
-                       or (item["profile"] == "Voigt" and item["lorentzian_fwhm"])]
-            if any(item["center"] is None or item["gaussian_fwhm"] is None for item in entered):
-                raise ValueError("Enter a center and Gaussian FWHM for each peak.")
-            guesses = [PeakGuess(item["profile"], float(item["center"]), float(item["gaussian_fwhm"]),
-                                 float(item["lorentzian_fwhm"] or 0)) for item in entered]
-        except (TypeError, ValueError) as exc:
+            await run_fit(_fit_settings(fit_form(), state["spectra"]))
+        except (TypeError, ValueError, OverflowError) as exc:
             ui.notify(str(exc), type="warning")
-            return
-        selected = list(fit_targets.value)
-        model = baseline.value
+
+    async def run_fit(settings):
+        if state["fit_busy"]:
+            raise ValueError("Wait for the current PES fit to finish.")
+        spectra = state["spectra"]
+        guesses = [PeakGuess(**item) for item in settings["peaks"]]
+        region, model = settings["region"], settings["baseline"]
+        auto_profile = settings["auto_profile"]
 
         def fit_selected():
             fitted, errors = {}, []
-            for name in selected:
+            for name in settings["targets"]:
                 _, x, y = spectra[name]
                 try:
                     fitted[name] = fit_peaks(x, y, region, guesses, model, auto_profile=auto_profile)
@@ -528,14 +696,17 @@ def build(jobs: JobManager) -> None:
                     errors.append(f"{name}: {exc}")
             return fitted, errors
 
+        state["fit_busy"] = True
         fit_button.disable()
         try:
             results, errors = await asyncio.to_thread(fit_selected)
         finally:
+            state["fit_busy"] = False
             fit_button.enable()
         if state["spectra"] is not spectra:
-            return
+            return {"status": "cancelled", "note": "The displayed spectra changed while the fit was running."}
         fit_display.clear()
+        rows = []
         with fit_display:
             for error in errors:
                 ui.label(error).classes("text-negative")
@@ -543,7 +714,88 @@ def build(jobs: JobManager) -> None:
                 if not guesses:
                     ui.label(f"Peak estimates detected automatically for each spectrum ({auto_profile}).") \
                         .classes("vmi-caption")
-                show_fits(results, model)
+                rows = show_fits(results, model)
+        return {"status": "done" if results else "failed", "panel": JOB_NAME, "units": state["units"],
+                "peak_table": rows, "errors": errors}
+
+    def open_fit_agent():
+        spectra = state["spectra"]
+        try:
+            initial = _fit_settings(fit_form(), spectra)
+            if state["fit_busy"]:
+                raise ValueError("Wait for the current PES fit to finish.")
+        except (TypeError, ValueError, OverflowError) as exc:
+            ui.notify(str(exc), type="warning")
+            return
+
+        def bind(parameters):
+            if (state["spectra"] is not spectra or state["fit_busy"]
+                    or fit_form()["region"] != initial["region"] or fit_form()["targets"] != initial["targets"]):
+                raise ValueError("The displayed spectra or fit selection changed. Ask the Agent again from PES.")
+            try:
+                return _fit_settings(initial | parameters, spectra)
+            except OverflowError as exc:
+                raise ValueError("Enter finite peak fit settings.") from exc
+
+        def review(_job, draft, approve, decline):
+            with fit_review, theme.panel_card():
+                theme.form_section("Agent peak fit")
+                with field_grid():
+                    low = num_input(f"Draft minimum ({state['units']})", draft["region"][0], step="any")
+                    high = num_input(f"Draft maximum ({state['units']})", draft["region"][1], step="any")
+                    base = ui.select(list(BASELINE_PARAMETERS), value=draft["baseline"],
+                                     label="Draft baseline").props("outlined dense")
+                    targets = ui.select(list(spectra), value=draft["targets"], multiple=True,
+                                        label="Draft spectra").props("outlined dense use-chips")
+                if draft["peaks"]:
+                    for peak in draft["peaks"]:
+                        width = f"{peak['gaussian_fwhm']:g} Gaussian FWHM"
+                        if peak["profile"] == "Voigt":
+                            width += f", {peak['lorentzian_fwhm']:g} Lorentzian FWHM"
+                        ui.label(f"{peak['profile']} at {peak['center']:g} · {width}").classes("vmi-caption")
+                else:
+                    ui.label(f"Detect peaks automatically with a {draft['auto_profile']} profile.").classes("vmi-caption")
+
+                async def confirm():
+                    edits = {"region": [low.value, high.value], "baseline": base.value, "targets": targets.value}
+                    try:
+                        bind(draft | edits)
+                    except (ValueError, TypeError) as exc:
+                        ui.notify(str(exc), type="warning")
+                        return
+                    await approve(edits)
+
+                with ui.row().classes("items-center gap-2"):
+                    ui.button("Approve Agent peak fit", on_click=confirm)
+                    ui.button("Decline", on_click=decline).props("flat")
+
+        async def run(draft):
+            fit_low.value, fit_high.value = draft["region"]
+            baseline.value = draft["baseline"]
+            fit_targets.value = draft["targets"]
+            peak_rows.clear()
+            peak_list.clear()
+            for guess in draft["peaks"] or [{"profile": draft["auto_profile"]}]:
+                add_peak(guess)
+            save_peaks()
+            return await run_fit(draft)
+
+        sample = {}
+        low, high = initial["region"]
+        for name in initial["targets"][:4]:
+            _, x, y = spectra[name]
+            indices = np.flatnonzero(np.isfinite(x) & np.isfinite(y) & (low <= x) & (x <= high))
+            if indices.size > 32:
+                indices = indices[np.linspace(0, len(indices) - 1, 32, dtype=int)]
+            sample[name] = np.column_stack((x[indices], y[indices])).tolist()
+        context = {"units": state["units"], "selected_region_samples_xy": sample,
+                   "spectra": {name: {"minimum": float(x[0]), "maximum": float(x[-1]), "samples": len(x)}
+                               for name, (_, x, _) in spectra.items() if len(x)},
+                   "beta_orders": state["beta_orders"]}
+        ask_agent(PanelView(panel=JOB_NAME, operation=FIT_OPERATION, label="PES peak fit selection",
+                            instruction="Use the displayed axis units and selected spectra and fit range unless the user changes them.",
+                            settings=initial, bind=bind, render_review=review, review_container=fit_review,
+                            run_interactive=run, context=context))
 
     def show_fits(results, model):
         ui.label(f"Fit coordinates in {state['units']} · unweighted least squares").classes("vmi-caption")
@@ -595,6 +847,7 @@ def build(jobs: JobManager) -> None:
 
         display.on_value_change(lambda _: redraw())
         redraw()
+        return rows
 
     with theme.panel_card() as fit_card:
         fit_card.set_visibility(False)
@@ -625,6 +878,9 @@ def build(jobs: JobManager) -> None:
         with ui.row().classes("gap-2"):
             ui.button("Add peak", icon="add", on_click=lambda: (add_peak(), save_peaks())).props("flat")
             fit_button = ui.button("Fit peaks", icon="show_chart", on_click=fit)
+            if ask_agent:
+                ui.button("Ask Agent about fit range", icon="smart_toy", on_click=open_fit_agent).props("flat")
+        fit_review = ui.column().classes("w-full")
         fit_display = ui.column().classes("w-full")
 
     with console_area:

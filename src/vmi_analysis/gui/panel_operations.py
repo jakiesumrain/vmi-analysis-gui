@@ -6,7 +6,7 @@ from vmi_analysis.ion_tof import GMD_SHIFTS
 
 from .agent_panels import PanelOperation, PanelRegistry, number
 from .jobs import Job, Stage
-from .panels import accumulate, binning, centroid, dark, gmd_map, ion_luna, ion_pipeline, ion_tof
+from .panels import accumulate, binning, calibration, centroid, circularize, dark, gmd_map, ion_luna, ion_pipeline, ion_tof, pes
 
 
 DUMP_TO_TOF = "TPX3 Dump → Ion TOF"
@@ -58,7 +58,7 @@ def _dump_to_tof(registry, jobs, params):
 
 def build_registry():
     registry = PanelRegistry()
-    for panel in (dark, gmd_map, accumulate, centroid, binning, ion_luna, ion_tof, ion_pipeline):
+    for panel in (dark, gmd_map, accumulate, centroid, binning, circularize, calibration, pes, ion_luna, ion_tof, ion_pipeline):
         for operation in panel.agent_operations():
             registry.register(operation)
     workflow = {

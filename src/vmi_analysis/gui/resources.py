@@ -152,12 +152,18 @@ def command_access(cmd, cwd=None, *, prior_outputs=()):
         read(value("--checkpoint-path")); read(value("--gmd-map-path"))
         write(value("--output-dir"))
     elif module == "vmi_analysis.circularization.circularization":
-        read(value("--input", "image.txt")); read(value("--extracted", "extracted.txt"))
-        read(value("--reassign-file"))
-        write(value("--output", "image_circularized.txt"))
-        write(value("--polar-preview"))
-        if "--no-plots" not in args:
-            write(value("--plot-dir", "trig_fit_plots"))
+        read(value("--extracted", "extracted.txt"))
+        if "--summary-only" not in args:
+            read(value("--input", "image.txt"))
+            reassignment = value("--reassign-file")
+            read(reassignment)
+            write(value("--output", "image_circularized.txt"))
+            write(value("--polar-preview"))
+            plot_dir = Path(value("--plot-dir", "trig_fit_plots"))
+            if "--no-plots" not in args:
+                write(plot_dir)
+            elif reassignment:
+                write(plot_dir / "reassignment_map.png")
     elif module == "vmi_analysis.circularization.process_gmd_bins":
         read(value("--bin-dir", str(centroid_dir() / "vmi_analysis_output_xe_j_100_sig")))
         for filename in ("extracted-FOC100eV-20260710.txt", "reassignment-FOC100eV-20260710.txt"):

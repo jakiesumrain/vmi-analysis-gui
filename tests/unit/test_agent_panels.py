@@ -21,7 +21,7 @@ from vmi_analysis.gui.panel_operations import build_registry
 from vmi_analysis.gui.jobs import Job, JobManager, ResourceBusyError
 from vmi_analysis.ion_acquisition import SCHEMA
 from vmi_analysis.gui.resources import job_access
-from vmi_analysis.gui.panels import accumulate, agent, binning, centroid, dark, gmd_map, ion_luna, ion_pipeline, ion_tof
+from vmi_analysis.gui.panels import accumulate, agent, binning, calibration, centroid, circularize, dark, gmd_map, ion_luna, ion_pipeline, ion_tof, pes
 from vmi_analysis.gui.panels.common import adopt_agent_form
 
 
@@ -358,6 +358,88 @@ class AgentPanelTests(unittest.TestCase):
         mapping.owner = "another-user"
         with self.assertRaisesRegex(ValueError, "your workspace"):
             self.registry.prepare(self.jobs, "binning", params)
+
+    def test_trig_fit_requires_a_panel_view_and_finite_band_limits(self):
+        operation = calibration.FIT_OPERATION
+        params = {"band": [4, 10, 0, 360], "n_terms": 3, "use_beta": True, "iterative": False}
+        self.assertEqual(self.registry.describe(operation)["panel"], "Trig Calibration")
+        with self.assertRaisesRegex(ValueError, "Ask Agent"):
+            self.registry.prepare(self.jobs, operation, params)
+        self.assertEqual(calibration._fit_parameters(params, max_radius=15), params)
+        with self.assertRaisesRegex(ValueError, "inside the loaded"):
+            calibration._fit_parameters(params | {"band": [4, 16, 0, 360]}, max_radius=15)
+        with self.assertRaisesRegex(ValueError, "finite numeric"):
+            calibration._fit_parameters(params | {"band": [4, float("nan"), 0, 360]}, max_radius=15)
+
+    def test_circularize_resolves_handoff_and_reserves_outputs_by_mode(self):
+        image = self.workspace / "raw.npy"
+        calibration = self.workspace / "extracted.txt"
+        reassign = self.datasets / "radial.txt"
+        for path in (image, calibration, reassign):
+            path.touch()
+        source = Job("GMD binning", status="done", owner=self.account.name,
+                     extra={"bin_2": str(image)})
+        self.jobs._jobs[source.id] = source
+        params = {"source_job_id": source.id, "bin_index": 2, "output": "/workspace/corrected.txt",
+                  "no_plots": True, "reassign_file": "/datasets/radial.txt"}
+        proposed, summary = self.registry.prepare(self.jobs, "circularize", params)
+        manual = circularize.circularize_job(calibration, inp=image, out=self.workspace / "corrected.txt",
+                                             reassign=reassign, no_plots=True)
+        self.assertEqual(proposed.extra["panel_form"], manual.extra["panel_form"])
+        self.assertEqual(summary["Center"], "Brightest pixel")
+        access = job_access(proposed)
+        self.assertEqual(access.reads, {image, calibration, reassign})
+        self.assertIn(self.workspace / "circularization/trig_fit_plots/reassignment_map.png", access.writes)
+        self.assertNotIn(self.workspace / "circularization/trig_fit_plots", access.writes)
+        self.assertNotIn("--center", proposed.cmd)
+        self.assertNotIn("--shape", proposed.cmd)
+        with self.assertRaisesRegex(ValueError, "points to the input image"):
+            self.registry.prepare(self.jobs, "circularize", params | {"output": "/workspace/raw.npy"})
+        with self.assertRaisesRegex(ValueError, "read-only"):
+            self.registry.prepare(self.jobs, "circularize", params | {"output": "/datasets/corrected.txt"})
+
+        preview, _ = self.registry.prepare(self.jobs, "circularize", {
+            "extracted": "/workspace/extracted.txt", "summary_only": True,
+        })
+        self.assertEqual(job_access(preview).reads, {calibration})
+        self.assertFalse(job_access(preview).writes)
+        self.assertNotIn("output", preview.extra)
+        source.owner = "other"
+        with self.assertRaisesRegex(ValueError, "your workspace"):
+            self.registry.prepare(self.jobs, "circularize", params)
+
+    def test_pes_agent_generation_and_contextual_fit_use_resolved_spectra(self):
+        first = self.workspace / "vmi.npy"
+        second = self.datasets / "other.txt"
+        first.touch()
+        second.touch()
+        source = Job("Circularize", status="done", owner=self.account.name, extra={"output": str(second)})
+        self.jobs._jobs[source.id] = source
+        params = {"images": ["/workspace/vmi.npy"], "source_job_id": source.id,
+                  "geometry": {"center": [4, 5], "angle": 90},
+                  "image_geometry": {"/datasets/other.txt": {"center": None, "resolution": 2}},
+                  "alpha": .002, "beta_order": 4}
+        proposed, _ = self.registry.prepare(self.jobs, "pes", params)
+        override = {"center": None, "angle": 90, "resolution": 2}
+        key = str(pes.canonical_path(second))
+        manual = pes.spectra_job([first, second], pes.Geometry((4, 5), 90), {key: override},
+                                 alpha=.002, beta_order=4)
+        self.assertEqual(proposed.cmd[:-1], manual.cmd[:-1])
+        self.assertEqual(job_access(proposed).reads, {first, second})
+        self.assertEqual(json.loads(proposed.extra["panel_form"]["image_geometry"]), {key: override})
+        with self.assertRaisesRegex(ValueError, "symmetry axis"):
+            self.registry.prepare(self.jobs, "pes", params | {"quadrants": ["ur"]})
+        source.owner = "other"
+        with self.assertRaisesRegex(ValueError, "your workspace"):
+            self.registry.prepare(self.jobs, "pes", params)
+
+        settings = {"targets": ["first"], "region": [1, 3], "baseline": "None", "peaks": [],
+                    "auto_profile": "Gaussian"}
+        with self.assertRaisesRegex(ValueError, "Ask Agent"):
+            self.registry.prepare(self.jobs, pes.FIT_OPERATION, settings)
+        self.assertEqual(pes._fit_settings(settings, {"first": None}), settings)
+        with self.assertRaisesRegex(ValueError, "displayed spectra"):
+            pes._fit_settings(settings | {"targets": ["missing"]}, {"first": None})
 
     def test_ion_pipeline_proposal_uses_manual_builder_and_workspace_paths(self):
         scan = self.datasets / "scan"

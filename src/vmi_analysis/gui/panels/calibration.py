@@ -26,6 +26,7 @@ from plotly.subplots import make_subplots
 from vmi_analysis.circularization import polar_fit as pf
 from vmi_analysis.imaging.centering import brightest_pixel
 
+from ..agent_panels import PanelOperation, PanelView, boolean, number
 from ..shared import circularization_dir, settings_store
 from .. import shared, theme
 from ..centroid_plots import _style, plot_options
@@ -38,6 +39,8 @@ from .polar_preview import (POLAR_HEIGHT, bind_percentiles, polar_controls, pola
                             render_polar_image as _render_polar_image, set_polar_source, set_polar_view)
 
 CIRC_DIR = REPO_ROOT / "circularization"
+PANEL_TITLE = "Trig Calibration"
+FIT_OPERATION = "trig_calibration_fit"
 SELECTION_SCRIPT = (files("vmi_analysis.gui.assets") / "polar_selection.js").read_text(encoding="utf-8")
 
 
@@ -305,10 +308,48 @@ def _rebuild_changes(saved_rings, blocks):
     return removed, replaced
 
 
-def build(jobs=None, *, use_calibration=None) -> None:
+def agent_operations():
+    parameters = {
+        "band": {"type": "list of four numbers", "description": "[Minimum radius, maximum radius, "
+                 "minimum angle, maximum angle], in pixels and degrees. Omit to use the selected band."},
+        "n_terms": {"type": "integer", "description": "Number of trigonometric terms"},
+        "use_beta": {"type": "boolean", "description": "Fit the intensity anisotropy parameter"},
+        "iterative": {"type": "boolean", "description": "Fit with successively higher trig orders"},
+    }
+    return (PanelOperation(FIT_OPERATION, {
+        "panel": PANEL_TITLE, "manual": PANEL_TITLE, "parameters": parameters,
+        "summary": "Fit one selected ring from the loaded processed polar image. Start from Ask Agent "
+                   "in Trig Calibration and review the fit there before accepting the ring.",
+    }, None, ()),)
+
+
+def _band_values(rect):
+    return [rect.r0, rect.r1, float(np.degrees(rect.theta0)), float(np.degrees(rect.theta1))]
+
+
+def _fit_parameters(parameters, *, max_radius):
+    if parameters.keys() - {"band", "n_terms", "use_beta", "iterative"}:
+        raise ValueError("Use the band and fit options listed for Trig Calibration.")
+    band = parameters["band"]
+    if not isinstance(band, list) or len(band) != 4:
+        raise ValueError("Provide two radius limits in pixels and two angle limits in degrees.")
+    try:
+        r0, r1, theta0, theta1 = map(number, band)
+    except OverflowError as exc:
+        raise ValueError("Use finite radius and angle limits.") from exc
+    if not 0 <= r0 < r1 <= max_radius or not 0 <= theta0 < theta1 <= 360:
+        raise ValueError("Use increasing radius and angle limits inside the loaded polar image.")
+    terms = parameters["n_terms"]
+    if (type(terms) is not int and (type(terms) is not float or not terms.is_integer())) or terms < 0:
+        raise ValueError("Enter a nonnegative whole number of trig terms.")
+    return {"band": [r0, r1, theta0, theta1], "n_terms": int(terms),
+            "use_beta": boolean(parameters["use_beta"]), "iterative": boolean(parameters["iterative"])}
+
+
+def build(jobs=None, *, use_calibration=None, ask_agent=None) -> None:
     ui.add_body_html(f"<script>{SELECTION_SCRIPT}</script>")
     theme.panel_header(
-        "Trig Calibration",
+        PANEL_TITLE,
         "Fit ring shapes in a polar VMI image and export a calibration for Circularize.")
     ui.label(
         "Drag a rectangle to select a ring band (blue) or mask interference (red). "
@@ -325,6 +366,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         "inspection": None,
         "request_id": 0,
         "request_kind": None,
+        "fit_active": False,
     }
     widgets = {}
 
@@ -504,6 +546,9 @@ def build(jobs=None, *, use_calibration=None) -> None:
                         ui.checkbox("Iterative terms", value=True),
                         "calibration.iterative")
                     fit_button = ui.button("Fit selection", icon="timeline")
+                    if ask_agent:
+                        ask_fit_button = ui.button("Ask Agent about selection", icon="smart_toy",
+                                                   on_click=lambda: _ask_fit()).props("flat").disable()
                 fit_status = ui.label("No fit yet.").classes("vmi-caption")
                 param_table = ui.table(
                     columns=[{"name": "parameter", "label": "Parameter",
@@ -514,6 +559,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         ui.label(
             "The fit uses the selected band from Processed polar, including any applied filter."
         ).classes("vmi-caption")
+        agent_fit_review = ui.column().classes("w-full")
         fit_preview = ui.column().classes("w-full")
         accept_button = ui.button("Accept ring (append to file)", icon="save").classes("self-center").disable()
 
@@ -563,6 +609,9 @@ def build(jobs=None, *, use_calibration=None) -> None:
             ui.button("Update radial model plots",
                       on_click=lambda: _update_reduction())
             send_model_button = ui.button("Send to Circularize", icon="output").props("flat")
+            if ask_agent:
+                ui.button("Ask Agent to circularize", icon="smart_toy", on_click=lambda: _ask_circularize()).props("flat")
+        agent_circularize_review = ui.column().classes("w-full")
         ui.label("Interp uses shape-preserving cubic interpolation (PCHIP).") \
             .classes("vmi-subtitle")
         model_plots = ui.column().classes("w-full")
@@ -683,6 +732,9 @@ def build(jobs=None, *, use_calibration=None) -> None:
         inspection_undo.set_enabled(bool(history) and history[-1][0] == state["band"])
         clear_band_button.set_enabled(state["band"] is not None)
         clear_masks_button.set_enabled(bool(state["masks"]))
+        if ask_agent:
+            ask_fit_button.set_enabled(state["request_kind"] is None and not state["fit_active"]
+                                       and state["band"] is not None and state["processed"] is not None)
         _update_labels()
         _update_selection_targets()
 
@@ -943,7 +995,7 @@ def build(jobs=None, *, use_calibration=None) -> None:
         return options if subpixels is None else {**options, "subpixels": subpixels}
 
     async def _fit_selection():
-        if state["request_kind"] is not None:
+        if state["request_kind"] is not None or state["fit_active"]:
             return
         if not state["ready"]:
             ui.notify("Load an image first.", type="warning")
@@ -954,7 +1006,10 @@ def build(jobs=None, *, use_calibration=None) -> None:
         if state["band"] is None:
             ui.notify("Drag a band around one ring first.", type="warning")
             return
+        state["fit_active"] = True
         fit_button.disable()
+        if ask_agent:
+            ask_fit_button.disable()
         request = state["request_id"]
         _show_fit(None)
         fit_status.text = "fitting…"
@@ -974,13 +1029,98 @@ def build(jobs=None, *, use_calibration=None) -> None:
                 _notify_error(exc)
             return
         finally:
-            if request == state["request_id"]:
-                fit_button.enable()
+            state["fit_active"] = False
+            fit_button.set_enabled(state["request_kind"] is None)
+            _update_overlay()
         if request != state["request_id"] or band != state["band"] or masks != tuple(state["masks"]):
             return
         fit.detector_geometry = geometry
         _show_fit(fit)
         _update_overlay()
+        return fit
+
+    def _ask_fit():
+        try:
+            _check_loaded_image()
+        except (OSError, ValueError) as exc:
+            _notify_error(exc)
+            return
+        band = state["band"]
+        if band is None or state["request_kind"] is not None or state["fit_active"]:
+            ui.notify("Select a ring band after processing the image.", type="warning")
+            return
+        image = state["image"]
+        revision = state["request_id"]
+        masks = tuple(state["masks"])
+        selected_band = _band_values(band)
+        settings = {
+            "band": selected_band,
+            "n_terms": int(widgets["n_terms"].value if widgets["n_terms"].value is not None else 3),
+            "use_beta": bool(widgets["beta"].value), "iterative": bool(widgets["iterative"].value),
+        }
+
+        def bind(parameters):
+            _check_loaded_image()
+            if (revision != state["request_id"] or state["request_kind"] is not None or state["fit_active"]
+                    or band != state["band"] or masks != tuple(state["masks"])):
+                raise ValueError("The processed image or selection changed. Ask the Agent again from this panel.")
+            return _fit_parameters(settings | parameters, max_radius=float(state["r"][-1]))
+
+        def review(_job, draft, approve, decline):
+            with agent_fit_review, theme.panel_card():
+                theme.form_section("Agent ring fit")
+                ui.label(f"{Path(image['path']).name} · center {tuple(image['center'])} · "
+                         f"{len(masks)} masks").classes("vmi-caption")
+                with field_grid():
+                    limits = [
+                        num_input(label, value, step="any")
+                        for label, value in zip(
+                            ("Radius min (px)", "Radius max (px)", "Angle min (°)", "Angle max (°)"), draft["band"])
+                    ]
+                    terms = num_input("Trig terms", draft["n_terms"], step=1, min=0)
+                    beta = ui.checkbox("Fit beta", value=draft["use_beta"])
+                    iterative = ui.checkbox("Iterative terms", value=draft["iterative"])
+
+                async def confirm():
+                    edits = {"band": [field.value for field in limits], "n_terms": terms.value,
+                             "use_beta": beta.value, "iterative": iterative.value}
+                    try:
+                        bind(draft | edits)
+                    except (OSError, ValueError) as exc:
+                        ui.notify(str(exc), type="warning")
+                        return
+                    await approve(edits)
+
+                with ui.row().classes("items-center gap-2"):
+                    ui.button("Approve Agent ring fit", on_click=confirm)
+                    ui.button("Decline", on_click=decline).props("flat")
+
+        async def run(draft):
+            if draft["band"] != selected_band:
+                lo, hi, first, last = draft["band"]
+                _set_selection(pf.Rect(lo, hi, float(np.radians(first)), float(np.radians(last))), list(masks))
+            widgets["n_terms"].value = draft["n_terms"]
+            widgets["beta"].value = draft["use_beta"]
+            widgets["iterative"].value = draft["iterative"]
+            fit = await _fit_selection()
+            if fit is None:
+                raise ValueError("The fit could not be applied. Check the Trig Calibration console.")
+            return {"status": "done", "panel": PANEL_TITLE, "converged": bool(fit.converged),
+                    "parameters": {key: float(value) if np.isfinite(value) else None
+                                   for key, value in fit.params.items()},
+                    "rms": float(fit.rms) if np.isfinite(fit.rms) else None,
+                    "issues": fit.export_issue(), "saved": False,
+                    "note": "Review the fitted ridge and use Accept ring to append it to the calibration file."}
+
+        ask_agent(PanelView(
+            panel=PANEL_TITLE, operation=FIT_OPERATION, label="Trig Calibration ring selection",
+            instruction="Use this processed image and its masks. Keep the selected band unless the user requests a change.",
+            settings=settings, bind=bind, render_review=review, review_container=agent_fit_review,
+            run_interactive=run,
+            context={"image": image["path"], "center_px": image["center"], "shape": image["shape"],
+                     "masks": [_band_values(rect) for rect in masks], "processing": state["options"],
+                     "radial_step_px": state["dr"]},
+        ))
 
     def _ring_rows():
         return [{"radius": f"{fit.params['r0']:.4f}", "terms": fit.n_terms,
@@ -1262,6 +1402,75 @@ def build(jobs=None, *, use_calibration=None) -> None:
                     ui.label(term["warning"]).classes("text-warning")
             for figure in _radial_model_figures(reduced):
                 ui.plotly(plot_options(figure)).classes("w-full")
+
+    async def _ask_circularize():
+        try:
+            _check_loaded_image()
+            image = state["image"]
+            if image is None:
+                raise ValueError("Load the image used to fit the accepted rings.")
+            calibration = _calibration_path()
+            text = calibration.read_text(encoding="utf-8")
+            saved = pf.parse_accepted_rings(text, source=str(calibration))
+            if warnings := _handoff_warnings(state["rings"], saved, 0):
+                raise ValueError(" ".join(warnings))
+            if any(ring.detector_geometry is not None
+                   and (tuple(ring.detector_geometry["center"]) != tuple(image["center"])
+                        or tuple(ring.detector_geometry["shape"]) != tuple(image["shape"])) for ring in saved):
+                raise ValueError("The calibration file was fitted with a different center or detector shape.")
+            source = Path(image["path"])
+            version = source.stat()
+            fingerprint = await asyncio.to_thread(lambda: _image_fingerprint(pf.load_image(source)))
+            if fingerprint != image["fingerprint"]:
+                raise ValueError("The VMI image changed on disk. Load it again before circularizing.")
+            revision = state["request_id"]
+            radial = radial_model.value
+            order = int(poly_order.value or 1)
+            settings = {"input": str(source), "extracted": str(calibration),
+                        "brightest_center": False, "center_x": image["center"][0], "center_y": image["center"][1],
+                        "radial_model": radial,
+                        "output": str(circularization_dir(CIRC_DIR) / "image_circularized.txt")}
+            if radial == "poly":
+                settings["poly_order"] = order
+
+            def bind(parameters):
+                _check_loaded_image()
+                current = source.stat()
+                if (image is not state["image"] or revision != state["request_id"]
+                        or (version.st_size, version.st_mtime_ns) != (current.st_size, current.st_mtime_ns)
+                        or calibration != _calibration_path() or calibration.read_text(encoding="utf-8") != text
+                        or radial != radial_model.value or (radial == "poly" and order != int(poly_order.value or 1))):
+                    raise ValueError("The source image, calibration, or radial model changed. Open a new handoff.")
+                if parameters.keys() - settings.keys():
+                    raise ValueError("Use the saved calibration handoff parameters.")
+                if any(key in parameters and parameters[key] != value for key, value in settings.items()
+                       if key != "output"):
+                    raise ValueError("Keep the accepted calibration, image, center, and radial model for this handoff.")
+                return settings | parameters
+
+            def review(job, _summary, approve, decline):
+                with agent_circularize_review, theme.panel_card():
+                    theme.form_section("Agent Circularize handoff")
+                    ui.label(f"{source.name} · {calibration.name} · center {tuple(image['center'])} · "
+                             f"{len(saved)} saved rings").classes("vmi-caption")
+                    output = path_input("Corrected image output", job.extra["output"], browse="save", filters=[".txt"])
+
+                    async def confirm():
+                        await approve({"output": output.value})
+
+                    with ui.row().classes("items-center gap-2"):
+                        ui.button("Approve Circularize run", on_click=confirm)
+                        ui.button("Decline", on_click=decline).props("flat")
+
+            bind({})
+        except (OSError, ValueError) as exc:
+            _notify_error(exc)
+            return
+        ask_agent(PanelView(
+            panel=PANEL_TITLE, operation="circularize", label="Accepted Trig Calibration handoff",
+            instruction="Use the verified image, calibration file, center, and radial model. Set the requested output path.",
+            settings=settings, bind=bind, render_review=review, review_container=agent_circularize_review,
+        ))
 
     def _export_to_circularize():
         try:

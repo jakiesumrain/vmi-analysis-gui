@@ -13,7 +13,7 @@ from .jobs import Job, TERMINAL
 class PanelOperation:
     id: str
     description: dict
-    prepare: Callable[..., tuple[Job, dict]]
+    prepare: Callable[..., tuple[Job, dict]] | None
     job_names: tuple[str, ...]
     artifacts: Callable[[Job], tuple[str, ...]] | None = None
     outputs: tuple[str, ...] = ()
@@ -32,6 +32,8 @@ class PanelView:
     bind: Callable[[dict], dict]
     render_review: Callable
     review_container: object
+    run_interactive: Callable | None = None
+    context: dict | None = None
 
 
 class PanelRegistry:
@@ -66,6 +68,8 @@ class PanelRegistry:
             raise ValueError("Choose a supported panel operation and its named parameters.")
         if params.keys() - spec.description["parameters"].keys():
             raise ValueError("Use only parameters listed by describe for this operation.")
+        if spec.prepare is None:
+            raise ValueError("Open the panel's Ask Agent control to propose this operation.")
         job, summary = spec.prepare(jobs, params, **options)
         if job.name not in spec.job_names:
             raise ValueError(f"Job {job.name} is not registered for {operation}.")

@@ -378,7 +378,10 @@ def index() -> None:
                             if module is circularize:
                                 use_calibration = module.build(MANAGER)
                             elif module is calibration:
-                                module.build(MANAGER, use_calibration=export_calibration)
+                                module.build(MANAGER, use_calibration=export_calibration,
+                                             ask_agent=lambda view: ask_agent(view))
+                            elif module is pes:
+                                module.build(MANAGER, ask_agent=lambda view: ask_agent(view))
                             elif name == ion_pipeline.FALLBACK_JOB_NAME:
                                 module.build(MANAGER, fallback=True)
                             elif module is agent:

@@ -88,8 +88,8 @@ The rollout groups below define the remaining coverage.
 | Rollout group | Initial coverage |
 | --- | --- |
 | Ion workflows | TPX3 Dump, Ion TOF, and Ion Pipeline. Cover dump handoff, GMD2 alignment and gating, and fit selection. |
-| Electron batch work | Dark Frame, GMD Map, Accumulate, Centroiding, and Binning share their manual job builders with the Agent. Add Circularize next. |
-| Interactive electron work | Trig Calibration and PES. Expose selected bands, fit windows, overlays, and results. |
+| Electron batch work | Dark Frame, GMD Map, Accumulate, Centroiding, Binning, and Circularize share their manual job builders with the Agent. |
+| Interactive electron work | Trig Calibration passes the loaded polar image context and selected ring band to the Agent. The panel reviews the draft, runs the same fit as the manual button, and hands accepted calibrations to Circularize. PES also shares its spectrum job builder with the Agent. The Agent reviews fit drafts against the current displayed spectra and runs the same peak fit as the manual button. |
 | Previews and streaming | Movie and Live TPX3. Expose preview controls and useful bounded summaries. Keep camera acquisition controls outside this scope. |
 | Electron Pipeline | Inventory its current behavior and agree on its workflow contract before exposing orchestration controls. |
 

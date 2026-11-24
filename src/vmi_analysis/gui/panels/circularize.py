@@ -9,13 +9,14 @@ from nicegui import ui
 from plotly.subplots import make_subplots
 from vmi_analysis.paths import validate_distinct_output
 
-from ..shared import circularization_dir, generated_dir
+from ..agent_panels import PanelOperation, boolean, number, require_completed_job, resolve_path
+from ..shared import checked_path, circularization_dir, generated_dir
 from ..centroid_plots import _heatmap, _image_axes, _style, plot_options
 from ..jobs import Job, JobManager
-from .. import theme
+from .. import shared, theme
 from ..settings import centroid_settings, output_dir
 from ..resources import canonical_path
-from .common import (GENERATED, JobView, REPO_ROOT, action_bar, check_grid,
+from .common import (GENERATED, JobView, REPO_ROOT, action_bar, adopt_agent_form, check_grid,
                      field_grid, file_url, num_input, open_folder_button,
                      path_input, persist, zoomable_image,
                      confirm_clear_outputs)
@@ -25,15 +26,212 @@ from .polar_preview import (bind_percentiles, polar_controls, polar_preview,
 CIRC_DIR = REPO_ROOT / "circularization"
 
 
+JOB_NAME = "Circularize"
+DEFAULTS = {
+    "shape_y": 1023, "shape_x": 1023, "center_x": 511.0, "center_y": 511.0,
+    "brightest_center": True, "radial_model": "interp", "poly_order": 2,
+    "interp_order": 3, "max_trig_n": 0, "polar_dr": 1.0,
+    "no_jacobian": True, "no_plots": False, "summary_only": False,
+}
+RADIAL_MODELS = ("interp", "poly")
+BOOLEAN_FIELDS = ("brightest_center", "no_jacobian", "no_plots", "summary_only")
+
+
+def _whole(value, minimum, label, maximum=None):
+    if ((type(value) is not int and (type(value) is not float or not value.is_integer()))
+            or value < minimum or (maximum is not None and value > maximum)):
+        limit = f"between {minimum} and {maximum}" if maximum is not None else f"of {minimum} or more"
+        raise ValueError(f"{label} must be a whole number {limit}.")
+    return int(value)
+
+
+def circularize_job(extracted, *, inp="", out="", reassign="", plot_dir=None, **settings):
+    cwd = circularization_dir(CIRC_DIR)
+    options = DEFAULTS | settings
+    for key in BOOLEAN_FIELDS:
+        boolean(options[key])
+    if not extracted or not str(extracted).strip():
+        raise ValueError("Choose an extracted trig-fit file.")
+    plot_dir = cwd / "trig_fit_plots" if plot_dir is None else plot_dir
+    cmd = [sys.executable, "-m", "vmi_analysis.circularization.circularization", "--extracted", str(extracted)]
+    order = _whole(options["max_trig_n"] or 0, 0, "Maximum trig order")
+    if order:
+        cmd += ["--max-trig-n", str(order)]
+
+    job = Job(JOB_NAME, cmd=cmd, cwd=str(cwd))
+    job.extra["summary_only"] = options["summary_only"]
+    if options["summary_only"]:
+        cmd.append("--summary-only")
+        job.extra["panel_form"] = {"extracted": str(extracted), "summary_only": True, "max_trig_n": order}
+        return job
+
+    if not inp or not str(inp).strip():
+        raise ValueError("Choose a VMI image.")
+    raw = Path(inp).suffix.lower() == ".npy"
+    model = options["radial_model"]
+    if model not in RADIAL_MODELS:
+        raise ValueError("Choose interpolation or polynomial radial fits.")
+    inputs = (("input image", inp), ("extracted calibration file", extracted), ("radial reassignment file", reassign))
+    if not out or not str(out).strip():
+        raise ValueError("Choose an output image file.")
+    target = validate_distinct_output(checked_path(out, write=True, cwd=cwd), inputs, cwd=cwd)
+    preview = generated_dir(GENERATED) / f"circ_{job.id}_polar.npz"
+    checked_path(preview, write=True)
+    cmd += ["--input", str(inp), "--output", str(target), "--radial-model", model,
+            "--interp-order", str(_whole(options["interp_order"], 0, "Interpolation order", 5)),
+            "--polar-preview", str(preview)]
+    if model == "poly":
+        cmd += ["--poly-order", str(_whole(options["poly_order"], 1, "Polynomial order"))]
+    if not raw:
+        shape = [_whole(options[key], 1, f"Shape {key[-1].upper()}") for key in ("shape_y", "shape_x")]
+        dr = number(options["polar_dr"])
+        if dr <= 0:
+            raise ValueError("Polar radial step must be positive.")
+        cmd += ["--shape", *map(str, shape), "--polar-dr", str(dr)]
+    if not raw or not options["brightest_center"]:
+        if options["center_x"] is None or options["center_y"] is None:
+            raise ValueError("Enter both Center X and Center Y.")
+        cmd += ["--center", *(str(number(options[key])) for key in ("center_x", "center_y"))]
+    if reassign:
+        cmd += ["--reassign-file", str(reassign)]
+    for key, flag in (("no_jacobian", "--no-jacobian"), ("no_plots", "--no-plots")):
+        if options[key]:
+            cmd.append(flag)
+    if not options["no_plots"] or reassign:
+        if not str(plot_dir).strip():
+            raise ValueError("Choose an output directory for diagnostic plots.")
+        directory = checked_path(plot_dir, write=True, cwd=cwd)
+        if directory.exists() and not directory.is_dir():
+            raise ValueError("Choose an output directory for diagnostic plots.")
+        diagnostics = _diagnostic_files(directory) if not options["no_plots"] else [directory / "reassignment_map.png"]
+        for path in diagnostics:
+            validate_distinct_output(path, (*inputs, ("corrected image", target)), cwd=cwd)
+        plot_dir = directory
+        cmd += ["--plot-dir", str(directory)]
+    job.extra.update(output=str(target), polar_preview=str(preview), plot_dir=str(plot_dir), reassignment=bool(reassign),
+                     panel_form=dict(options, inp=str(inp), out=str(target), extracted=str(extracted),
+                                     reassign=str(reassign), plot_dir=str(plot_dir), max_trig_n=order))
+    return job
+
+
+def _prepare_agent(jobs, params):
+    inputs = dict(params)
+    summary_only = boolean(inputs.get("summary_only", False))
+    source_id = inputs.pop("source_job_id", None)
+    bin_index = inputs.pop("bin_index", None)
+    source = inputs.pop("input", "")
+    if source_id is not None:
+        if source:
+            raise ValueError("Supply either input or source_job_id.")
+        parent = jobs.get(source_id) if isinstance(source_id, str) else None
+        if parent is None or parent.name not in ("Centroiding", "GMD binning"):
+            raise ValueError("Choose a Centroiding or Binning job from your workspace.")
+        parent = require_completed_job(jobs, source_id, name=parent.name)
+        if bin_index is not None and parent.name != "GMD binning":
+            raise ValueError("A bin index requires a completed Binning job.")
+        artifact = ("raw_image" if parent.name == "Centroiding" else "all_bins_image"
+                    if bin_index is None else f"bin_{_whole(bin_index, 0, 'Bin index')}")
+        source = parent.extra.get(artifact)
+        if not source:
+            raise ValueError("The completed job does not have the requested VMI image.")
+    elif bin_index is not None:
+        raise ValueError("A bin index requires a completed Binning job.")
+    if not summary_only or source:
+        source = resolve_path(source)
+        if not source.is_file() or source.suffix.lower() not in (".npy", ".txt"):
+            raise ValueError("Choose an existing VMI image (.npy or .txt).")
+    calibration = inputs.get("extracted")
+    if not calibration and source:
+        calibration = source.with_name("extracted.txt")
+    calibration = resolve_path(str(calibration) if isinstance(calibration, Path) else calibration)
+    if not calibration.is_file():
+        raise ValueError("Choose an existing extracted trig-fit file.")
+    inputs["extracted"] = calibration
+    inputs["inp"] = source
+    inputs["out"] = inputs.pop("output", "")
+    inputs["reassign"] = inputs.pop("reassign_file", "") or ""
+    for key in ("out", "plot_dir", "reassign"):
+        if inputs.get(key) or (key == "out" and not summary_only):
+            inputs[key] = resolve_path(inputs.get(key), write=key != "reassign")
+    if inputs["reassign"] and not inputs["reassign"].is_file():
+        raise ValueError("Choose an existing radial reassignment file.")
+
+    try:
+        job = circularize_job(**inputs)
+    except OverflowError as exc:
+        raise ValueError("Enter finite Circularize settings.") from exc
+    form = job.extra["panel_form"]
+    summary = {"Mode": "Calibration summary" if summary_only else "Correct radial distortion",
+               "Extracted trig-fit file": str(calibration),
+               "Maximum trig order": form["max_trig_n"] or "Automatic"}
+    if not summary_only:
+        raw = source.suffix.lower() == ".npy"
+        summary.update({
+            "VMI image": str(source),
+            "Image shape (NY, NX)": "Native NumPy shape" if raw else [form["shape_y"], form["shape_x"]],
+            "Center": "Brightest pixel" if raw and form["brightest_center"]
+                      else [form["center_x"], form["center_y"]],
+            "Polar radial step (pixels)": 1.0 if raw else form["polar_dr"],
+            "Radial model": form["radial_model"],
+            "Polynomial order": form["poly_order"] if form["radial_model"] == "poly" else None,
+            "Interpolation order": form["interp_order"],
+            "Jacobian intensity correction": not form["no_jacobian"],
+            "Radial reassignment": form["reassign"] or "Off",
+            "Trig-fit diagnostic plots": not form["no_plots"],
+            "Diagnostic output directory": job.extra["plot_dir"] if not form["no_plots"] or form["reassign"] else None,
+        })
+    return job, summary
+
+
+def agent_operations():
+    parameters = {
+        "input": {"type": "path", "description": "VMI image (.npy or .txt), alternative to source_job_id"},
+        "source_job_id": {"type": "job ID", "description": "Completed batch Centroiding or Binning job"},
+        "bin_index": {"type": "integer", "description": "Optional zero-based Binning bin. Defaults to the combined image."},
+        "extracted": {"type": "path", "description": "Trig-fit file. Defaults to extracted.txt beside the input image."},
+        "output": {"type": "path", "description": "Corrected image text file in your workspace"},
+        "plot_dir": {"type": "path", "description": "Diagnostic output directory. Defaults to circularization/trig_fit_plots."},
+        "reassign_file": {"type": "path", "description": "Optional two-column radial reassignment file"},
+    }
+    help_text = {
+        "shape_y": "Rows in a legacy text image", "shape_x": "Columns in a legacy text image",
+        "center_x": "Zero-based center column in pixels", "center_y": "Zero-based center row in pixels",
+        "brightest_center": "Use the brightest pixel as center for NumPy input",
+        "radial_model": "Model for radial dependence of the trig coefficients",
+        "poly_order": "Order used for the polynomial radial model",
+        "interp_order": "Remapping interpolation order from 0 to 5",
+        "max_trig_n": "Highest trig term to use. Zero infers it from the calibration.",
+        "polar_dr": "Radial step in pixels for legacy text input",
+        "no_jacobian": "Disable Jacobian intensity correction",
+        "no_plots": "Skip the trig-fit diagnostic plots",
+        "summary_only": "Read and summarize the calibration. An output image is unnecessary.",
+    }
+    types = {bool: "boolean", int: "integer", float: "number", str: "string"}
+    for key, value in DEFAULTS.items():
+        parameters[key] = {"type": types[type(value)], "default": value, "description": help_text[key]}
+    parameters["radial_model"]["choices"] = list(RADIAL_MODELS)
+    description = {"panel": JOB_NAME, "manual": JOB_NAME, "parameters": parameters,
+                   "summary": "Correct radial distortion in a VMI image and compare raw and corrected polar views."}
+    return (PanelOperation("circularize", description, _prepare_agent, (JOB_NAME,),
+                           outputs=("output", "polar_preview")),)
+
+
 def build(jobs: JobManager):
     def results(job):
         _results(job)
         if job.status == "done" and job.extra.get("polar_preview"):
             show_polar(job.extra["polar_preview"])
 
-    view = JobView(jobs, job_name='Circularize', results_builder=results)
+    def restore_form(job):
+        polar_data.clear()
+        polar_card.set_visibility(False)
+        for key, value in adopt_agent_form(job, "circularize").items():
+            if key in fields:
+                fields[key].value = value
+
+    view = JobView(jobs, job_name=JOB_NAME, results_builder=results, attach_builder=restore_form)
     theme.panel_header(
-        "Circularize",
+        JOB_NAME,
         "Correct radial distortion in one VMI image and compare the raw and corrected polar views.",
         view=view)
 
@@ -110,54 +308,18 @@ def build(jobs: JobManager):
         brightest_center.on_value_change(lambda _: update_geometry())
         update_geometry()
 
+        fields = dict(inp=inp, out=out, extracted=extracted, reassign=reassign, plot_dir=plot_dir,
+                      shape_y=shape_y, shape_x=shape_x, center_x=center_x, center_y=center_y,
+                      brightest_center=brightest_center, radial_model=radial_model, poly_order=poly_order,
+                      interp_order=interp_order, max_trig_n=max_trig_n, polar_dr=polar_dr,
+                      no_jacobian=no_jacobian, no_plots=no_plots, summary_only=summary_only)
+
         def run():
-            if not summary_only.value:
-                try:
-                    validate_distinct_output(out.value, (
-                        ("input image", inp.value), ("extracted calibration file", extracted.value),
-                        ("radial reassignment file", reassign.value),
-                    ), cwd=circularization_dir(CIRC_DIR))
-                except (OSError, ValueError) as exc:
-                    ui.notify(str(exc), type="warning")
-                    return
-            cmd = [sys.executable, "-m", "vmi_analysis.circularization.circularization",
-                   "--input", inp.value,
-                   "--output", out.value,
-                   "--extracted", extracted.value,
-                   "--radial-model", radial_model.value,
-                   "--interp-order", str(int(interp_order.value)),
-                   "--plot-dir", plot_dir.value]
-            if radial_model.value == "poly":
-                cmd += ["--poly-order", str(int(poly_order.value))]
-            if not raw_input():
-                cmd += ["--shape", str(int(shape_y.value)), str(int(shape_x.value)),
-                        "--polar-dr", str(polar_dr.value)]
-            if not raw_input() or not brightest_center.value:
-                if center_x.value is None or center_y.value is None:
-                    ui.notify("Enter both Center X and Center Y.", type="warning")
-                    return
-                cmd += ["--center", str(center_x.value), str(center_y.value)]
-            if max_trig_n.value:
-                cmd += ["--max-trig-n", str(int(max_trig_n.value))]
-            if reassign.value:
-                cmd += ["--reassign-file", reassign.value]
-            if no_jacobian.value:
-                cmd.append("--no-jacobian")
-            if no_plots.value:
-                cmd.append("--no-plots")
-            if summary_only.value:
-                cmd.append("--summary-only")
-            job = Job(name="Circularize", cmd=cmd, cwd=str(circularization_dir(CIRC_DIR)),
-                      extra={"output": out.value, "plot_dir": plot_dir.value,
-                             "reassignment": bool(reassign.value),
-                             "summary_only": summary_only.value})
-            if not summary_only.value:
-                preview_path = generated_dir(GENERATED) / f"circ_{job.id}_polar.npz"
-                cmd += ["--polar-preview", str(preview_path)]
-                job.extra["polar_preview"] = str(preview_path)
-            polar_data.clear()
-            polar_card.set_visibility(False)
-            view.attach(jobs.submit(job))
+            try:
+                job = circularize_job(**{key: widget.value for key, widget in fields.items()})
+                view.attach(jobs.submit(job))
+            except (OSError, ValueError, OverflowError) as exc:
+                ui.notify(str(exc), type="warning")
 
         def clear():
             if not out.value:
@@ -176,7 +338,7 @@ def build(jobs: JobManager):
                 return
             targets = [target, *diagnostics]
             for job in jobs.jobs():
-                if (job.name == "Circularize" and job.extra.get("polar_preview")
+                if (job.name == JOB_NAME and job.extra.get("polar_preview")
                         and canonical_path(job.extra["output"], job.cwd) == canonical_path(target)):
                     targets.append(job.extra["polar_preview"])
 
@@ -256,8 +418,13 @@ def _results(job: Job):
         return
     cwd = Path(job.cwd or circularization_dir(CIRC_DIR))
     out = cwd / job.extra["output"]
-    open_folder_button(out)
-    if out.exists():
+    if out.is_file():
+        with ui.row().classes("items-center gap-2"):
+            url = file_url(out)
+            ui.button("Download corrected image", icon="download",
+                      on_click=lambda: ui.download.from_url(url, filename=out.name)).props("flat")
+            if not shared.SERVER:
+                open_folder_button(out)
         try:
             figure = _corrected_figure(np.loadtxt(out, ndmin=2))
             ui.plotly(plot_options(figure)).classes("w-full max-w-4xl")
