@@ -50,6 +50,7 @@ class AgentRequest:
     datasets: Path | None = None
     additional_models: tuple[str, ...] = ()
     image_models: tuple[str, ...] = ()
+    analysis: Path | None = None
 
     @property
     def model_ids(self) -> tuple[str, ...]:
@@ -229,6 +230,8 @@ class ContainerLauncher:
         ]
         if request.datasets is not None:
             command.extend(["--volume", f"{request.datasets}:/datasets:ro"])
+        if request.analysis is not None:
+            command.extend(["--volume", f"{request.analysis}:/analysis:ro"])
         if rootless and Path(self.runtime).stem == "podman":
             command.append("--userns=keep-id")
         elif not rootless and sys.platform != "win32" and hasattr(os, "getuid"):

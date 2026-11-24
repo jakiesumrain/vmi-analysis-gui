@@ -55,8 +55,10 @@ def file_url(path) -> str:
         from urllib.parse import quote
 
         root = shared.workspace_root()
-        area = "private" if p.is_relative_to(root) else "datasets"
-        relative = p.relative_to(root if area == "private" else shared.SERVER.datasets)
+        roots = {"private": root, "analysis": shared.analysis_root(shared.current_account()),
+                 "datasets": shared.SERVER.datasets}
+        area = next(name for name, base in roots.items() if p.is_relative_to(base))
+        relative = p.relative_to(roots[area])
         return f"/workspace-file/{area}/{quote(relative.as_posix())}?t={stamp}"
     return f"{serve_dir(p.parent)}/{p.name}?t={stamp}"
 

@@ -1,19 +1,22 @@
-"""Review, run, and inspect user-directed Python analyses in a local workspace."""
+"""Review, run, and inspect user-directed Python analyses."""
 
 from collections import deque
+from contextlib import ExitStack
 from hashlib import sha256
 from importlib.metadata import PackageNotFoundError, version
 import json
+import os
 from pathlib import Path
 import platform
 import re
+import stat
 import sys
 from tempfile import NamedTemporaryFile
 
 from nicegui import ui
 
 from . import analysis_definition, shared
-from .agent_panels import PanelOperation, resolve_path
+from .agent_panels import PanelOperation, _container_path, resolve_path
 from .jobs import ACTIVE, Job
 from .panels.common import file_url, num_input, path_input
 
@@ -33,18 +36,43 @@ def _inside_workspace(path):
     return path
 
 
+def available():
+    return not shared.SERVER or sys.platform == "linux"
+
+
+def _analysis_home():
+    account = shared.current_account()
+    return (shared.analysis_root(account) if account else
+            _inside_workspace(shared.workspace_root() / ".agent" / "analysis"))
+
+
+def _record_path(path):
+    root = _analysis_home()
+    path = Path(path).resolve()
+    if not path.is_relative_to(root):
+        raise ValueError("Choose a file inside your analysis records.")
+    return path
+
+
 def _run_root():
-    return _inside_workspace(shared.workspace_root() / ".agent" / "analysis" / "runs")
+    return _record_path(_analysis_home() / "runs")
 
 
 def _panel_root():
-    return _inside_workspace(_run_root().parent / "panels")
+    return _record_path(_analysis_home() / "panels")
+
+
+def _download(path):
+    if shared.SERVER:
+        ui.download.from_url(file_url(path) + "&download=true", filename=path.name)
+    else:
+        ui.download(path)
 
 
 def _saved_panel(panel_id):
     if not isinstance(panel_id, str) or not RUN_ID.fullmatch(panel_id):
         raise ValueError("Choose a saved analysis panel ID.")
-    path = _inside_workspace(_panel_root() / f"{panel_id}.json")
+    path = _record_path(_panel_root() / f"{panel_id}.json")
     if not path.is_file() or path.stat().st_size > 512 * 1024:
         raise ValueError("This saved panel is unavailable.")
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -66,7 +94,28 @@ def _saved_panel(panel_id):
 
 def _source(path):
     with path.open("rb") as handle:
-        raw = handle.read(MAX_SCRIPT_BYTES + 1)
+        return _decode_source(handle.read(MAX_SCRIPT_BYTES + 1))
+
+
+def _workspace_source(path, root):
+    # Each component is opened relative to a directory handle. The Agent
+    # can edit the workspace but cannot redirect a host read with a symlink.
+    names = path.relative_to(root).parts
+    with ExitStack() as stack:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        directory = os.open(root, flags)
+        stack.callback(os.close, directory)
+        for name in names[:-1]:
+            directory = os.open(name, flags, dir_fd=directory)
+            stack.callback(os.close, directory)
+        fd = os.open(names[-1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory)
+        with os.fdopen(fd, "rb") as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                raise ValueError("Choose a regular Python file.")
+            return _decode_source(handle.read(MAX_SCRIPT_BYTES + 1))
+
+
+def _decode_source(raw):
     if len(raw) > MAX_SCRIPT_BYTES:
         raise ValueError("Keep Python scripts below 64 KiB.")
     try:
@@ -123,8 +172,10 @@ def _fingerprint(path):
 
 
 def prepare(jobs, params):
-    if shared.SERVER:
-        raise ValueError("Python analysis jobs are available in local mode. Shared-server execution requires an isolated worker.")
+    if not available():
+        raise ValueError("The shared analysis worker requires a Linux server.")
+    account = shared.current_account()
+    workspace = shared.workspace_root()
     if ("script" in params) == ("saved_panel" in params):
         raise ValueError("Provide either a Python script or a saved panel ID.")
     panel = None
@@ -135,11 +186,14 @@ def prepare(jobs, params):
         source = bundle["source"]
         raw = source.encode("utf-8")
     else:
-        script = _inside_workspace(resolve_path(params["script"]))
+        script = resolve_path(params["script"])
+        if not script.is_relative_to(workspace) and (not account or not script.is_relative_to(_analysis_home())):
+            raise ValueError("Choose a Python file inside this workspace.")
         if script.suffix.lower() != ".py" or not script.is_file():
             raise ValueError("Choose an existing .py file from this workspace.")
         with jobs.preview_read_access([script]):
-            raw, source = _source(script)
+            raw, source = (_workspace_source(script, workspace) if account and script.is_relative_to(workspace)
+                           else _source(script))
         if "panel_definition" in params:
             panel = analysis_definition.definition(params["panel_definition"])
     title = params.get("title", panel["title"] if panel else "Python analysis")
@@ -156,7 +210,7 @@ def prepare(jobs, params):
     for name, value in raw_inputs.items():
         if not isinstance(name, str) or not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_]{0,63}", name):
             raise ValueError("Name each input with letters, digits, or underscores, starting with a letter.")
-        path = _inside_workspace(resolve_path(value))
+        path = resolve_path(value) if account else _inside_workspace(resolve_path(value))
         if not path.is_file():
             raise ValueError(f"Input {name} must be an existing file.")
         inputs[name] = {"path": str(path), **_fingerprint(path)}
@@ -168,20 +222,28 @@ def prepare(jobs, params):
     code = folder / "script.py"
     output = folder / "outputs"
     logs = folder / "run.log"
-    job.cwd = str(shared.workspace_root())
-    job.cmd = [sys.executable, "-m", "vmi_analysis.analysis_worker", str(manifest)]
+    job.cwd = str(workspace)
     job.reads = [item["path"] for item in inputs.values()]
-    job.writes = [str(folder)]
+    worker_inputs = None
+    if account:
+        job.cmd = [sys.executable, "-m", "vmi_analysis.analysis_container", str(folder),
+                   str(workspace), str(shared.SERVER.datasets)]
+        job.request_process_stop = lambda: (folder / ".cancel").touch()
+        worker_inputs = {name: {**item, "path": _container_path(item["path"])} for name, item in inputs.items()}
+    else:
+        job.cmd = [sys.executable, "-m", "vmi_analysis.analysis_worker", str(manifest)]
+        job.writes = [str(folder)]
     job.extra.update(source_review=source, script_sha256=digest)
 
     try:
         installed_version = version("vmi-analysis-gui")
     except PackageNotFoundError:
         installed_version = "source checkout"
-    metadata = {"schema": SCHEMA, "id": job.id, "actor": "local", "title": title.strip(), "script": str(script),
-                "script_sha256": digest, "inputs": inputs, "parameters": values,
-                "runtime": {"python": platform.python_version(), "executable": sys.executable,
-                            "vmi_analysis": installed_version}}
+    runtime = ({"execution": "isolated container", "configured_image": os.environ.get("VMI_AGENT_IMAGE", "vmi-analysis-agent:latest")}
+               if account else {"execution": "local", "python": platform.python_version(), "executable": sys.executable})
+    metadata = {"schema": SCHEMA, "id": job.id, "actor": account.name if account else "local",
+                "title": title.strip(), "script": str(script), "script_sha256": digest,
+                "inputs": inputs, "parameters": values, "runtime": {**runtime, "vmi_analysis": installed_version}}
     lockfile = Path(__file__).resolve().parents[3] / "uv.lock"
     if lockfile.is_file():
         metadata["runtime"]["project_lock_sha256"] = sha256(lockfile.read_bytes()).hexdigest()
@@ -189,15 +251,20 @@ def prepare(jobs, params):
         metadata["panel"] = panel
 
     def admit(record):
-        if _inside_workspace(folder) != folder:
-            raise ValueError("The run folder changed. Prepare the analysis again.")
-        folder.mkdir(parents=True, exist_ok=False)
-        output.mkdir()
+        if folder.resolve() != folder or record.owner != (account.name if account else None):
+            raise ValueError("The run workspace changed. Prepare the analysis again.")
+        folder.mkdir(parents=True, exist_ok=False, mode=0o700)
+        output.mkdir(mode=0o700)
         code.write_bytes(raw)
         _record(manifest, {**metadata, "status": "queued", "created": record.created, "artifacts": []})
+        if account:
+            _record(folder / "worker.json", {
+                "schema": SCHEMA, "id": record.id, "title": title, "script_sha256": digest,
+                "parameters": values, "inputs": worker_inputs,
+            })
 
     def finish(record, status):
-        if (_inside_workspace(folder) != folder or any(path.is_symlink() for path in (manifest, logs, code))
+        if (folder.resolve() != folder or any(path.is_symlink() for path in (manifest, logs, code))
                 or sha256(_source(code)[0]).hexdigest() != digest):
             raise ValueError("The approved run record or Python snapshot changed.")
         lines = deque()
@@ -210,6 +277,8 @@ def prepare(jobs, params):
             lines.appendleft(data)
         _write_atomic(logs, b"".join(lines))
         artifacts, truncated = _artifact_paths(output)
+        if account and (image := folder / "worker-image.txt").is_file():
+            metadata["runtime"]["image_id"] = image.read_text(encoding="utf-8").strip()
         _record(manifest, {**metadata, "status": status, "created": record.created, "started": record.started,
                            "finished": record.finished, "returncode": record.returncode,
                            "artifacts": [path.name for path in artifacts], "artifacts_truncated": truncated})
@@ -221,7 +290,8 @@ def prepare(jobs, params):
                  "Panel declaration": panel,
                  "Inputs": {name: item["path"] for name, item in inputs.items()}, "Parameters": values,
                  "Run folder": str(folder),
-                 "Execution": "Local Python using the app environment and your local account permissions."}
+                 "Execution": ("Isolated worker with read-only inputs and no network." if account else
+                               "Local Python using the app environment and your local account permissions.")}
 
 
 def _render_source(job):
@@ -232,7 +302,7 @@ def _render_source(job):
 def operation():
     return PanelOperation("analysis_python", {
         "panel": JOB_NAME,
-        "summary": "Run a reviewed workspace Python script with the app environment in local mode. "
+        "summary": "Run a reviewed workspace Python script with the app environment. "
                    "The script receives the run manifest path as sys.argv[1]. Read inputs by alias from "
                    "manifest['inputs'][alias]['path'] and values from manifest['parameters']. "
                    "Write up to 100 generated files directly to the current output directory. "
@@ -245,7 +315,7 @@ def operation():
                                  "Provide schema, title, fields keyed by name with type (file, number, text, boolean) "
                                  "and label, and optional results keyed by filename with label and view (download or image)."},
             "title": {"type": "string", "description": "Title shown in Analysis runs"},
-            "inputs": {"type": "object", "description": "Optional map of names to local workspace files"},
+            "inputs": {"type": "object", "description": "Optional map of names to workspace files or shared datasets"},
             "parameters": {"type": "object", "description": "Optional JSON object supplied to the script"},
         },
     }, prepare, (JOB_NAME,), artifacts=lambda job: tuple(
@@ -275,7 +345,7 @@ def _history():
 
 
 def _save_panel(record, folder):
-    raw, source = _source(_inside_workspace(folder / "script.py"))
+    raw, source = _source(_record_path(folder / "script.py"))
     if sha256(raw).hexdigest() != record["script_sha256"]:
         raise ValueError("The approved Python snapshot has changed.")
     root = _panel_root()
@@ -310,7 +380,7 @@ def _open_panel(jobs, history_dialog, *, record=None, folder=None, saved_id=None
             source = record["source"]
         else:
             panel = analysis_definition.definition(record["panel"])
-            source_path = _inside_workspace(folder / "script.py")
+            source_path = _record_path(folder / "script.py")
             raw, source = _source(source_path)
             if sha256(raw).hexdigest() != record["script_sha256"]:
                 raise ValueError("The approved Python snapshot has changed.")
@@ -348,7 +418,7 @@ def _open_panel(jobs, history_dialog, *, record=None, folder=None, saved_id=None
 
     def discard():
         try:
-            _inside_workspace(folder / "draft-discarded").touch()
+            _record_path(folder / "draft-discarded").touch()
         except (OSError, ValueError) as exc:
             ui.notify(str(exc), type="warning")
             return
@@ -378,7 +448,7 @@ def _open_panel(jobs, history_dialog, *, record=None, folder=None, saved_id=None
             ui.button("Run panel", on_click=run)
             if saved_id:
                 ui.button("Download panel definition", icon="download",
-                          on_click=lambda: ui.download(source_path)).props("flat")
+                          on_click=lambda: _download(source_path)).props("flat")
             else:
                 ui.button("Save panel", on_click=save).props("flat")
                 ui.button("Discard draft", on_click=discard).props("flat")
@@ -389,7 +459,7 @@ def _open_panel(jobs, history_dialog, *, record=None, folder=None, saved_id=None
 
 def open_history(jobs, *, selected_run=None):
     """Show recent run records and live control in an Agent dialog."""
-    if shared.SERVER:
+    if not available():
         return
     with ui.context.client, ui.dialog() as dialog, ui.card().classes("w-full max-w-5xl"):
         with ui.row().classes("w-full items-center justify-between"):
@@ -420,7 +490,7 @@ def open_history(jobs, *, selected_run=None):
                 job = jobs.get(picker.value)
                 folder = records[picker.value][1]
                 try:
-                    path = _inside_workspace(folder / "run.json")
+                    path = _record_path(folder / "run.json")
                     record = json.loads(path.read_text(encoding="utf-8"))
                     state = job.status if job else record["status"]
                     if job is None and state in ACTIVE:
@@ -444,7 +514,7 @@ def open_history(jobs, *, selected_run=None):
                             for name, label in (("run.json", "Run record"), ("script.py", "Python source"), ("run.log", "Run log")):
                                 target = folder / name
                                 if target.is_file() and not target.is_symlink():
-                                    ui.button(label, icon="download", on_click=lambda target=target: ui.download(target)).props("flat")
+                                    ui.button(label, icon="download", on_click=lambda target=target: _download(target)).props("flat")
                             output = folder / "outputs"
                             artifacts = []
                             if state not in ACTIVE and not output.is_symlink():
@@ -455,7 +525,7 @@ def open_history(jobs, *, selected_run=None):
                             for artifact in artifacts:
                                 view = views.get(artifact.name, {})
                                 ui.button(view.get("label", artifact.name), icon="download",
-                                          on_click=lambda artifact=artifact: ui.download(artifact)).props("flat")
+                                          on_click=lambda artifact=artifact: _download(artifact)).props("flat")
                         if record.get("artifacts_truncated"):
                             ui.label(f"Showing {MAX_ARTIFACTS} output files.").classes("vmi-caption")
                         for artifact in artifacts:
@@ -470,7 +540,7 @@ def open_history(jobs, *, selected_run=None):
                         ui.label(str(exc)).props('role="alert"')
 
             refresh()
-            timer = ui.timer(0.5, refresh, immediate=False)
+            timer = shared.workspace_timer(0.5, refresh)
             dialog.on("hide", lambda: timer.cancel())
     dialog.on("hide", lambda: dialog.delete())
     dialog.open()

@@ -40,6 +40,14 @@ selects the person's workspace.
    if needed. Rebuild when the app or lockfile changes. Keep the runtime's
    outbound access limited to services the Agent is authorized to use.
 
+   On Linux, the same image runs approved Python analyses and saved
+   analysis panels. The job worker runs without networking or the model
+   API key. It mounts the signed-in account's files, analysis records,
+   and shared datasets read-only, and gives only that run a writable
+   output folder. Docker workers require Linux kernel 5.12 or newer for
+   recursive read-only bind mounts. Use a local container runtime on
+   the server host.
+
 4. Save a JSON file outside the shared data and workspace directories.
    Replace each sample path and password hash. Keep the file readable only by
    the service account and host administrator.

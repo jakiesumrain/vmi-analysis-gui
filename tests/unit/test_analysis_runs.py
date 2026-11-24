@@ -109,12 +109,9 @@ print("wrote result")
         self.assertEqual((replay_folder / "outputs/drift.txt").read_text(), "15")
         self.assertEqual((replay_folder / "script.py").read_bytes(), (folder / "script.py").read_bytes())
 
-    def test_shared_server_and_paths_outside_workspace_are_rejected(self):
+    def test_paths_outside_local_workspace_are_rejected(self):
         with TemporaryDirectory() as other:
             script = Path(other) / "external.py"
             script.touch()
             with self.assertRaisesRegex(ValueError, "inside this workspace"):
                 self.registry.prepare(self.jobs, "analysis_python", {"script": str(script)})
-        with patch.object(shared, "SERVER", object()):
-            with self.assertRaisesRegex(ValueError, "requires an isolated worker"):
-                self.registry.prepare(self.jobs, "analysis_python", {"script": str(self.source)})

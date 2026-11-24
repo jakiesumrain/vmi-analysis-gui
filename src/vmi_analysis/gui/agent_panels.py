@@ -184,13 +184,17 @@ def resolve_path(value, *, write=False):
             value = cwd.joinpath(*parts[2:])
         elif parts[:2] == ("/", "datasets"):
             value = shared.SERVER.datasets.joinpath(*parts[2:])
+        elif parts[:2] == ("/", "analysis"):
+            value = shared.analysis_root(shared.current_account()).joinpath(*parts[2:])
     return shared.checked_path(value, write=write, cwd=cwd)
 
 
 def _container_path(value):
     path = Path(value)
     if shared.SERVER:
-        for root, mount in ((shared.workspace_root(), "/workspace"), (shared.SERVER.datasets, "/datasets")):
+        roots = ((shared.workspace_root(), "/workspace"), (shared.SERVER.datasets, "/datasets"),
+                 (shared.analysis_root(shared.current_account()), "/analysis"))
+        for root, mount in roots:
             if path.is_relative_to(root):
                 return str(PurePosixPath(mount, *path.relative_to(root).parts))
     return value

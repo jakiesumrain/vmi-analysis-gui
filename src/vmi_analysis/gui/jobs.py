@@ -27,6 +27,7 @@ from . import shared
 TERMINAL = {"done", "failed", "cancelled"}
 ACTIVE = {"queued", "running", "waiting"}
 _PROGRESS_RE = re.compile(r"(\d{1,3})%\s*\|")
+_MANAGED_STOP_SECONDS = 42
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,7 @@ class Job:
     consume_output: Callable[[Job, str], bool] | None = field(default=None, repr=False)
     on_admit: Callable[[Job], None] | None = field(default=None, repr=False)
     on_terminal: Callable[[Job, str], None] | None = field(default=None, repr=False)
+    request_process_stop: Callable[[], None] | None = field(default=None, repr=False)
     owner: str | None = None
     checkpoint: Checkpoint | None = None
     _access: Access = field(default_factory=Access, repr=False)
@@ -254,11 +256,12 @@ class JobManager:
         self.begin_shutdown()
         with self._lock:
             workers = list(self._workers.values())
-        deadline = time.monotonic() + 15.0
+            managed = any(self._jobs[key].request_process_stop is not None for key in self._workers)
+        deadline = time.monotonic() + (_MANAGED_STOP_SECONDS + 2 if managed else 15)
         for worker in workers:
             worker.join(timeout=max(0, deadline - time.monotonic()))
             if worker.is_alive():
-                raise RuntimeError("Job process cleanup did not finish within 15 seconds")
+                raise RuntimeError("Job process cleanup did not finish before shutdown.")
 
     def _cancel_locked(self, job: Job) -> None:
         job._cancel_requested = True
@@ -298,6 +301,10 @@ class JobManager:
 
     def _terminate_tree(self, job: Job, proc: subprocess.Popen) -> None:
         try:
+            if job.request_process_stop is not None:
+                job.request_process_stop()
+                proc.wait(timeout=_MANAGED_STOP_SECONDS)
+                return
             if sys.platform == "win32":
                 # CREATE_NEW_PROCESS_GROUP alone does not make terminate() kill
                 # descendants (notably the MATLAB process launched by a script).

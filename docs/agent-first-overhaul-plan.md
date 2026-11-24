@@ -1,11 +1,10 @@
 # Agent-first overhaul plan
 
 **Current baseline** — Phase 4 supports reviewed Python analyses and
-temporary or saved analysis panels in local mode. Phase 3 added image
-messages and measurements for linked Ion TOF runs.
+temporary or saved analysis panels in local and shared Linux modes.
+Phase 3 added image messages and measurements for linked Ion TOF runs.
 
-**Next milestone** — Validate an isolated worker for shared-server Python
-analysis and temporary panels. The
+The
 [Agent-first design guide](agent-first-design.md) defines the product goals.
 
 ## Scope
@@ -158,8 +157,23 @@ a browser reload. The app runs the approved script snapshot as a job
 using its Python environment. It records the script digest, input paths
 and file timestamps, parameter values, runtime, terminal status, logs,
 and generated artifacts. Tests cover rejection of paths outside the
-workspace, cancellation, and failed scripts. Shared-server execution
-remains disabled until an isolated worker is verified in deployment.
+workspace, cancellation, and failed scripts.
+
+**Shared worker** — The app uses a fresh container from its bundled Agent
+image without a network or model credentials. The signed-in account's
+workspace, saved analyses, and shared datasets are read-only to the worker.
+The worker can write to its run's output folder. The web server keeps
+records and logs in an account-owned directory outside the Agent's
+writable workspace. Cancelling a run removes its individual container.
+
+**Verified** — Two authenticated Chromium sessions saved and ran the
+same synthetic Ion TOF peak-drift panel in separate Linux containers on
+Docker Desktop. Both measured 9 ns. Each account received 404 for the
+other account's artifacts, and cancelling Alice's run left Bob's running.
+A separate container check verified read-only mounts and disabled
+networking. The descriptor-based source reader blocked symlink
+substitution in WSL. The deployment's Linux service account and Podman
+runtime were outside this test.
 
 ## Release criteria
 

@@ -468,10 +468,11 @@ center and a fitted peak center are different measurements.
 
 \subsection{Run a Python analysis with the Agent}
 
-In local mode, ask the Agent to draft a Python script and propose it as a
-Python analysis. Read the script, inputs, and parameters in the review
-before choosing \emph{Approve and run}. The job uses the Python environment
-running VMI Analysis and runs with your local account permissions.
+Ask the Agent to draft a Python script and propose it as a Python analysis.
+Read the script, inputs, and parameters in the review before choosing
+\emph{Approve and run}. In local mode the job uses the Python environment
+and account running VMI Analysis. A shared Linux server uses the bundled
+Agent image in a separate container with networking disabled.
 
 Open \emph{Analysis runs} in the Agent header to follow the log, cancel a
 run, or download the approved script, run record, log, and output files.
@@ -486,7 +487,10 @@ to change inputs and rerun it. Choose \emph{Save panel} to keep that version
 in the workspace, or \emph{Discard draft} to remove the temporary form.
 A saved panel can be reopened from \emph{Analysis runs}. Download its panel
 definition to share the declaration and the approved script for project
-review. Python analysis jobs are currently available in local mode.
+review. On a shared server, the worker reads your workspace, your analysis
+records, and the shared datasets. Its only writable persistent folder is
+this run's output folder. Other accounts cannot open your analysis records
+or cancel your runs.
 
 \subsection{Server lifecycle, ports and reconnecting}
 \label{sec:lifecycle}

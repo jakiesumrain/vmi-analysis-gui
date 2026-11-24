@@ -94,8 +94,11 @@ def _attachment_reference(value, *, container):
     workspace = shared.workspace_root()
     if path.is_relative_to(workspace):
         return str(PurePosixPath("/workspace", *path.relative_to(workspace).parts))
-    if shared.SERVER and path.is_relative_to(shared.SERVER.datasets):
-        return str(PurePosixPath("/datasets", *path.relative_to(shared.SERVER.datasets).parts))
+    if shared.SERVER:
+        for root, mount in ((shared.SERVER.datasets, "/datasets"),
+                            (shared.analysis_root(shared.current_account()), "/analysis")):
+            if path.is_relative_to(root):
+                return str(PurePosixPath(mount, *path.relative_to(root).parts))
     raise ValueError("Choose an attachment inside the Agent workspace.")
 
 
@@ -112,7 +115,7 @@ def _build_page(jobs, *, registry, navigate):
 
     def place_connection():
         nonlocal connection_button
-        if not shared.SERVER:
+        if analysis_runs.available():
             ui.button("Analysis runs", icon="folder_open", on_click=lambda: analysis_runs.open_history(jobs)) \
                 .props("flat dense no-caps")
         connection_button = ui.button("Connection", icon="tune").props(
@@ -757,6 +760,7 @@ def _build_page(jobs, *, registry, navigate):
             workspace=shared.workspace_root(),
             config_root=account.root.parent / ".agent" if account else GENERATED_DIR / "agent",
             datasets=shared.SERVER.datasets if shared.SERVER else None,
+            analysis=shared.analysis_root(account) if account else None,
             base_url=base_url.value.strip(),
             model=selected,
             additional_models=tuple(item for item in models if item != selected),

@@ -109,6 +109,8 @@ class SharedServerTests(unittest.TestCase):
         self.addCleanup(setattr, shared, "SERVER", self.server)
         (server.accounts["alice"].root / "preview.txt").write_text("alice", encoding="utf-8")
         (self.datasets / "raw.txt").write_text("shared", encoding="utf-8")
+        protected = shared.analysis_root(server.accounts["alice"]) / "run.log"
+        protected.write_text("alice analysis", encoding="utf-8")
         alice = TestClient(web, base_url="http://127.0.0.1:13517")
         bob = TestClient(web, base_url="http://127.0.0.1:13517")
         private = "/workspace-file/private/preview.txt"
@@ -127,6 +129,11 @@ class SharedServerTests(unittest.TestCase):
         self.assertEqual(result.text, "alice")
         self.assertEqual(result.headers["content-disposition"], 'attachment; filename="preview.txt"')
         self.assertEqual(bob.get(download).status_code, 404)
+        analysis = "/workspace-file/analysis/run.log?download=true"
+        self.assertEqual(alice.get(analysis).text, "alice analysis")
+        self.assertEqual(bob.get(analysis).status_code, 404)
+        other_analysis = "/workspace-file/analysis/%2E%2E/%2E%2E/alice/analysis/run.log"
+        self.assertEqual(bob.get(other_analysis).status_code, 404)
         self.assertEqual(alice.get("/workspace-file/datasets/raw.txt?download=true").status_code, 404)
         self.assertEqual(bob.get("/workspace-file/private/%2E%2E/%2E%2E/alice/files/preview.txt?download=true").status_code,
                          404)
