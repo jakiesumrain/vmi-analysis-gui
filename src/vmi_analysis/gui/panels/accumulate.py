@@ -9,10 +9,13 @@ from operator import not_
 from pathlib import Path
 
 import numpy as np
+
 from vmi_analysis.paths import validate_distinct_output
 from nicegui import ui
 from plotly.colors import get_colorscale
 
+from ..agent_panels import PanelOperation, boolean, number, resolve_path
+from .. import shared
 from ..shared import WorkspaceDenied, checked_path, generated_dir, workspace_root
 from ..accumulate_plot import (ACCUMULATE_HEIGHT, COLORMAPS,
                                FRAME_HISTOGRAM_HEIGHT, accumulation_figure,
@@ -22,10 +25,148 @@ from ..frame_preview import (average_raw_frames, list_raw_frames, load_raw_frame
                              pick_frame, subtract_dark)
 from ..jobs import Job, JobManager, ResourceBusyError
 from .. import theme
-from .common import (GENERATED, JobView, REPO_ROOT, action_bar, check_grid,
+from .common import (GENERATED, JobView, REPO_ROOT, action_bar, adopt_agent_form, check_grid,
                      field_grid, file_url, num_input, open_folder_button,
                      path_input, persist, zoomable_image,
                      confirm_clear_outputs)
+
+
+JOB_NAME = "Accumulate"
+PANEL_TITLE = "Fast Accumulate"
+DEFAULTS = {
+    "im_threshold": 5, "do_denoise": True, "simple_sum": False, "max_workers": 6, "frame_limit": 0,
+    "enable_gmd": False, "gmd_w_min": 0.0, "gmd_w_max": 4.0,
+}
+
+
+def _whole_number(value, minimum, label):
+    if ((type(value) is not int and (type(value) is not float or not value.is_integer()))
+            or value < minimum):
+        raise ValueError(f"{label} must be a whole number of {minimum} or more.")
+    return int(value)
+
+
+def accumulate_job(h5_dir, output_path, *, dark_path=None, gmd_map_path=None, reuse_existing=True, **settings):
+    cwd = workspace_root(REPO_ROOT)
+    options = DEFAULTS | settings
+    for key in ("simple_sum", "do_denoise", "enable_gmd"):
+        options[key] = boolean(options[key])
+    frame_limit = _whole_number(0 if options["frame_limit"] is None else options["frame_limit"], 0, "Frame limit")
+    workers = _whole_number(1 if options["max_workers"] is None else options["max_workers"], 1, "Workers")
+    if not h5_dir or not str(h5_dir).strip():
+        raise ValueError("Choose an HDF5 directory.")
+    if not output_path or not str(output_path).strip():
+        raise ValueError("Choose an output image file.")
+    source = checked_path(h5_dir, cwd=cwd)
+    output = checked_path(output_path, write=True, cwd=cwd)
+    png = output.with_suffix(".png")
+    if output == png:
+        raise ValueError("Choose an output path for the image text file, such as accumulated_result.txt.")
+    checked_path(png, write=True, cwd=cwd)
+    if not reuse_existing and (os.path.lexists(output) or os.path.lexists(png)):
+        raise ValueError("The output image or PNG already exists. Choose a new output path or request reuse.")
+    if not output.is_file() and not source.is_dir():
+        raise ValueError("Choose an existing HDF5 directory.")
+    dark = checked_path(dark_path, cwd=cwd) if dark_path else None
+    requested_map = gmd_map_path if gmd_map_path is not None else cwd / "gmd_map_all.txt"
+    gmd = checked_path(requested_map, cwd=cwd) if requested_map and options["enable_gmd"] else None
+    if not output.is_file():
+        if dark is not None and not dark.is_file():
+            raise ValueError("Choose an existing dark frame .npy file or leave the field blank.")
+        if options["enable_gmd"] and (gmd is None or not gmd.is_file()):
+            raise ValueError("Choose an existing GMD map for GMD weighting.")
+    inputs = (("HDF5 directory", source), ("dark frame", dark), ("GMD map", gmd))
+    validate_distinct_output(output, (*inputs, ("PNG output", png)), output_label="accumulated image output")
+    validate_distinct_output(png, inputs, output_label="accumulation PNG output")
+    if options["enable_gmd"]:
+        low, high = map(number, (options["gmd_w_min"], options["gmd_w_max"]))
+        if min(low, high) < 0 or (high and low > high):
+            raise ValueError("Enter nonnegative GMD weight limits in increasing order. Zero disables a limit.")
+    if not options["simple_sum"]:
+        number(options["im_threshold"])
+
+    job = Job(JOB_NAME, cwd=str(cwd))
+    live = generated_dir(GENERATED) / f"accum_live_{job.id}.npy"
+    job.cmd = [sys.executable, "-m", "vmi_analysis.imaging.h5_accumulate_fast_gmd",
+               "--h5-dir", str(source), "--output-path", str(output), "--max-workers", str(workers),
+               "--frame-limit", str(frame_limit), "--no-show", "--live-path", str(live)]
+    if not reuse_existing:
+        job.cmd.append("--require-new-output")
+    if dark is not None:
+        job.cmd.extend(["--dark-path", str(dark)])
+    if options["simple_sum"]:
+        job.cmd.append("--simple-sum")
+    else:
+        job.cmd.extend(["--im-threshold", str(options["im_threshold"]),
+                        "--do-denoise" if options["do_denoise"] else "--no-do-denoise"])
+    if options["enable_gmd"]:
+        job.cmd.extend(["--enable-gmd", "--gmd-map-path", str(gmd) if gmd is not None else "",
+                        "--gmd-w-min", str(low), "--gmd-w-max", str(high)])
+    job.extra.update(output_path=str(output), plot_png=str(png), live_path=str(live),
+                     panel_form=dict(options, h5_dir=str(source), output_path=str(output),
+                                     frame_limit=frame_limit, max_workers=workers,
+                                     dark_path=str(dark) if dark is not None else "",
+                                     gmd_map_path=str(gmd or requested_map)))
+    return job
+
+
+def _prepare_agent(_jobs, params):
+    inputs = dict(params)
+    reuse = boolean(inputs.pop("reuse_existing", False))
+    inputs["h5_dir"] = resolve_path(inputs.get("h5_dir"))
+    inputs["output_path"] = resolve_path(inputs.get("output_path"), write=True)
+    for key in ("dark_path", "gmd_map_path"):
+        if inputs.get(key):
+            inputs[key] = resolve_path(inputs[key])
+        elif key in inputs and inputs[key] not in ("", None):
+            raise ValueError("Enter a path or leave the optional input blank.")
+    job = accumulate_job(**inputs, reuse_existing=reuse)
+    form = job.extra["panel_form"]
+    summary = {
+        "HDF5 directory": form["h5_dir"],
+        "Existing image policy": "Reuse the saved matrix if present. The calculation settings apply to new images."
+                                 if reuse else "Calculate a new image.",
+        "Frame limit": form["frame_limit"] or "All frames",
+        "Workers": form["max_workers"],
+        "Mode": "Simple sum" if form["simple_sum"] else "Thresholded accumulation",
+        "Threshold": None if form["simple_sum"] else form["im_threshold"],
+        "Denoise": None if form["simple_sum"] else form["do_denoise"],
+        "Dark frame": form["dark_path"] or "Off",
+        "GMD weighting": "On" if form["enable_gmd"] else "Off",
+        "GMD map": form["gmd_map_path"] if form["enable_gmd"] else None,
+        "GMD weight limits (zero = unbounded)": [form["gmd_w_min"], form["gmd_w_max"]] if form["enable_gmd"] else None,
+    }
+    return job, summary
+
+
+def agent_operations():
+    parameters = {
+        "h5_dir": {"type": "path", "description": "Directory containing camera HDF5 files"},
+        "output_path": {"type": "path", "description": "Text file for the accumulated matrix"},
+        "simple_sum": {"type": "boolean", "description": "Skip thresholding and denoising"},
+        "im_threshold": {"type": "number", "unit": "counts"},
+        "do_denoise": {"type": "boolean", "description": "Apply a 2 × 2 morphological opening"},
+        "max_workers": {"type": "integer", "description": "Maximum number of subprocess workers"},
+        "frame_limit": {"type": "integer", "description": "Zero uses all frames. Positive limits use file order."},
+        "dark_path": {"type": "path", "description": "Optional precomputed dark frame (.npy)"},
+        "enable_gmd": {"type": "boolean", "description": "Weight frames by mean GMD divided by frame GMD"},
+        "gmd_map_path": {"type": "path", "description": "When weighting is enabled, defaults to gmd_map_all.txt in the workspace"},
+        "gmd_w_min": {"type": "number", "description": "Minimum accepted weight. Zero disables this limit."},
+        "gmd_w_max": {"type": "number", "description": "Maximum accepted weight. Zero disables this limit."},
+        "reuse_existing": {"type": "boolean", "default": False,
+                           "description": "Allow replotting a saved matrix with the same frame limit"},
+    }
+    for key, value in DEFAULTS.items():
+        parameters[key]["default"] = value
+    description = {
+        "panel": PANEL_TITLE,
+        "summary": "Sum camera frames into one image with optional thresholding, denoising, dark subtraction, "
+                   "and GMD weighting.",
+        "parameters": parameters,
+        "manual": PANEL_TITLE,
+    }
+    return (PanelOperation("accumulate", description, _prepare_agent, (JOB_NAME,),
+                           outputs=("output_path", "plot_png")),)
 
 
 def build(jobs: JobManager) -> None:
@@ -60,9 +201,17 @@ def build(jobs: JobManager) -> None:
                 view.log.push(f"[gui] Could not remove live preview: {exc}")
         _results(job)
 
-    view = JobView(jobs, job_name='Accumulate', results_builder=finished, live_builder=_live)
+    def restore_form(job):
+        live_state["stamp"] = 0.0
+        live_area.visible = False
+        for key, value in adopt_agent_form(job, "accumulate").items():
+            if key in fields:
+                fields[key].value = value
+
+    view = JobView(jobs, job_name=JOB_NAME, results_builder=finished, live_builder=_live,
+                   attach_builder=restore_form)
     theme.panel_header(
-        "Fast Accumulate",
+        PANEL_TITLE,
         "Sum camera frames into one image with optional thresholding, denoising, and GMD weighting.",
         view=view)
 
@@ -76,18 +225,18 @@ def build(jobs: JobManager) -> None:
             default_name="accumulated_result.txt",
             placeholder="accumulated_result.txt"), "accumulate.output_path")
         with field_grid(3):
-            im_threshold = persist(num_input("Threshold", 5, step=1),
+            im_threshold = persist(num_input("Threshold", DEFAULTS["im_threshold"], step=1),
                                    "accumulate.im_threshold")
-            max_workers = persist(num_input("Workers", 6, step=1),
+            max_workers = persist(num_input("Workers", DEFAULTS["max_workers"], step=1),
                                   "accumulate.max_workers")
-            frame_limit = persist(num_input("Frame limit (0 = all)", 0, min=0, step=1),
+            frame_limit = persist(num_input("Frame limit (0 = all)", DEFAULTS["frame_limit"], min=0, step=1),
                                   "accumulate.frame_limit")
         with check_grid():
             do_denoise = persist(ui.checkbox("Denoise (2×2 opening)",
-                                             value=True),
+                                             value=DEFAULTS["do_denoise"]),
                                  "accumulate.do_denoise")
             simple_sum = persist(ui.checkbox("Simple sum (no threshold)",
-                                             value=False),
+                                             value=DEFAULTS["simple_sum"]),
                                  "accumulate.simple_sum")
             im_threshold.bind_enabled_from(simple_sum, "value", not_)
             do_denoise.bind_enabled_from(simple_sum, "value", not_)
@@ -203,50 +352,28 @@ def build(jobs: JobManager) -> None:
         frame_button.on_click(partial(show_histogram, False))
         average_button.on_click(partial(show_histogram, True))
         with check_grid():
-            enable_gmd = persist(ui.checkbox("GMD weighting", value=False),
+            enable_gmd = persist(ui.checkbox("GMD weighting", value=DEFAULTS["enable_gmd"]),
                                  "accumulate.enable_gmd")
         gmd_map_path = persist(path_input(
             "GMD map file", str(workspace_root(REPO_ROOT) / "gmd_map_all.txt"),
             browse="file", filters=[".txt"]), "accumulate.gmd_map_path")
         with field_grid():
-            gmd_w_min = persist(num_input("Weight min", 0.0, step=0.5),
+            gmd_w_min = persist(num_input("Weight min", DEFAULTS["gmd_w_min"], step=0.5),
                                 "accumulate.gmd_w_min")
-            gmd_w_max = persist(num_input("Weight max", 4.0, step=0.5),
+            gmd_w_max = persist(num_input("Weight max", DEFAULTS["gmd_w_max"], step=0.5),
                                 "accumulate.gmd_w_max")
 
+        fields = dict(h5_dir=h5_dir, output_path=output_path, im_threshold=im_threshold,
+                      max_workers=max_workers, frame_limit=frame_limit, do_denoise=do_denoise,
+                      simple_sum=simple_sum, dark_path=dark_path, enable_gmd=enable_gmd,
+                      gmd_map_path=gmd_map_path, gmd_w_min=gmd_w_min, gmd_w_max=gmd_w_max)
+
         def run():
-            limit = frame_limit.value or 0
-            if not np.isfinite(limit) or limit < 0 or limit != int(limit):
-                ui.notify("Frame limit must be zero or a positive integer.", type="negative")
-                return
-            job_id_hint = str(time.time_ns())[-8:]
-            live_path = generated_dir(GENERATED) / f"accum_live_{job_id_hint}.npy"
-            if live_path.exists():
-                live_path.unlink()
-            live_state["stamp"] = 0.0
-            live_area.visible = False
-            cmd = [sys.executable, "-m", "vmi_analysis.imaging.h5_accumulate_fast_gmd",
-                   "--h5-dir", h5_dir.value,
-                   "--output-path", output_path.value,
-                   "--max-workers", str(int(max_workers.value or 1)),
-                   "--frame-limit", str(int(limit)),
-                   "--gmd-map-path", gmd_map_path.value,
-                   "--gmd-w-min", str(gmd_w_min.value),
-                   "--gmd-w-max", str(gmd_w_max.value),
-                   "--dark-path", dark_path.value,
-                   "--no-show",
-                   "--live-path", str(live_path)]
-            if simple_sum.value:
-                cmd.append("--simple-sum")
-            else:
-                cmd.extend(["--im-threshold", str(im_threshold.value)])
-                cmd.append("--do-denoise" if do_denoise.value else "--no-do-denoise")
-            if enable_gmd.value:
-                cmd.append("--enable-gmd")
-            job = jobs.submit(Job(name="Accumulate", cmd=cmd, cwd=str(workspace_root(REPO_ROOT)),
-                                  extra={"live_path": str(live_path),
-                                         "output_path": output_path.value}))
-            view.attach(job)
+            try:
+                job = accumulate_job(**{key: widget.value for key, widget in fields.items()})
+                view.attach(jobs.submit(job))
+            except (OSError, ValueError, OverflowError) as exc:
+                ui.notify(str(exc), type="warning")
 
         def show_saved():
             if view.job and view.job.status in ("running", "queued"):
@@ -287,7 +414,7 @@ def _clear_output(output_path, view, inputs) -> None:
         ui.notify(str(exc), type="warning")
         return
     for job in view.jobs.jobs():
-        if (job.name == "Accumulate" and job.extra.get("live_path")
+        if (job.name == JOB_NAME and job.extra.get("live_path")
                 and (Path(job.cwd or workspace_root(REPO_ROOT)) / job.extra["output_path"]).resolve() == target.resolve()):
             targets.append(Path(job.extra["live_path"]))
     confirm_clear_outputs(targets, "Delete accumulated outputs?", on_cleared=view.clear_results)
@@ -334,7 +461,12 @@ def _result_file(out: str):
         return
     if Path(out).is_file():
         ui.label(f"Result: {out}").classes("vmi-subtitle")
-        open_folder_button(out)
+        with ui.row().classes("items-center gap-2"):
+            matrix_url = file_url(out)
+            ui.button("Download image matrix", icon="download",
+                      on_click=lambda: ui.download.from_url(matrix_url, filename=out.name)).props("flat")
+            if not shared.SERVER:
+                open_folder_button(out)
         try:
             figure = accumulation_figure(np.loadtxt(out))
             ui.label("Drag to zoom; wheel to zoom; use Pan to move; double-click to reset. Hover for original counts.") \
@@ -346,4 +478,7 @@ def _result_file(out: str):
         ui.label("No saved Accumulate result found at this path.").classes("vmi-subtitle")
     if Path(png).is_file():
         with ui.expansion("Saved PNG", icon="image").classes("w-full"):
-            zoomable_image(file_url(png)).classes("w-full max-w-4xl")
+            url = file_url(png)
+            ui.button("Download PNG", icon="download",
+                      on_click=lambda: ui.download.from_url(url, filename=png.name)).props("flat")
+            zoomable_image(url).classes("w-full max-w-4xl")

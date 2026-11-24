@@ -54,6 +54,17 @@ class GmdMapPatternTests(unittest.TestCase):
         self.assertIn("No frames found", str(raised.exception))
         self.assertFalse(self.output.exists())
 
+    def test_output_cannot_overwrite_timestamp_source_or_unselected_camera_file(self):
+        before = self.gmd_path.read_bytes()
+        with self.assertRaisesRegex(SystemExit, "GMD timestamp file"):
+            build_gmd_map.main(self.h5_dir, self.gmd_path, self.gmd_path, 0, "*RAW-*.h5")
+        self.assertEqual(self.gmd_path.read_bytes(), before)
+        camera = sorted(self.h5_dir.glob("*RAW-*.h5"))[-1]
+        before = camera.read_bytes()
+        with self.assertRaisesRegex(SystemExit, "HDF5 input"):
+            build_gmd_map.main(self.h5_dir, self.gmd_path, camera, 1, "*RAW-*.h5")
+        self.assertEqual(camera.read_bytes(), before)
+
     def test_rejects_path_patterns_before_reading_or_writing(self):
         self.output.write_text("existing map", encoding="utf-8")
         for pattern in ("../*.h5", r"..\*.h5", "sub/*.h5", "/tmp/*.h5", r"C:\data\*.h5", "C:*.h5", ".."):

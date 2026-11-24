@@ -383,15 +383,19 @@ class GuiSubmissionTests(unittest.TestCase):
 
     def test_gmd_map_form_submits_hdf5_pattern(self):
         from vmi_analysis.gui.panels import gmd_map
-        store = {MIGRATED_KEY: True,
-                 "gmd_map.h5_dir": "chosen data",
-                 "gmd_map.h5_pattern": "*RAW-*.h5",
-                 "gmd_map.gmd_path": "gmd.txt",
-                 "gmd_map.output_path": "map.txt",
-                 "gmd_map.n_files": 0}
-        job = self.submit_form(gmd_map, store)
-        self.assertEqual(job.cmd[job.cmd.index("--h5-dir") + 1], "chosen data")
-        self.assertEqual(job.cmd[job.cmd.index("--h5-pattern") + 1], "*RAW-*.h5")
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            (root / "chosen data").mkdir()
+            (root / "gmd.txt").touch()
+            store = {MIGRATED_KEY: True,
+                     "gmd_map.h5_dir": str(root / "chosen data"),
+                     "gmd_map.h5_pattern": "*RAW-*.h5",
+                     "gmd_map.gmd_path": str(root / "gmd.txt"),
+                     "gmd_map.output_path": str(root / "map.txt"),
+                     "gmd_map.n_files": 0}
+            job = self.submit_form(gmd_map, store)
+            self.assertEqual(job.cmd[job.cmd.index("--h5-dir") + 1], store["gmd_map.h5_dir"])
+            self.assertEqual(job.cmd[job.cmd.index("--h5-pattern") + 1], "*RAW-*.h5")
 
     def test_pipeline_overrides_stale_dataset_map_and_tuning_mode(self):
         from vmi_analysis.gui.panels import pipeline

@@ -21,7 +21,7 @@ from vmi_analysis.gui.panel_operations import build_registry
 from vmi_analysis.gui.jobs import Job, JobManager, ResourceBusyError
 from vmi_analysis.ion_acquisition import SCHEMA
 from vmi_analysis.gui.resources import job_access
-from vmi_analysis.gui.panels import agent, dark, ion_luna, ion_pipeline, ion_tof
+from vmi_analysis.gui.panels import accumulate, agent, dark, gmd_map, ion_luna, ion_pipeline, ion_tof
 from vmi_analysis.gui.panels.common import adopt_agent_form
 
 
@@ -209,6 +209,71 @@ class AgentPanelTests(unittest.TestCase):
             self.registry.prepare(self.jobs, "ion_tof", {"input": "missing.h5", "pending_input": True})
         with self.assertRaisesRegex(ValueError, "does not exist"):
             self.registry.prepare(self.jobs, "ion_tof", {"input": "missing.h5"})
+
+    def test_gmd_map_proposal_uses_the_manual_builder_and_preserves_reservations(self):
+        camera = self.datasets / "camera"
+        camera.mkdir()
+        gmd = self.datasets / "current-time-both.txt"
+        gmd.touch()
+        settings = {"h5_dir": "/datasets/camera", "gmd_path": "/datasets/current-time-both.txt",
+                    "h5_pattern": "*RAW-*.h5", "n_files": 2}
+        proposed, summary = self.registry.prepare(self.jobs, "gmd_map", settings)
+        manual = gmd_map.gmd_map_job(camera, gmd, h5_pattern="*RAW-*.h5", n_files=2)
+        output = self.workspace / "gmd_map_all.txt"
+        self.assertEqual(proposed.cmd, manual.cmd)
+        self.assertEqual(summary["Output path output"], str(output))
+        access = job_access(proposed)
+        self.assertEqual(access.reads, {camera, gmd})
+        self.assertEqual(access.writes, {output})
+        self.assertEqual(access.gmd_map_output, output)
+        self.assertEqual(self.jobs.jobs(), [])
+        for invalid, message in (
+            ({"h5_pattern": "../*.h5"}, "filename pattern"),
+            ({"n_files": 2.5}, "whole file count"),
+            ({"output_path": "/datasets/map.txt"}, "read-only"),
+        ):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, message):
+                self.registry.prepare(self.jobs, "gmd_map", settings | invalid)
+
+    def test_accumulate_proposal_uses_the_manual_builder_and_reserves_artifacts(self):
+        camera = self.datasets / "camera"
+        camera.mkdir()
+        dark_frame = self.workspace / "dark.npy"
+        dark_frame.touch()
+        gmd = self.workspace / "gmd.txt"
+        gmd.touch()
+        settings = {
+            "h5_dir": "/datasets/camera", "output_path": "/workspace/sum.txt",
+            "dark_path": "/workspace/dark.npy", "enable_gmd": True, "gmd_map_path": "/workspace/gmd.txt",
+            "frame_limit": 3, "simple_sum": True, "max_workers": 2,
+        }
+        proposed, _ = self.registry.prepare(self.jobs, "accumulate", settings)
+        output = self.workspace / "sum.txt"
+        manual = accumulate.accumulate_job(camera, output, dark_path=dark_frame, enable_gmd=True,
+                                           gmd_map_path=gmd, frame_limit=3, simple_sum=True, max_workers=2)
+        self.assertEqual(proposed.extra["panel_form"], manual.extra["panel_form"])
+        self.assertEqual(proposed.extra["plot_png"], str(output.with_suffix(".png")))
+        self.assertIn("--require-new-output", proposed.cmd)
+        self.assertIn("--simple-sum", proposed.cmd)
+        self.assertNotIn("--im-threshold", proposed.cmd)
+        access = job_access(proposed)
+        self.assertEqual(access.reads, {camera, dark_frame, gmd})
+        self.assertEqual(access.writes, {output, output.with_suffix(".png"), Path(proposed.extra["live_path"])})
+        self.assertEqual(self.jobs.jobs(), [])
+        for change, message in (
+            ({"enable_gmd": False, "output_path": "/workspace/gmd.png"}, "text file"),
+            ({"frame_limit": 1.5}, "whole number"),
+            ({"dark_path": "/workspace/missing.npy"}, "existing dark frame"),
+            ({"gmd_w_min": 8, "gmd_w_max": 2}, "in increasing order"),
+            ({"output_path": "/datasets/other.txt"}, "read-only"),
+        ):
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, message):
+                self.registry.prepare(self.jobs, "accumulate", settings | change)
+        output.with_suffix(".png").touch()
+        with self.assertRaisesRegex(ValueError, "PNG already exists"):
+            self.registry.prepare(self.jobs, "accumulate", settings)
+        reused, _ = self.registry.prepare(self.jobs, "accumulate", settings | {"reuse_existing": True})
+        self.assertNotIn("--require-new-output", reused.cmd)
 
     def test_ion_pipeline_proposal_uses_manual_builder_and_workspace_paths(self):
         scan = self.datasets / "scan"
