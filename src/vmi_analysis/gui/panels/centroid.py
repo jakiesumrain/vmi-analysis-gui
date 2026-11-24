@@ -1,5 +1,7 @@
 """Panel: Picasso centroiding with saved fields and explicit CLI inputs."""
 
+from math import isfinite
+import os
 import sys
 from operator import not_
 from pathlib import Path
@@ -7,21 +9,30 @@ from pathlib import Path
 from nicegui import ui
 from plotly.colors import get_colorscale
 from vmi_analysis.paths import validate_distinct_output
-from vmi_analysis.centroiding.options import centroid_cli_args, section as _section, validate_settings
+from vmi_analysis.centroiding.options import (
+    centroid_cli_args, load_settings, options, section as _section, validate_settings,
+)
+from vmi_analysis.gmd.build_gmd_map import validate_h5_pattern
 from vmi_analysis.centroiding.plot_data import (ABEL_IMAGE, RAW_IMAGE, SPECTRUM_CSV,
                                                 SUMMARY_DATA, SUMMARY_PNG, TUNING_DATA, TUNING_PNG)
 
+from ..agent_panels import PanelOperation, boolean, resolve_path
 from ..shared import centroid_dir, checked_path, settings_store
 from ..jobs import Job, JobManager
 from .. import theme
 from ..centroid_plots import (COLORMAPS, PLOT_HEIGHT, RESULT_COLORMAP_DEFAULTS,
                               linear_axis_limits, tuning_figure, summary_figure, plot_options)
 from ..settings import centroid_settings, storage_key, output_dir as _output_dir
-from .common import (JobView, REPO_ROOT, action_bar, field_grid, file_url,
+from .common import (JobView, REPO_ROOT, action_bar, adopt_agent_form, field_grid, file_url,
                      num_input, open_folder_button, path_input, persist, zoomable_image,
                      delete_outputs)
 
 CENTROID_DIR = REPO_ROOT / "centroiding"
+JOB_NAME = "Centroiding"
+TUNING_FILES = {"tuning_plot": TUNING_PNG, "tuning_data": TUNING_DATA}
+BATCH_FILES = {"raw_image": RAW_IMAGE, "summary_plot": SUMMARY_PNG, "summary_data": SUMMARY_DATA}
+ABEL_FILES = {"abel_image": ABEL_IMAGE, "spectrum_csv": SPECTRUM_CSV}
+ABEL_LOGS = {"[Save] Abel inverted: ": "abel_image", "[Spectrum] Saved: ": "spectrum_csv"}
 OUTPUT_NAMES = (TUNING_PNG, SUMMARY_PNG, TUNING_DATA, SUMMARY_DATA, RAW_IMAGE, ABEL_IMAGE, SPECTRUM_CSV)
 
 # (section path, key, kind, label) — kind: str/int/float/bool/select:opts
@@ -75,8 +86,167 @@ ADVANCED_KEYS = {
 }
 
 
+def _capture_outputs(job, line):
+    for prefix, artifact in ABEL_LOGS.items():
+        if line.startswith(prefix):
+            job.extra["generated_abel"].add(artifact)
+    return False
+
+
+def _artifacts(job):
+    if job.extra.get("tuning_only"):
+        return tuple(TUNING_FILES)
+    return ("checkpoint", *BATCH_FILES, *(key for key in ABEL_FILES if key in job.extra.get("generated_abel", ())))
+
+
+def centroid_job(snapshot, *, reuse_checkpoint=True):
+    cwd = centroid_dir(CENTROID_DIR)
+    vmi = snapshot["vmi_picasso"]
+    processing = vmi["processing"]
+    args = centroid_cli_args(snapshot)
+    destination = checked_path(_output_dir(snapshot), write=True)
+    if destination.exists() and not destination.is_dir():
+        raise ValueError("Choose an output directory.")
+    inputs = [("HDF5 directory", vmi["h5_dir"]),
+              ("GMD map", vmi["gmd_map_path"] if vmi["gmd"]["enable_gmd_weighting"] else ""),
+              ("dark frame", vmi["dark_file"] if processing["enable_dark_subtraction"] else ""),
+              ("flat field", processing["flat_field_file"] if processing["enable_flat_field"] else "")]
+    tuning = processing["tuning_only"]
+    paths = TUNING_FILES if tuning else BATCH_FILES | ABEL_FILES
+    extra = {key: str(validate_distinct_output(
+        checked_path(destination / filename, write=True), inputs, cwd=cwd))
+        for key, filename in paths.items()}
+    if not tuning:
+        checkpoint = checked_path(destination / vmi["checkpoint_file"], write=True)
+        checkpoint = validate_distinct_output(
+            checkpoint, [*inputs, *((key.replace("_", " "), path) for key, path in extra.items())],
+            cwd=cwd, output_label="checkpoint",
+        )
+        if not reuse_checkpoint:
+            if os.path.lexists(checkpoint):
+                raise ValueError("The checkpoint already exists. Choose a new filename or explicitly request reuse.")
+            args.append("--require-new-checkpoint")
+        extra["checkpoint"] = str(checkpoint)
+    form = {f"{group}.{key}": _section(snapshot, group)[key] for group, key, _ in options()}
+    extra.update(output_dir=str(destination), tuning_only=tuning, panel_form=form, generated_abel=set())
+    return Job(JOB_NAME, cwd=str(cwd), extra=extra, consume_output=_capture_outputs,
+               cmd=[sys.executable, "-m",
+                    "vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch", *args])
+
+
+def agent_operations():
+    fields = {key: (kind, label) for _, key, kind, label in FIELDS}
+    parameters = {}
+    for _, key, default in options():
+        if key == "meta_column_gmd":
+            continue  # Deprecated by the CLI.
+        kind, label = fields.get(key, ("", key.replace("_", " ").capitalize()))
+        choices = kind.removeprefix("select:").split(",") if kind.startswith("select:") else None
+        if kind == "dir" or kind.startswith("file:"):
+            value_type = "path"
+        elif type(default) is bool:
+            value_type = "boolean"
+        elif type(default) is int or key == "tuning_frame_index":
+            value_type = "integer"
+        elif type(default) is str:
+            value_type = "string"
+        else:
+            value_type = "number"
+        if default is None:
+            value_type += " or null"
+        parameters[key] = {"type": value_type, "description": label, "default": default}
+        if choices:
+            parameters[key]["choices"] = choices
+    parameters["h5_pattern"]["description"] = "Filename-only glob in the HDF5 directory"
+    parameters["h5_dir"]["description"] = "Required directory containing camera HDF5 files"
+    parameters["output_dir"]["description"] = "Output directory. Defaults to centroiding/vmi_output in the workspace."
+    parameters["gmd_map_path"]["description"] = "Existing timestamp map required for Agent batch GMD weighting"
+    parameters["reuse_checkpoint"] = {
+        "type": "boolean", "default": False,
+        "description": "Allow a compatible saved checkpoint to skip detection. Applies only to batch runs.",
+    }
+    description = {
+        "panel": JOB_NAME,
+        "summary": "Locate electron spots with Picasso. Use tuning_only for a single-frame check or run "
+                   "a batch to produce a localization checkpoint, VMI image and optional Abel spectrum.",
+        "parameters": parameters,
+        "manual": JOB_NAME,
+        "outputs": [*TUNING_FILES, "checkpoint", *BATCH_FILES, *ABEL_FILES],
+    }
+    return (PanelOperation("centroiding", description, _prepare_agent, (JOB_NAME,), artifacts=_artifacts),)
+
+
+def _prepare_agent(_jobs, params):
+    snapshot = load_settings()
+    for group, key, default in options():
+        if key not in params:
+            continue
+        value = params[key]
+        if type(default) is bool:
+            boolean(value)
+        elif type(default) is str:
+            if not isinstance(value, str) or "\x00" in value:
+                raise ValueError(f"Enter text for {key}.")
+        elif value is not None or default is not None:
+            integer = type(default) is int or key == "tuning_frame_index"
+            if ((integer and type(value) is not int) or (not integer and type(value) not in (float, int))
+                    or (type(value) is float and not isfinite(value))):
+                raise ValueError(f"Enter a valid numeric value for {key}.")
+        _section(snapshot, group)[key] = value
+
+    vmi = snapshot["vmi_picasso"]
+    proc = vmi["processing"]
+    vmi["h5_dir"] = str(resolve_path(vmi["h5_dir"]))
+    if not Path(vmi["h5_dir"]).is_dir():
+        raise ValueError("Choose an existing HDF5 directory.")
+    validate_h5_pattern(vmi["h5_pattern"])
+    if "output_dir" in params:
+        vmi["output_dir"] = str(resolve_path(vmi["output_dir"], write=True))
+    checkpoint = vmi["checkpoint_file"]
+    if not checkpoint.strip() or checkpoint in (".", "..") or any(char in checkpoint for char in "/\\:"):
+        raise ValueError("Enter a checkpoint filename inside the output directory.")
+    for key, choices in (("fitting_method", ("mle", "lq")), ("mle_method", ("sigma", "sigmaxy"))):
+        if vmi[key] not in choices:
+            raise ValueError(f"Choose a valid {key.replace('_', ' ')}.")
+    for key, group, needed, label in (
+        ("dark_file", vmi, proc["enable_dark_subtraction"], "precomputed dark .npy file"),
+        ("flat_field_file", proc, proc["enable_flat_field"], "flat field file"),
+        ("gmd_map_path", vmi, not proc["tuning_only"] and vmi["gmd"]["enable_gmd_weighting"], "GMD map"),
+    ):
+        path = resolve_path(group[key]) if group[key].strip() else None
+        if needed and (path is None or not path.is_file() or (key == "dark_file" and path.suffix.lower() != ".npy")):
+            raise ValueError(f"Choose an existing {label}.")
+        group[key] = str(path) if path is not None else ""
+
+    reuse = boolean(params.get("reuse_checkpoint", False))
+    try:
+        job = centroid_job(snapshot, reuse_checkpoint=reuse)
+    except OverflowError as exc:
+        raise ValueError("Enter finite Centroiding settings.") from exc
+    summary = {"Mode": "Single-frame tuning" if proc["tuning_only"] else "Batch",
+               "Output directory": job.extra["output_dir"]}
+    if not proc["tuning_only"]:
+        summary["Checkpoint"] = job.extra["checkpoint"]
+        summary["Checkpoint policy"] = ("Reuse a compatible checkpoint if present and skip localization"
+                                        if reuse else "Calculate new localizations")
+    labels = {key: label for _, key, _, label in FIELDS}
+    for group, key, _ in options():
+        if key in ("output_dir", "tuning_only", "checkpoint_file", "meta_column_gmd"):
+            continue
+        value = _section(snapshot, group)[key]
+        if (key in labels and value not in (None, "")) or key in params:
+            summary[labels.get(key, key.replace("_", " ").capitalize())] = value
+    return job, summary
+
+
 def build(jobs: JobManager) -> None:
-    view = JobView(jobs, job_name='Centroiding', results_builder=_results)
+    def restore_form(job):
+        form = adopt_agent_form(job, "centroid")
+        for (group, key, _), widget in widgets.items():
+            if f"{group}.{key}" in form:
+                widget.value = form[f"{group}.{key}"]
+
+    view = JobView(jobs, job_name=JOB_NAME, results_builder=_results, attach_builder=restore_form)
     theme.panel_header(
         "Picasso Centroiding",
         "Locate electron spots and build a VMI image. Use a single frame to tune detection.",
@@ -128,14 +298,9 @@ def build(jobs: JobManager) -> None:
                 return
             snapshot = centroid_settings()
             try:
-                cmd = [sys.executable, "-m", "vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch", *centroid_cli_args(snapshot)]
-            except ValueError as exc:
+                view.attach(jobs.submit(centroid_job(snapshot)))
+            except (OSError, ValueError) as exc:
                 ui.notify(str(exc), type="negative")
-                return
-            job = jobs.submit(Job(name="Centroiding", cmd=cmd,
-                                  cwd=str(centroid_dir(CENTROID_DIR)),
-                                  extra={"output_dir": str(_output_dir(snapshot))}))
-            view.attach(job)
 
         def show_saved():
             if view.job is not None and view.job.status in ("running", "queued"):
@@ -295,7 +460,7 @@ def _results(job: Job):
     if job.status != "done":
         return
     out_dir = Path(job.extra["output_dir"])
-    _result_files(out_dir)
+    _result_files(out_dir, tuning_only=job.extra.get("tuning_only") if job.extra.get("agent_panel") else None)
 
 
 def _interactive_plot(figure, *, tuning=False):
@@ -362,7 +527,7 @@ def _interactive_plot(figure, *, tuning=False):
     return plot
 
 
-def _result_files(out_dir: Path):
+def _result_files(out_dir: Path, *, tuning_only=None):
     out_dir = checked_path(out_dir)
     open_folder_button(out_dir, "open output folder")
     found = False
@@ -370,6 +535,8 @@ def _result_files(out_dir: Path):
         ("Tuning check", TUNING_DATA, "01_tuning_check_picasso.png", tuning_figure),
         ("Final summary", SUMMARY_DATA, "04_final_summary.png", summary_figure),
     ):
+        if tuning_only is not None and (data_file == TUNING_DATA) != tuning_only:
+            continue
         data, png = checked_path(out_dir / data_file), checked_path(out_dir / png_name)
         if not data.exists() and not png.exists():
             continue

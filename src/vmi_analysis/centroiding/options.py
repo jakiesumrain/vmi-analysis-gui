@@ -100,6 +100,8 @@ def validate_settings(config, require_input=False):
 def parse_centroid_args(argv=None):
     parser = argparse.ArgumentParser(description="Picasso centroiding and VMI spectrum analysis")
     parser.add_argument("--config", help="Optional legacy TOML defaults; explicit arguments take precedence")
+    parser.add_argument("--require-new-checkpoint", action="store_true",
+                        help="Fail if the batch checkpoint already exists.")
     choices = {"mle_method": ["sigma", "sigmaxy"], "fitting_method": ["mle", "lq"]}
     for group, key, default in options():
         kwargs = {"dest": f"{group}__{key}", "default": argparse.SUPPRESS}

@@ -1107,6 +1107,9 @@ def main():
     if FRAME_LIMIT:
         print(f"[Batch] Using the first {total_frames} of {n_total_frames} frames "
               f"(requested {FRAME_LIMIT})")
+    if CLI_ARGS.require_new_checkpoint and os.path.lexists(checkpoint_path):
+        raise SystemExit(f"[Error] {checkpoint_path} already exists. Choose a new checkpoint filename "
+                         "or explicitly request reuse.")
     if os.path.exists(checkpoint_path):
         with h5py.File(checkpoint_path, "r") as checkpoint:
             saved_limit = checkpoint.attrs.get("frame_limit", 0)

@@ -123,6 +123,9 @@ class PackageLayoutTests(unittest.TestCase):
             checkpoint = output / "vmi_results_raw.h5"
             localizations = pd.read_hdf(checkpoint, "localizations")
             np.testing.assert_array_equal(localizations["frame"], [0, 1, 2])
+            result = self.run_command([*command, "--frame-limit", "3", "--require-new-checkpoint"], folder, returncode=1)
+            self.assertIn("already exists", result.stderr)
+            pd.testing.assert_frame_equal(pd.read_hdf(checkpoint, "localizations"), localizations)
             metadata, _ = load_plot_data(output / SUMMARY_DATA)
             self.assertEqual(metadata["n_frames"], 3)
             result = self.run_command(command, folder, returncode=1)

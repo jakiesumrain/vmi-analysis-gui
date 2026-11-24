@@ -21,7 +21,7 @@ from vmi_analysis.gui.panel_operations import build_registry
 from vmi_analysis.gui.jobs import Job, JobManager, ResourceBusyError
 from vmi_analysis.ion_acquisition import SCHEMA
 from vmi_analysis.gui.resources import job_access
-from vmi_analysis.gui.panels import accumulate, agent, dark, gmd_map, ion_luna, ion_pipeline, ion_tof
+from vmi_analysis.gui.panels import accumulate, agent, binning, centroid, dark, gmd_map, ion_luna, ion_pipeline, ion_tof
 from vmi_analysis.gui.panels.common import adopt_agent_form
 
 
@@ -274,6 +274,90 @@ class AgentPanelTests(unittest.TestCase):
             self.registry.prepare(self.jobs, "accumulate", settings)
         reused, _ = self.registry.prepare(self.jobs, "accumulate", settings | {"reuse_existing": True})
         self.assertNotIn("--require-new-output", reused.cmd)
+
+    def test_centroiding_approval_uses_manual_snapshot_and_mode_specific_artifacts(self):
+        camera = self.datasets / "camera"
+        camera.mkdir()
+        output = self.workspace / "run"
+        output.mkdir()
+        params = {"h5_dir": "/datasets/camera", "output_dir": "/workspace/run",
+                  "frame_limit": 3, "enable_parallel": False, "enable_abel": False,
+                  "min_net_gradient": 30, "fitting_method": "lq"}
+        proposed, summary = self.registry.prepare(self.jobs, "centroiding", params)
+        self.assertEqual(summary["Mode"], "Batch")
+        self.assertEqual(proposed.extra["panel_form"]["processing.frame_limit"], 3)
+        self.assertIn("--require-new-checkpoint", proposed.cmd)
+        self.assertEqual(job_access(proposed).centroid_output_dir, output)
+        self.assertEqual(self.jobs.jobs(), [])
+        for invalid, message in (
+            ({"checkpoint_file": "../escape.h5"}, "inside the output"),
+            ({"enable_dark_subtraction": True}, "precomputed dark"),
+            ({"enable_gmd_weighting": True}, "GMD map"),
+            ({"frame_limit": 2.5}, "valid numeric value"),
+            ({"output_dir": "/datasets/results"}, "read-only"),
+        ):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, message):
+                self.registry.prepare(self.jobs, "centroiding", params | invalid)
+
+        for name in ("checkpoint", "raw_image", "summary_plot", "summary_data", "abel_image", "spectrum_csv"):
+            Path(proposed.extra[name]).touch()
+        proposed.owner = self.account.name
+        proposed.status = "done"
+        self.jobs._jobs[proposed.id] = proposed
+        self.assertEqual(tuple(self.registry.status(self.jobs, proposed.id)["files"]),
+                         ("checkpoint", "raw_image", "summary_plot", "summary_data"))
+        with self.assertRaisesRegex(ValueError, "checkpoint already exists"):
+            self.registry.prepare(self.jobs, "centroiding", params)
+        reused, _ = self.registry.prepare(self.jobs, "centroiding", params | {"reuse_checkpoint": True})
+        self.assertEqual(reused.cmd, proposed.cmd[:-1])
+
+        tuning, summary = self.registry.prepare(self.jobs, "centroiding", params | {"tuning_only": True})
+        for name in ("tuning_plot", "tuning_data"):
+            Path(tuning.extra[name]).touch()
+        tuning.owner = self.account.name
+        tuning.status = "done"
+        self.jobs._jobs[tuning.id] = tuning
+        self.assertEqual(summary["Mode"], "Single-frame tuning")
+        self.assertEqual(tuple(self.registry.status(self.jobs, tuning.id)["files"]), ("tuning_plot", "tuning_data"))
+        self.assertNotIn("--require-new-checkpoint", tuning.cmd)
+
+    def test_binning_resolves_same_owner_handoffs_and_lists_only_current_bin_files(self):
+        checkpoint = self.workspace / "detections.h5"
+        gmd = self.datasets / "gmd.txt"
+        for path in (checkpoint, gmd):
+            path.touch()
+        parent = Job("Centroiding", status="done", owner=self.account.name,
+                     extra={"checkpoint": str(checkpoint)})
+        mapping = Job("GMD map", status="done", owner=self.account.name, extra={"output_path": str(gmd)})
+        self.jobs._jobs.update({parent.id: parent, mapping.id: mapping})
+        params = {"centroid_job_id": parent.id, "gmd_map_job_id": mapping.id,
+                  "output_dir": "/workspace/bins", "thresholds": [1e-8, 2e-8, 3e-8, 4e-8],
+                  "weight_mode": "gmd", "gmd_col": 5}
+        proposed, _ = self.registry.prepare(self.jobs, "binning", params)
+        target = self.workspace / "bins"
+        self.assertFalse(target.exists())
+        manual = binning.binning_job(checkpoint, gmd, target, thresholds="1e-08,2e-08,3e-08,4e-08",
+                                     weight_mode="gmd", gmd_col=5)
+        self.assertEqual(proposed.cmd, manual.cmd)
+        self.assertEqual(job_access(proposed).reads, {checkpoint, gmd})
+        self.assertIn(target, job_access(proposed).writes)
+        for overrides in ({"thresholds": [2, 1]}, {"thresholds": [1, 1]}, {"thresholds": "1,nan"}):
+            with self.subTest(overrides=overrides), self.assertRaisesRegex(ValueError, "strictly increasing"):
+                self.registry.prepare(self.jobs, "binning", params | overrides)
+
+        target.mkdir()
+        for artifact in proposed.extra["binning_artifacts"]:
+            Path(proposed.extra[artifact]).touch()
+        (target / "vmi_2d_gmd_bin0_minusinf_9.99e-09_w-gmd.npy").touch()
+        proposed.owner = self.account.name
+        proposed.status = "done"
+        self.jobs._jobs[proposed.id] = proposed
+        files = self.registry.status(self.jobs, proposed.id)["files"]
+        self.assertEqual(len(files), 7)
+        self.assertEqual(files["bin_0"], "/workspace/bins/vmi_2d_gmd_bin0_minusinf_1.00e-08_w-gmd.npy")
+        mapping.owner = "another-user"
+        with self.assertRaisesRegex(ValueError, "your workspace"):
+            self.registry.prepare(self.jobs, "binning", params)
 
     def test_ion_pipeline_proposal_uses_manual_builder_and_workspace_paths(self):
         scan = self.datasets / "scan"
