@@ -132,6 +132,26 @@ class AgentBackendTests(unittest.TestCase):
             "kind": "user", "text": "Inspect these", "detail": "\n".join(paths),
         })
 
+    def test_image_prompt_requires_current_model_capability_and_sends_image_content(self):
+        request = replace(self.request(), additional_models=("vision",), image_models=("vision",))
+        config = write_models_config(self.root / "image-models", request)
+        models = json.loads(config.read_text(encoding="utf-8"))["providers"]["vmi-custom"]["models"]
+        self.assertEqual([model["input"] for model in models], [["text"], ["text", "image"]])
+        session = AgentSession(request, FakeLauncher())
+        session.process = FakeProcess()
+        session.status = "ready"
+        images = ({"type": "image", "mimeType": "image/png", "data": "aW1hZ2U="},)
+        with self.assertRaisesRegex(ValueError, "text only"):
+            session.prompt("Find the visible peak", images=images)
+        self.assertEqual(session.process.stdin.getvalue(), b"")
+        session.set_model("vision")
+        command = json.loads(session.process.stdin.getvalue())
+        session.handle_record({"id": command["id"], "type": "response", "command": "set_model", "success": True})
+        session.prompt("Find the visible peak", images=images)
+        command = json.loads(session.process.stdin.getvalue().splitlines()[-1])
+        self.assertEqual(command["images"], list(images))
+        self.assertEqual(command["message"], "Find the visible peak")
+
     def test_pi_command_catalog_and_new_conversation_use_rpc(self):
         session = AgentSession(self.request(), FakeLauncher())
         session.process = FakeProcess()

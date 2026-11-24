@@ -18,6 +18,7 @@ class PanelOperation:
     artifacts: Callable[[Job], tuple[str, ...]] | None = None
     outputs: tuple[str, ...] = ()
     workflow_panels: tuple[str, ...] = ()
+    measure_result: Callable[[object, Job, dict], dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,12 @@ class PanelInspection:
     read_snapshot: Callable[[], dict]
 
 
+@dataclass(frozen=True)
+class RunCapture:
+    job_id: str
+    paths: list[str]
+
+
 class PanelRegistry:
     def __init__(self):
         self._operations = {}
@@ -63,6 +70,28 @@ class PanelRegistry:
             return {key: self.describe(key) for key in self._operations}
         spec = self._operations[operation]
         return {"outputs": list(spec.outputs), **spec.description}
+
+    def can_measure(self, job):
+        spec = self._job_operations.get(job.name)
+        return job.status == "done" and spec is not None and spec.measure_result is not None
+
+    def evidence_run(self, jobs, job_id):
+        job = jobs.get(job_id) if isinstance(job_id, str) else None
+        if job is None or not self.can_measure(job):
+            raise ValueError("Choose a completed run with measurements in your workspace.")
+        return job
+
+    def measurement_context(self, job):
+        spec = self._job_operations[job.name]
+        return {"job_id": job.id, "panel": job.name, "operation": spec.id,
+                "measurement_parameters": spec.description["measurements"]}
+
+    def measure(self, jobs, job_id, parameters):
+        job = self.evidence_run(jobs, job_id)
+        if not isinstance(parameters, dict):
+            raise ValueError("Use named measurement parameters.")
+        spec = self._job_operations[job.name]
+        return {"job_id": job.id, "panel": job.name, **spec.measure_result(jobs, job, parameters)}
 
     def workflows(self):
         return {name: operation.workflow_panels for name, operation in self._job_operations.items()

@@ -1,7 +1,9 @@
 """Private workspace uploads for pasted and dropped Agent attachments."""
 
 import asyncio
+from base64 import b64encode
 from contextlib import aclosing
+from io import BytesIO
 from pathlib import Path
 import re
 import shutil
@@ -10,6 +12,7 @@ from uuid import uuid4
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from nicegui import app
+from PIL import Image, ImageOps
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 
@@ -20,6 +23,45 @@ MAX_ATTACHMENT_FILES = 10
 MAX_BATCH_BYTES = 100 * 1024 * 1024
 MAX_MULTIPART_OVERHEAD_BYTES = 1024 * 1024
 ATTACHMENT_DIR = Path(".agent") / "attachments"
+IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"})
+MAX_PROMPT_IMAGES = 4
+MAX_IMAGE_PIXELS = 24_000_000
+MAX_ENCODED_IMAGE_BYTES = 512 * 1024
+
+
+def prompt_image(path: Path) -> dict:
+    """Decode a checked attachment and send a bounded, metadata-free image to Pi."""
+    with path.open("rb") as handle:
+        raw = handle.read(MAX_ATTACHMENT_BYTES + 1)
+    if len(raw) > MAX_ATTACHMENT_BYTES:
+        raise ValueError(f"{path.name} exceeds the 25 MiB image limit.")
+    try:
+        with Image.open(BytesIO(raw)) as source:
+            if source.width * source.height > MAX_IMAGE_PIXELS:
+                raise ValueError(f"{path.name} exceeds the 24-megapixel image limit.")
+            image = ImageOps.exif_transpose(source)
+            image.thumbnail((1800, 1800), Image.Resampling.LANCZOS)
+            if "A" in image.getbands() or "transparency" in image.info:
+                rgba = image.convert("RGBA")
+                clean = Image.new("RGB", rgba.size, "white")
+                clean.paste(rgba, mask=rgba.getchannel("A"))
+            else:
+                clean = Image.new("RGB", image.size)
+                clean.paste(image.convert("RGB"))
+        output = BytesIO()
+        clean.save(output, format="PNG")
+        mime = "image/png"
+        if output.tell() > MAX_ENCODED_IMAGE_BYTES:
+            output = BytesIO()
+            clean.save(output, format="JPEG", quality=90)
+            mime = "image/jpeg"
+        if output.tell() > MAX_ENCODED_IMAGE_BYTES:
+            raise ValueError(f"{path.name} is too detailed to send. Crop it and attach the area you want to inspect.")
+    except Image.DecompressionBombError as exc:
+        raise ValueError(f"{path.name} exceeds the 24-megapixel image limit.") from exc
+    except OSError as exc:
+        raise ValueError(f"Could not read {path.name} as an image.") from exc
+    return {"type": "image", "mimeType": mime, "data": b64encode(output.getvalue()).decode("ascii")}
 
 
 def attachment_root() -> Path:

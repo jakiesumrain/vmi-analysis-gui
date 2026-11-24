@@ -49,6 +49,7 @@ class AgentRequest:
     api: str = "openai-completions"
     datasets: Path | None = None
     additional_models: tuple[str, ...] = ()
+    image_models: tuple[str, ...] = ()
 
     @property
     def model_ids(self) -> tuple[str, ...]:
@@ -87,6 +88,8 @@ def validate_request(request: AgentRequest) -> None:
     _validate_base_url(request.base_url)
     if not all(map(_valid_model_id, request.model_ids)):
         raise ValueError("Enter valid model IDs.")
+    if set(request.image_models) - set(request.model_ids):
+        raise ValueError("Choose image-capable models from the configured model IDs.")
     _validate_api_key(request.api_key)
     if request.api not in API_FORMATS:
         raise ValueError("Choose a supported API format.")
@@ -136,7 +139,10 @@ def write_models_config(config_dir: Path, request: AgentRequest) -> Path:
                 "baseUrl": request.base_url,
                 "api": request.api,
                 "apiKey": "$VMI_AGENT_API_KEY",
-                "models": [{"id": model, "name": model} for model in request.model_ids],
+                "models": [
+                    {"id": model, "name": model, "input": ["text", "image"] if model in request.image_models else ["text"]}
+                    for model in request.model_ids
+                ],
             }
         }
     }
@@ -449,7 +455,8 @@ class AgentSession:
                 request_id = self.send({"type": "set_model", "provider": PROVIDER, "modelId": model})
                 self._pending_model = (request_id, model)
 
-    def prompt(self, message: str, *, model_context: str = "", attachments: tuple[str, ...] = ()) -> None:
+    def prompt(self, message: str, *, model_context: str = "", attachments: tuple[str, ...] = (),
+               images: tuple[dict, ...] = (), linked_run: str = "") -> None:
         if not message.strip():
             raise ValueError("Enter an instruction first.")
         if len(message) > 100_000:
@@ -459,6 +466,8 @@ class AgentSession:
             context += ("\n\n[Files and folders selected by the user. These paths are available to the Agent.]\n"
                         + json.dumps(attachments, ensure_ascii=False))
         command = {"type": "prompt", "message": message + context}
+        if images:
+            command["images"] = images
         with self._lock:
             if self.status not in ("ready", "running"):
                 raise RuntimeError("Start an agent session before sending an instruction.")
@@ -466,7 +475,9 @@ class AgentSession:
                 raise RuntimeError("Wait for the model change to finish before sending an instruction.")
             if self._pending_control is not None:
                 raise RuntimeError("Wait for the current command to finish.")
-            self._append("user", message, "\n".join(attachments))
+            if images and self._model not in self.request.image_models:
+                raise ValueError("This model is configured for text only. Select an image-capable model or remove the images.")
+            self._append("user", message, "\n".join(filter(None, (*attachments, linked_run))))
             follow_up = self.status == "running"
             if follow_up:
                 command["streamingBehavior"] = "followUp"
@@ -777,6 +788,7 @@ class AgentSession:
                 "error": self.error,
                 "model": self._model,
                 "models": self.request.model_ids,
+                "image_models": self.request.image_models,
                 "model_pending": self._pending_model is not None,
                 "base_url": self.request.base_url,
                 "entries": [dict(entry) for entry in self.entries],

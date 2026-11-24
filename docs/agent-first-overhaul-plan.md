@@ -1,10 +1,10 @@
 # Agent-first overhaul plan
 
-**Current baseline** — Phase 2C has reached the planned panel coverage.
-PR #85 added screenshot paste and file drop to the Agent composer.
+**Current baseline** — Phase 3 adds image messages and authorized run
+measurements for Ion TOF screenshots. Phase 2C panel coverage and its Ion
+workflow acceptance check are complete.
 
-**Next milestone** — Verify Phase 2C end to end, then link screenshots to
-run data in Phase 3. The
+**Next milestone** — Add ad hoc analysis and temporary panels in Phase 4. The
 [Agent-first design guide](agent-first-design.md) defines the product goals.
 
 ## Scope
@@ -99,6 +99,16 @@ actions and compare equivalent GUI and Agent runs. Check workspace isolation.
 Before claiming server-restart recovery, verify that the workflow can
 resume from a persisted checkpoint without repeating completed work.
 
+**Verified** — On Windows, the GUI and the Agent workflow ran LUNA through
+WSL on camera frames 493486–493491 from the `1705_1ms_ion` dataset.
+The raw-pixel TOF histograms matched bin for bin with 5 ns bins over
+0–15,000 ns. Both runs counted 191 unfiltered hits and 166 gated hits
+using 5.7–5.9 nA and shift −1, with five of six triggers selected.
+The ambiguous alignment paused for confirmation, survived a browser
+reload in the same server process, and could be cancelled from either
+the Ion TOF or Agent panel. The browser test simulated the connection
+to the model and used the real LUNA and TOF jobs.
+
 ### 3. Add screenshot interpretation
 
 Accept a screenshot attached by the user and allow an optional link to an
@@ -110,6 +120,14 @@ Explain when an interpretation is based on visible features alone.
 feature and verify a claimed position or width against the linked data.
 Verify the upload flow with and without a run link, and show a clear
 capability message when the configured model cannot accept images.
+
+**Verified** — A Chromium test used the installed Pi RPC process with a
+local simulated model endpoint. It verified unlinked paste, a text-only
+model error, model switching, capture from the Ion TOF plot, and manually
+linking a pasted screenshot. The linked measurement returned a bin center
+of 10,547.5 ns and 57 hits from the synthetic spectrum. A unit test checks
+that another account cannot measure the run. Ion TOF spectra and saved
+Gaussian fits are the first run types available for linking.
 
 ### 4. Add ad hoc analysis and temporary panels
 

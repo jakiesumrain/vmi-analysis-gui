@@ -446,6 +446,26 @@ Choose \emph{Load workflow} to restore those values.
 Save a separate Trig Calibration session for applied processing, the
 selected band, masks, and fitted rings.
 
+\subsection{Analyze a screenshot with the Agent}
+
+Open \emph{Connection}, enter the model IDs for your endpoint, and select
+the models that accept images under \emph{Image-capable models}. Start the
+session and choose one of those models in the composer. Paste or drop a
+screenshot onto the composer and ask what you want to inspect. The screenshot
+is sent to the selected endpoint when you send the message.
+
+To check a measurement against the saved data, use \emph{+}
+$\rightarrow$ \emph{Link a run} and choose a completed Ion TOF spectrum,
+GMD2-filtered spectrum, or peak fit. In Ion TOF, \emph{Capture plot for Agent}
+takes a PNG of the displayed plot, including its zoom, and links the source
+run. Review both attachments before sending. Use the close button on either
+attachment to remove it from the draft.
+
+The Agent can report features visible in a screenshot by itself. When a run
+is linked, it can check the strongest histogram bin in a TOF interval or
+read fitted Gaussian centers and FWHMs from a saved fit. A histogram bin
+center and a fitted peak center are different measurements.
+
 \subsection{Server lifecycle, ports and reconnecting}
 \label{sec:lifecycle}
 

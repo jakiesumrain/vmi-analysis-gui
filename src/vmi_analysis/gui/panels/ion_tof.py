@@ -16,7 +16,7 @@ from vmi_analysis.pes import BASELINE_PARAMETERS, evaluate_fit_for_plot
 from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS
 
 from .. import shared, theme
-from ..agent_panels import (PanelOperation, PanelView, boolean, number, require_completed_job,
+from ..agent_panels import (PanelOperation, PanelView, RunCapture, boolean, number, require_completed_job,
                             resolve_path)
 from ..centroid_plots import _style, plot_options
 from ..jobs import Checkpoint, Job, ResourceBusyError
@@ -34,6 +34,80 @@ SOURCES = {"pixels": "Raw pixel hits", "clusters": "Clustered events", "both": "
 SOURCE_COLORS = {"pixels": "#1e40af", "clusters": "#c2410c"}
 REFERENCE_LABELS = {name: name.replace("Rising", " rising").replace("Falling", " falling")
                     for name in REFERENCES}
+
+
+MEASUREMENT_PARAMETERS = {
+    "source": {"type": "string", "choices": ["pixels", "clusters"], "description": "Required if both traces were saved"},
+    "region_ns": {"type": "number pair", "unit": "ns", "description": "Increasing limits around the visible peak"},
+}
+
+
+def _measure_tof(jobs, job, parameters):
+    if parameters.keys() - MEASUREMENT_PARAMETERS.keys():
+        raise ValueError("Use source and region_ns for TOF measurements.")
+    region = parameters.get("region_ns")
+    if not isinstance(region, list) or len(region) != 2:
+        raise ValueError("Enter region_ns as two limits around the visible peak.")
+    low, high = map(number, region)
+    if low >= high:
+        raise ValueError("Use increasing TOF limits.")
+    fitted = job.name in (FIT_JOB_NAME, UNFILTERED_FIT_JOB_NAME)
+    path = shared.checked_path(job.extra["peak_result" if fitted else "histogram"])
+    with jobs.preview_read_access([path]), np.load(path, allow_pickle=False) as data:
+        available = [source for source in SOURCE_COLORS if (f"{source}_peaks" if fitted else source) in data]
+        source = parameters.get("source") or (available[0] if len(available) == 1 else None)
+        if source not in available:
+            raise ValueError("Choose an available TOF trace. " + ", ".join(available))
+        result = {"source": source, "region_ns": [low, high], "unit": "ns",
+                  "spectrum": ("GMD2-gated" if job.name in (FILTER_JOB_NAME, FIT_JOB_NAME) else "ungated")}
+        if "selected_triggers" in data:
+            result["selected_triggers"] = int(data["selected_triggers"])
+        if fitted:
+            peaks = json.loads(data[f"{source}_peaks"].item())
+            result.update(method="Saved Gaussian fit", peaks=[
+                {key: peak[key] for key in ("center", "fwhm", "bound", "counts", "yield_per_trigger")}
+                for peak in peaks if low <= peak["center"] <= high
+            ])
+            return result
+        edges = data["edges"]
+        counts = data[source]
+        centers = edges[:-1] + np.diff(edges) / 2
+        indices = np.flatnonzero((centers >= low) & (centers <= high))
+        result.update(method="Highest histogram bin with its center inside the requested interval",
+                      strongest_bin=None)
+        if indices.size and (maximum := int(counts[indices].max())) > 0:
+            maxima = indices[counts[indices] == maximum]
+            index = maxima[0]
+            result["strongest_bin"] = {
+                "center_ns": float(centers[index]), "edges_ns": edges[index:index + 2].tolist(),
+                "counts": maximum, "bins_tied_for_maximum": len(maxima),
+            }
+        return result
+
+
+def _capture_plot(chart, job, ask_agent):
+    if ask_agent is None:
+        return
+
+    async def capture():
+        button.disable()
+        try:
+            filename = f"ion-tof-{job.id}.png"
+            result = await ui.run_javascript(
+                f"return await window.vmiAgentCapturePlot(getElement({chart.id}), {json.dumps(filename)})",
+                timeout=30,
+            )
+            if not isinstance(result, dict) or "paths" not in result:
+                raise ValueError(result.get("error", "Could not capture this plot.") if isinstance(result, dict)
+                                 else "Could not capture this plot.")
+            ask_agent(RunCapture(job.id, result["paths"]))
+        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+            ui.notify(str(exc), type="warning")
+        finally:
+            if not button.is_deleted:
+                button.enable()
+
+    button = ui.button("Capture plot for Agent", icon="add_a_photo", on_click=capture).props("flat")
 
 
 def agent_operations():
@@ -78,10 +152,15 @@ def agent_operations():
             "unfiltered": {"type": "boolean", "default": False},
         },
     }
+    for description in (spectrum, gate, fit):
+        description["measurements"] = MEASUREMENT_PARAMETERS
     return (
-        PanelOperation("ion_tof", spectrum, _spectrum, (JOB_NAME,), outputs=("histogram",)),
-        PanelOperation("ion_tof_gate", gate, _gate, (FILTER_JOB_NAME,), outputs=("histogram",)),
-        PanelOperation("ion_tof_fit", fit, _fit, (FIT_JOB_NAME, UNFILTERED_FIT_JOB_NAME), outputs=("peak_result",)),
+        PanelOperation("ion_tof", spectrum, _spectrum, (JOB_NAME,), outputs=("histogram",),
+                       measure_result=_measure_tof),
+        PanelOperation("ion_tof_gate", gate, _gate, (FILTER_JOB_NAME,), outputs=("histogram",),
+                       measure_result=_measure_tof),
+        PanelOperation("ion_tof_fit", fit, _fit, (FIT_JOB_NAME, UNFILTERED_FIT_JOB_NAME), outputs=("peak_result",),
+                       measure_result=_measure_tof),
     )
 
 
@@ -376,7 +455,7 @@ def _tof_figure(edges, spectra, title, *, selecting=False):
     return fig
 
 
-def _results(job):
+def _results(job, *, ask_agent=None):
     if job.status != "done":
         return
     result_path = shared.checked_path(job.extra["histogram"])
@@ -391,7 +470,8 @@ def _results(job):
                      f'{int(result[f"{source}_unmatched"]):,} with no preceding trigger · '
                      f'{int(result[f"{source}_outside"]):,} outside the TOF range').classes("vmi-subtitle")
         fig = _tof_figure(edges, {source: result[source] for source in sources}, "Time-of-flight spectrum")
-        ui.plotly(plot_options(fig)).classes("w-full")
+        chart = ui.plotly(plot_options(fig)).classes("w-full")
+        _capture_plot(chart, job, ask_agent)
 
 
 def spectrum_job(path, *, source="pixels", reference=DEFAULT_REFERENCE, width=DEFAULT_BIN_SIZE_NS,
@@ -488,7 +568,7 @@ def build(jobs, *, ask_agent=None):
     def show_job(job):
         if job.status == "done" and job.extra.get("agent_panel"):
             reset_gmd()
-        _results(job)
+        _results(job, ask_agent=ask_agent)
         if job.status == "done":
             restore_agent_gate(job)
 
@@ -659,7 +739,8 @@ def _gmd_section(jobs, view, save, *, ask_agent=None):
             if not any(counts.any() for counts in spectra.values()):
                 ui.label("No counts in the TOF range for these triggers.").classes("vmi-subtitle")
                 fig = _tof_figure(edges, spectra, "GMD2-filtered time-of-flight spectra")
-                ui.plotly(plot_options(fig)).classes("w-full")
+                chart = ui.plotly(plot_options(fig)).classes("w-full")
+                _capture_plot(chart, job, ask_agent)
             else:
                 _peak_fitting(jobs, job, edges, spectra, ask_agent=ask_agent)
             with ui.expansion("Unfiltered TOF", icon="show_chart", value=False).classes("w-full gap-4").props(
@@ -668,10 +749,11 @@ def _gmd_section(jobs, view, save, *, ask_agent=None):
                          f"still use the {selected:,} GMD2-selected triggers above.").classes("vmi-subtitle")
                 if selected and any(counts.any() for counts in unfiltered_spectra.values()):
                     _peak_fitting(jobs, job, edges, unfiltered_spectra, unfiltered_result=original_path,
-                                  ask_agent=ask_agent)
+                                  ask_agent=ask_agent, display_job=original_job)
                 else:
-                    ui.plotly(plot_options(_tof_figure(edges, unfiltered_spectra,
-                                                       "Unfiltered time-of-flight spectra"))).classes("w-full")
+                    chart = ui.plotly(plot_options(_tof_figure(edges, unfiltered_spectra,
+                                                               "Unfiltered time-of-flight spectra"))).classes("w-full")
+                    _capture_plot(chart, original_job, ask_agent)
                     ui.label("Select triggers with TOF data before fitting peak yields.").classes("vmi-caption")
 
     def restore_agent_filter(job):
@@ -744,7 +826,7 @@ def _gmd_section(jobs, view, save, *, ask_agent=None):
     return reset_gmd, set_metadata, restore_agent_gate
 
 
-def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None, ask_agent=None):
+def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None, ask_agent=None, display_job=None):
     peak_rows = []
     fit_job_name = UNFILTERED_FIT_JOB_NAME if unfiltered_result is not None else FIT_JOB_NAME
     title = "Unfiltered time-of-flight spectra" if unfiltered_result is not None else "GMD2-filtered time-of-flight spectra"
@@ -847,7 +929,8 @@ def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None,
                        for source in spectra if f"{source}_curve" in data}
             if results:
                 low, high = job.extra["fit_range"]
-                _show_peak_fits(results, job.extra["baseline"], int(data["selected_triggers"]), low, high)
+                _show_peak_fits(results, job.extra["baseline"], int(data["selected_triggers"]), low, high,
+                                job=job, ask_agent=ask_agent)
 
     with ui.row().classes("items-center gap-2"):
         mode = ui.toggle(["Zoom", "Select fit range"], value="Zoom", on_change=lambda _: refresh_plot())
@@ -857,6 +940,7 @@ def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None,
     agent_review = ui.column().classes("w-full")
     plot = ui.plotly(go.Figure()).classes("w-full")
     plot.on("plotly_selected", select_fit_range, js_handler="event => emit(event?.range ?? null)")
+    _capture_plot(plot, display_job or filtered_job, ask_agent)
     theme.form_section("Gaussian TOF peak fitting")
     ui.label("Drag a fit range on the spectrum above or enter the limits. Leave peak estimates blank "
              "for automatic detection.").classes("vmi-subtitle")
@@ -877,7 +961,7 @@ def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None,
     refresh_plot()
 
 
-def _show_peak_fits(results, model, selected, fit_low, fit_high):
+def _show_peak_fits(results, model, selected, fit_low, fit_high, *, job, ask_agent):
     ui.label(f"Fit range {fit_low:g}–{fit_high:g} ns · {selected:,} GMD-selected triggers").classes("vmi-caption")
     ui.label("Counts use individual arrivals from μ − 3σ (inclusive) to μ + 3σ (exclusive). "
              "Counts include background and any overlapping peaks. Yield divides counts by all selected triggers, "
@@ -894,6 +978,7 @@ def _show_peak_fits(results, model, selected, fit_low, fit_high):
     target = ui.select({source: SOURCES[source] for source in results}, value=next(iter(results)),
                        label="Inspect TOF fit").props("outlined dense")
     chart = ui.plotly(go.Figure()).classes("w-full")
+    _capture_plot(chart, job, ask_agent)
 
     def redraw():
         (x, fitted, background, residual), peaks = results[target.value]

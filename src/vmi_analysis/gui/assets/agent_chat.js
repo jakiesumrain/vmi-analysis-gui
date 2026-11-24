@@ -149,6 +149,40 @@
     };
   }
 
+  async function uploadFiles(files, signal) {
+    const form = new FormData();
+    files.forEach(file => form.append('files', file, file.name));
+    const response = await fetch('/agent-attachments', {
+      method: 'POST', body: form, signal, credentials: 'same-origin',
+    });
+    let payload;
+    try { payload = await response.json(); } catch { /* The server may return plain text. */ }
+    if (!response.ok) {
+      const detail = typeof payload?.detail === 'string' ? payload.detail : `Upload failed (${response.status}).`;
+      throw new Error(detail);
+    }
+    if (!Array.isArray(payload?.paths)) throw new Error('The upload returned an invalid response.');
+    return payload;
+  }
+
+  window.vmiAgentCapturePlot = async (element, filename) => {
+    try {
+      const plot = element?.$el;
+      if (!plot?.getClientRects().length || !plot.classList.contains('js-plotly-plot')) {
+        throw new Error('Wait for the plot to display before capturing it.');
+      }
+      const {Plotly} = await import('nicegui-plotly');
+      const {width, height} = plot.getBoundingClientRect();
+      const dataUrl = await Plotly.toImage(plot, {
+        format: 'png', width: Math.round(width), height: Math.round(height), scale: 1.5,
+      });
+      const blob = await (await fetch(dataUrl)).blob();
+      return await uploadFiles([new File([blob], filename, {type: 'image/png'})]);
+    } catch (cause) {
+      return {error: cause.message || 'Could not capture this plot.'};
+    }
+  };
+
   function setupAttachments(prompt) {
     const composer = prompt?.closest('.vmi-agent-composer');
     const eventName = composer?.dataset.agentUploadEvent;
@@ -187,19 +221,8 @@
       composer.setAttribute('aria-busy', 'true');
       report({action: 'start', count: files.length});
       try {
-        const form = new FormData();
-        files.forEach(file => form.append('files', file, file.name));
-        const response = await fetch('/agent-attachments', {
-          method: 'POST', body: form, signal: controller.signal, credentials: 'same-origin',
-        });
-        let payload = null;
-        try { payload = await response.json(); } catch { /* The server may return a plain-text error. */ }
-        if (!response.ok) {
-          const detail = typeof payload?.detail === 'string' ? payload.detail : `Upload failed (${response.status}).`;
-          throw new Error(detail);
-        }
-        if (!Array.isArray(payload?.paths)) throw new Error('The upload returned an invalid response.');
-        report({action: 'add', paths: payload.paths});
+        const {paths} = await uploadFiles(files, controller.signal);
+        report({action: 'add', paths});
         prompt.focus({preventScroll: true});
       } catch (cause) {
         if (cause.name !== 'AbortError') report({action: 'error', message: cause.message});

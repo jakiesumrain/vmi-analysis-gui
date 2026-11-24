@@ -82,6 +82,31 @@ class AgentPanelTests(unittest.TestCase):
         self.assertIsNone(snapshot["gmd"]["GMD1"]["latest_na"])
         self.assertEqual(snapshot["gmd"]["GMD2"]["mean_na"], 5)
 
+    def test_run_measurement_reads_owned_histogram_and_saved_gaussian_fit(self):
+        histogram = self.workspace / "histogram.npz"
+        np.savez(histogram, edges=np.array([10490, 10495, 10500, 10505, 10510]),
+                 pixels=np.array([1, 3, 8, 2]), clusters=np.array([0, 2, 3, 0]), selected_triggers=12)
+        fit_data = self.workspace / "fit.npz"
+        row = {"center": 10501.25, "fwhm": 12.3, "bound": False, "counts": 28, "yield_per_trigger": 28 / 12}
+        np.savez(fit_data, pixels_peaks=json.dumps([row]))
+        spectrum = Job(ion_tof.FILTER_JOB_NAME, status="done", owner=self.account.name,
+                       extra={"histogram": str(histogram)})
+        fit = Job(ion_tof.FIT_JOB_NAME, status="done", owner=self.account.name, extra={"peak_result": str(fit_data)})
+        params = {"region_ns": [10498, 10506]}
+        with self.jobs._lock:
+            self.jobs._jobs.update({spectrum.id: spectrum, fit.id: fit})
+        with self.assertRaisesRegex(ValueError, "available TOF trace"):
+            self.registry.measure(self.jobs, spectrum.id, params)
+        result = self.registry.measure(self.jobs, spectrum.id, params | {"source": "pixels"})
+        self.assertEqual(result["strongest_bin"], {
+            "center_ns": 10502.5, "edges_ns": [10500, 10505], "counts": 8, "bins_tied_for_maximum": 1,
+        })
+        self.assertEqual(result["selected_triggers"], 12)
+        self.assertEqual(self.registry.measure(self.jobs, fit.id, params)["peaks"], [row])
+        with patch.object(shared, "current_account", return_value=SimpleNamespace(name="other")):
+            with self.assertRaisesRegex(ValueError, "in your workspace"):
+                self.registry.measure(self.jobs, spectrum.id, params)
+
     def test_dark_frame_registration_validates_and_reserves_paths(self):
         raw = self.datasets / "dark"
         raw.mkdir()

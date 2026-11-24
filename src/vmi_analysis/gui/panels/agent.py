@@ -15,10 +15,10 @@ from vmi_analysis.agent_backend import (AGENTS, API_FORMATS, SLASH_CONTROLS, Age
 from vmi_analysis.paths import GENERATED_DIR
 
 from .. import shared, theme
-from ..agent_attachments import (MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_FILES, MAX_BATCH_BYTES,
-                                 attachment_root)
+from ..agent_attachments import (IMAGE_SUFFIXES, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_FILES, MAX_BATCH_BYTES,
+                                 MAX_PROMPT_IMAGES, attachment_root, prompt_image)
 from ..agent_completion import path_completions
-from ..agent_panels import PanelInspection, PanelView
+from ..agent_panels import PanelInspection, PanelView, RunCapture
 from ..jobs import ACTIVE
 from .common import JobView, checkpoint_view, field_grid
 from .picker import LocalFilePicker
@@ -135,6 +135,9 @@ def _build_page(jobs, *, registry, navigate):
                 .classes("w-full").props("outlined dense")
             api_key = ui.input("API key", password=True, password_toggle_button=True) \
                 .classes("w-full").props("outlined dense autocomplete=off")
+        image_models = ui.select({}, label="Image-capable models", multiple=True).classes("w-full")
+        image_models.props("outlined dense use-chips")
+        image_models.tooltip("Select models whose endpoint accepts images before starting the session.")
         ui.label("The key is used only for this session and is never saved or included in workflows. "
                  "Stopping the session removes its temporary configuration.").classes("vmi-subtitle")
         if shared.SERVER:
@@ -193,6 +196,7 @@ def _build_page(jobs, *, registry, navigate):
                 with ui.menu().props('anchor="top left" self="bottom left" auto-close'):
                     attach_file = ui.menu_item("Attach file")
                     attach_folder = ui.menu_item("Attach folder")
+                    link_run = ui.menu_item("Link a run")
             with ui.row().classes("vmi-agent-composer-status items-center gap-2 no-wrap"):
                 activity_spinner = ui.spinner("dots", size="sm", color="primary").props('aria-hidden="true"')
                 activity_label = ui.label().classes("vmi-caption").props('role="status"')
@@ -213,6 +217,7 @@ def _build_page(jobs, *, registry, navigate):
     view_context = None
     active_review = None
     attached_paths = []
+    linked_run = None
     updating_models = False
     stop_visible = False
     loading_models = False
@@ -289,13 +294,55 @@ def _build_page(jobs, *, registry, navigate):
 
     def refresh_attachments():
         attachments_row.clear()
-        attachments_row.visible = bool(attached_paths)
+        attachments_row.visible = bool(attached_paths or linked_run)
         with attachments_row:
+            if linked_run is not None:
+                with ui.row().classes("vmi-agent-attachment items-center no-wrap"):
+                    ui.icon("link").props('aria-hidden="true"')
+                    ui.label(f"{linked_run.name} · {linked_run.id}").classes("ellipsis")
+                    ui.button(icon="close", on_click=unlink_run).props(
+                        'flat dense round aria-label="Remove linked run"').tooltip("Remove linked run")
             for path in attached_paths:
                 with ui.row().classes("vmi-agent-attachment items-center no-wrap"):
                     ui.label(path.name or str(path)).classes("ellipsis").tooltip(str(path))
                     ui.button(icon="close", on_click=lambda path=path: remove_attachment(path)).props(
                         'flat dense round').tooltip(f"Remove {path.name or path}")
+
+    def unlink_run():
+        nonlocal linked_run
+        linked_run = None
+        refresh_attachments()
+
+    def choose_run():
+        candidates = {}
+        for job in reversed(jobs.jobs()):
+            if registry.can_measure(job):
+                label = " · ".join(filter(None, (job.name, job.extra.get("input_name"), job.id)))
+                candidates[job.id] = label
+        if not candidates:
+            show_error("Complete a panel run that supports measurements before linking it here.")
+            return
+
+        def link():
+            nonlocal linked_run
+            try:
+                linked_run = registry.evidence_run(jobs, selected.value)
+            except ValueError as exc:
+                ui.notify(str(exc), type="warning")
+                return
+            clear_error()
+            refresh_attachments()
+            dialog.close()
+
+        with ui.dialog() as dialog, ui.card().classes("w-full"):
+            ui.label("Link a run").classes("text-lg")
+            selected = ui.select(candidates, value=linked_run.id if linked_run else None,
+                                 label="Completed run", with_input=True).props("outlined dense").classes("w-full")
+            with ui.row():
+                ui.button("Link run", on_click=link)
+                ui.button("Cancel", on_click=dialog.close).props("flat")
+        dialog.on("hide", lambda: dialog.delete())
+        dialog.open()
 
     def remove_attachment(path):
         if path in attached_paths:
@@ -401,10 +448,24 @@ def _build_page(jobs, *, registry, navigate):
         if connection.visible:
             connection_button.classes("vmi-agent-connection-open")
 
-    def open_view_context(view: PanelView | PanelInspection):
-        nonlocal view_context
+    def open_view_context(view: PanelView | PanelInspection | RunCapture):
+        nonlocal view_context, linked_run
         if active_review is not None:
             ui.notify("Approve or decline the existing Agent draft first.", type="warning")
+            return
+        if isinstance(view, RunCapture):
+            try:
+                run = registry.evidence_run(jobs, view.job_id)
+                add_uploaded(view.paths)
+            except (OSError, RuntimeError, ValueError) as exc:
+                ui.notify(str(exc), type="warning")
+                return
+            linked_run = run
+            view_context = None
+            context_note.visible = False
+            clear_error()
+            refresh_attachments()
+            navigate("Agent")
             return
         view_context = (uuid4().hex, view)
         context_note.text = view.label
@@ -488,6 +549,8 @@ def _build_page(jobs, *, registry, navigate):
                     value = registry.status(jobs, request.get("job_id"))
                     if request["action"] == "wait" and value["status"] in ("queued", "running"):
                         return
+                case "measure":
+                    value = registry.measure(jobs, request.get("job_id"), request.get("parameters"))
                 case "inspect":
                     view = view_context[1] if view_id is not None else None
                     if (not isinstance(view, PanelInspection) or request.get("operation") != view.operation
@@ -545,7 +608,7 @@ def _build_page(jobs, *, registry, navigate):
                             ui.button("Decline", on_click=lambda: decide(session, key, job, False)).props("flat")
                     return
                 case _:
-                    raise ValueError("Choose describe, inspect, propose, status, or wait.")
+                    raise ValueError("Choose describe, inspect, measure, propose, status, or wait.")
         except KeyError as exc:
             value = {"error": f"Unknown operation or missing parameter {exc.args[0]}."}
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -627,8 +690,11 @@ def _build_page(jobs, *, registry, navigate):
         session_button.set_enabled(not loading_models and session_status not in ("starting", "stopping"))
         load_models_button.set_enabled(not active and not loading_models
                                        and api.value in ("openai-completions", "openai-responses"))
-        for field in (base_url, model, api, api_key):
+        for field in (base_url, model, api, api_key, image_models):
             field.set_enabled(not active)
+        available = {name: name for name in configured_models()}
+        if available != image_models.options:
+            image_models.set_options(available, value=[value for value in image_models.value or [] if value in available])
         update_models(snapshot, active, session_status)
         stop_visible = session_status == "running"
         if stop_visible:
@@ -690,6 +756,7 @@ def _build_page(jobs, *, registry, navigate):
             base_url=base_url.value.strip(),
             model=selected,
             additional_models=tuple(item for item in models if item != selected),
+            image_models=tuple(image_models.value or ()),
             api_key=api_key.value or "",
             api=api.value,
         )
@@ -730,6 +797,7 @@ def _build_page(jobs, *, registry, navigate):
         return False
 
     async def send():
+        nonlocal linked_run
         clear_error()
         session = AGENTS.current(owner)
         try:
@@ -744,6 +812,15 @@ def _build_page(jobs, *, registry, navigate):
             if session is None:
                 raise RuntimeError("Start an agent session first.")
             paths = tuple(attached_paths)
+            image_paths = [path for path in paths if path.suffix.lower() in IMAGE_SUFFIXES and path.is_file()]
+            if len(image_paths) > MAX_PROMPT_IMAGES:
+                raise ValueError(f"Attach up to {MAX_PROMPT_IMAGES} images per message.")
+            if image_paths:
+                snapshot = session.snapshot()
+                if snapshot.get("model") not in snapshot.get("image_models", ()):
+                    raise ValueError("Select an image-capable model. Configure which models accept images in Connection "
+                                     "before starting the session.")
+            run = registry.evidence_run(jobs, linked_run.id) if linked_run is not None else None
             references = tuple(_attachment_reference(path, container=container_mode()) for path in paths)
             model_context = ""
             if view_context is not None:
@@ -757,13 +834,29 @@ def _build_page(jobs, *, registry, navigate):
                                      f"operation {view.operation}, and this view_id. {view.instruction}]\n"
                                      + json.dumps({"view_id": identifier, "parameters": view.settings,
                                                    **({"context": view.context} if view.context is not None else {})}))
-            await asyncio.to_thread(session.prompt, message, model_context=model_context, attachments=references)
+            if image_paths:
+                model_context += ("\n\n[Use the attached image for visible features. Label visual readings as estimates. "
+                                  "Distinguish them from values verified using saved data.]")
+            if run:
+                model_context += ("\n\n[The user linked this run. Use vmi_panel with action measure and this job_id "
+                                  "and the supplied measurement parameters to verify features against the saved data. "
+                                  "Report the measurement method returned by the tool.]\n"
+                                  + json.dumps(registry.measurement_context(run)))
+            prompt_options = {}
+            if image_paths:
+                prompt_options["images"] = await asyncio.to_thread(lambda: tuple(map(prompt_image, image_paths)))
+            if run:
+                prompt_options["linked_run"] = f"Linked run · {run.name} · {run.id}"
+            await asyncio.to_thread(session.prompt, message, model_context=model_context, attachments=references,
+                                    **prompt_options)
             if prompt.value == message:
                 prompt.value = ""
             for path in paths:
                 if path in attached_paths:
                     attached_paths.remove(path)
-            if paths:
+            if run is linked_run:
+                linked_run = None
+            if paths or run:
                 refresh_attachments()
         except (OSError, RuntimeError, ValueError) as exc:
             show_error(exc)
@@ -795,6 +888,7 @@ def _build_page(jobs, *, registry, navigate):
     session_button.on_click(toggle_session)
     attach_file.on_click(browse_file)
     attach_folder.on_click(browse_folder)
+    link_run.on_click(choose_run)
     model.on_value_change(lambda _: refresh())
     api.on_value_change(lambda _: refresh())
     load_models_button.on_click(load_models)
