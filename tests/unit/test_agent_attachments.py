@@ -1,9 +1,10 @@
+import asyncio
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
 from vmi_analysis.gui import agent_attachments, shared
@@ -76,6 +77,38 @@ class AgentAttachmentTests(unittest.TestCase):
         paths = [Path(value) for value in response.json()["paths"]]
         self.assertEqual([path.name for path in paths], ["notes.txt", "notes-2.txt", "bad_.txt"])
         self.assertEqual([path.read_bytes() for path in paths], [b"first", b"second", b"third"])
+
+    def test_windows_device_names_get_safe_filenames(self):
+        for source, expected in (("NUL.txt", "_NUL.txt"), ("COM1", "_COM1"),
+                                 ("LPT².dat", "_LPT².dat"), ("CONOUT$", "_CONOUT$")):
+            with self.subTest(source=source):
+                self.assertEqual(agent_attachments.attachment_name(source), expected)
+
+    def test_streamed_request_stops_before_parsing_a_batch_over_the_limit(self):
+        parts = iter((
+            (b'--vmi\r\nContent-Disposition: form-data; name="files"; filename="large.txt"'
+             b"\r\nContent-Type: text/plain\r\n\r\n"),
+            b"x" * 200,
+            b"\r\n--vmi--\r\n",
+        ))
+        received = []
+
+        async def receive():
+            body = next(parts)
+            received.append(body)
+            return {"type": "http.request", "body": body, "more_body": len(received) < 3}
+
+        request = Request({"type": "http", "headers": [
+            (b"content-type", b"multipart/form-data; boundary=vmi"),
+        ]}, receive)
+        with (patch.object(agent_attachments, "MAX_BATCH_BYTES", 8),
+              patch.object(agent_attachments, "MAX_MULTIPART_OVERHEAD_BYTES", 128),
+              patch.object(shared, "current_account", return_value=self.alice)):
+            with self.assertRaises(HTTPException) as error:
+                asyncio.run(agent_attachments.upload_agent_attachments(request))
+        self.assertEqual(error.exception.status_code, 413)
+        self.assertEqual(len(received), 2)
+        self.assertFalse((self.alice.root / agent_attachments.ATTACHMENT_DIR).exists())
 
     def test_rejected_batches_do_not_leave_partial_files(self):
         self.sign_in(self.alice)
