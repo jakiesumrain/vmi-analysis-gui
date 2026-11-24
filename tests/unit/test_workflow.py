@@ -16,7 +16,7 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(manager.shutdown)
         store = {
             "centroid.settings_migrated": True,
-            "pipeline.h5_dir": "dataset-a",
+            "movie.h5_dir": "dataset-a",
             "calibration.session": "previous-fit.session.json",
             "calibration.abel": False,
             "calibration.placement": "raw",
@@ -45,12 +45,11 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(saved["schema"], workflow.SCHEMA)
                     self.assertEqual({key.split(".", 1)[0] for key in values},
                                      {"gmd_map", "movie", "dark", "accumulate", "centroid", "binning",
-                                      "calibration", "circularize", "pes", "pipeline", "ion_luna",
+                                      "calibration", "circularize", "pes", "ion_luna",
                                       "ion_tof", "ion_pipeline", "ion_unpack", "ion_tof_fallback",
                                       "ion_pipeline_fallback"})
                     self.assertEqual(values["accumulate.max_workers"], 6)
                     self.assertIsNone(values["accumulate.frame_index"])
-                    self.assertTrue(values["pipeline.skip_existing"])
                     self.assertEqual(values["calibration.session"], "previous-fit.session.json")
                     self.assertEqual(values["calibration.hold_order"], 1)
                     self.assertEqual(values["circularize.raw_color_min_pct"], 1)
@@ -60,25 +59,27 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(values["centroid.spectrum_plot.x_max"], 90)
                     self.assertNotIn(gui.KEEP_ALIVE_KEY, values)
 
-                    store.update({"pipeline.h5_dir": "dataset-b", "calibration.abel": True,
+                    store.update({"movie.h5_dir": "dataset-b", "calibration.abel": True,
                                   "calibration.placement": "post_abel", gui.KEEP_ALIVE_KEY: False})
                     values["accumulate.max_workers"] = "invalid"
                     path.write_text(json.dumps(saved), encoding="utf-8")
                     await callbacks["Load workflow"]()
-                    self.assertEqual(store["pipeline.h5_dir"], "dataset-b")
+                    self.assertEqual(store["movie.h5_dir"], "dataset-b")
                     self.assertIn("Invalid workflow value", notify.call_args.args[0])
                     reload.assert_not_called()
 
                     values["accumulate.max_workers"] = 6
                     values["calibration.hold_order"] = 0
                     values["centroid.spectrum_plot.x_max"] = 120
+                    values["pipeline.h5_dir"] = "legacy-dataset"
                     values["calibration.color_min_pct"] = 10
                     del values["calibration.raw_color_min_pct"]
                     values["calibration.processed_color_min_pct"] = 25
                     path.write_text(json.dumps(saved), encoding="utf-8")
                     await callbacks["Load workflow"]()
                     reload.assert_called_once_with()
-                    self.assertEqual(store["pipeline.h5_dir"], "dataset-a")
+                    self.assertEqual(store["movie.h5_dir"], "dataset-a")
+                    self.assertNotIn("pipeline.h5_dir", store)
                     self.assertEqual(store["calibration.placement"], "raw")
                     self.assertEqual(store["calibration.hold_order"], 0)
                     self.assertEqual(store["centroid.spectrum_plot.x_max"], 120)

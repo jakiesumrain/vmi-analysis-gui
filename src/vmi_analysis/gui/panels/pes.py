@@ -20,45 +20,19 @@ from vmi_analysis.pes import (ABEL_METHODS, BASELINE_PARAMETERS, BETA_ORDERS, QU
                               average_anisotropy, evaluate_fit_for_plot, fit_peaks)
 
 from ..agent_panels import PanelOperation, PanelView, number as finite_number, require_completed_job, resolve_path
-from ..shared import checked_path, circularization_dir, generated_dir, workspace_root
+from ..shared import checked_path, generated_dir, workspace_root
 from .. import theme
 from ..centroid_plots import _style, linear_axis_limits, plot_options
 from ..jobs import Job, JobManager
 from ..resources import canonical_path
-from .binning import BIN_LABEL_PATTERN
 from .common import (GENERATED, REPO_ROOT, JobView, action_bar, adopt_agent_form, check_grid,
                      confirm_clear_outputs, field_grid, num_input, persist)
 from .picker import LocalFilePicker
 
-CIRC_DIR = REPO_ROOT / "circularization"
 JOB_NAME = "PES"
 FIT_OPERATION = "pes_fit"
 PROFILES = ("Gaussian", "Voigt")
-PES_PLOTS = ("gmd_bins-energy-spectrum.png", "gmd_bins-energy-spectrum-normalized.png", "gmd_bins-betas.png")
 _AXIS_SCRIPT = (files("vmi_analysis.gui.assets") / "pes_axes.js").read_text(encoding="utf-8")
-
-
-# The legacy GMD workflow still imports these output helpers.
-def _output_files(directory: Path, suffix: str, bin_directory: Path | None = None):
-    stems = ("image", "image_circularized", "image_cleaned", "energy_l10", "energy_spec_l10", "betas10", "px-py_l10")
-    pattern = re.compile(rf"(?:{'|'.join(stems)})_GMD_{BIN_LABEL_PATTERN}{re.escape(suffix)}\.txt")
-    current = []
-    if bin_directory is not None:
-        for source in bin_directory.glob("vmi_2d_gmd_bin*.npy"):
-            stem = source.stem
-            if stem.endswith(suffix) and "_w-" not in stem.removesuffix(suffix):
-                label = stem.removeprefix("vmi_2d_gmd_")
-                current.extend(directory / f"{prefix}_GMD_{label}.txt" for prefix in stems)
-    return [*(directory / name for name in (*PES_PLOTS, "gmd_bins_results.npz")),
-            *current,
-            *(path for path in sorted(directory.glob("*_GMD_bin*.txt")) if pattern.fullmatch(path.name))]
-
-
-def default_output_dir(suffix: str, backend: str, method: str) -> Path:
-    name = f"gmd_bins_results{suffix}" if suffix else "gmd_bins_results"
-    if backend == "pyabel":
-        name += f"_pyabel_{method}"
-    return circularization_dir(CIRC_DIR) / name
 
 
 def _csv_download(rows, header, name):

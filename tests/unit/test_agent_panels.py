@@ -21,7 +21,7 @@ from vmi_analysis.gui.panel_operations import build_registry
 from vmi_analysis.gui.jobs import Job, JobManager, ResourceBusyError
 from vmi_analysis.ion_acquisition import SCHEMA
 from vmi_analysis.gui.resources import job_access
-from vmi_analysis.gui.panels import accumulate, agent, binning, calibration, centroid, circularize, dark, gmd_map, ion_luna, ion_pipeline, ion_tof, pes
+from vmi_analysis.gui.panels import accumulate, agent, binning, calibration, centroid, circularize, dark, gmd_map, ion_live, ion_luna, ion_pipeline, ion_tof, movie, pes
 from vmi_analysis.gui.panels.common import adopt_agent_form
 
 
@@ -41,6 +41,46 @@ class AgentPanelTests(unittest.TestCase):
         self.enterContext(patch.object(shared, "current_account", return_value=self.account))
         self.jobs = JobManager()
         self.registry = build_registry()
+
+    def test_movie_proposal_streams_without_writes_and_reserves_both_export_formats(self):
+        raw = self.datasets / "camera"
+        raw.mkdir()
+        params = {"h5_dir": "/datasets/camera", "n_frames": 3}
+        preview, _ = self.registry.prepare(self.jobs, "movie", {**params, "save_movie": False})
+        self.assertIn("--preview-stream", preview.cmd)
+        self.assertIn(raw.resolve(), job_access(preview).reads)
+        self.assertFalse(job_access(preview).writes)
+        self.assertTrue(movie._consume_preview_frame(preview, "[preview-png] 3 3 12 8 data"))
+        self.assertEqual(preview.extra["preview_frame"]["index"], 3)
+
+        exported, _ = self.registry.prepare(self.jobs, "movie", {**params, "movie_dir": "review"})
+        folder = self.workspace / "review"
+        self.assertTrue({folder / "camera.mp4", folder / "camera.gif"} <= job_access(exported).writes)
+        self.assertIn(Path(exported.extra["frames_dir"]), job_access(exported).writes)
+        movie._consume_preview_frame(exported, f"Movie written: {raw / 'camera.gif'}")
+        self.assertNotIn("movie_file", exported.extra)
+        movie._consume_preview_frame(exported, f"Movie written: {folder / 'camera.gif'}")
+        self.assertEqual(Path(exported.extra["movie_file"]), folder / "camera.gif")
+        with self.assertRaises(shared.WorkspaceDenied):
+            self.registry.prepare(self.jobs, "movie", {**params, "movie_dir": "/datasets/camera"})
+
+    def test_live_preview_is_inspection_only_and_summarizes_recent_finite_readings(self):
+        from vmi_analysis.ion_live import LiveFrame, LivePreview
+
+        self.assertEqual(self.registry.describe("live_tpx3")["action"], "inspect")
+        with self.assertRaises(ValueError):
+            self.registry.prepare(self.jobs, "live_tpx3", {})
+        receiver = LivePreview("tcp://127.0.0.1:5556", np.array([0, 10, 20]))
+        self.assertEqual(ion_live._preview_summary(receiver)["status"], "waiting for frames")
+        receiver.add(LiveFrame(0, 999, 999, np.array([258, 258]), np.array([12]), 1))
+        now = (ion_live.GMD_TIMELINE_SECONDS + 1) * 10**9
+        receiver.add(LiveFrame(now, np.nan, 5, np.array([512]), np.array([]), 0))
+        snapshot = ion_live._preview_summary(receiver)
+        self.assertEqual(snapshot["detector"]["busiest_pixel"], {"x_px": 2, "y_px": 1, "hits": 2})
+        self.assertEqual(snapshot["frames_without_exactly_one_trigger"], 1)
+        self.assertEqual(snapshot["tof"]["busiest_bins"], [{"minimum_ns": 10, "maximum_ns": 20, "hits": 1}])
+        self.assertIsNone(snapshot["gmd"]["GMD1"]["latest_na"])
+        self.assertEqual(snapshot["gmd"]["GMD2"]["mean_na"], 5)
 
     def test_dark_frame_registration_validates_and_reserves_paths(self):
         raw = self.datasets / "dark"

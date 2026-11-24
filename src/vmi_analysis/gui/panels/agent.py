@@ -18,7 +18,7 @@ from .. import shared, theme
 from ..agent_attachments import (MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_FILES, MAX_BATCH_BYTES,
                                  attachment_root)
 from ..agent_completion import path_completions
-from ..agent_panels import PanelView
+from ..agent_panels import PanelInspection, PanelView
 from ..jobs import ACTIVE
 from .common import JobView, checkpoint_view, field_grid
 from .picker import LocalFilePicker
@@ -401,7 +401,7 @@ def _build_page(jobs, *, registry, navigate):
         if connection.visible:
             connection_button.classes("vmi-agent-connection-open")
 
-    def open_view_context(view: PanelView):
+    def open_view_context(view: PanelView | PanelInspection):
         nonlocal view_context
         if active_review is not None:
             ui.notify("Approve or decline the existing Agent draft first.", type="warning")
@@ -488,10 +488,18 @@ def _build_page(jobs, *, registry, navigate):
                     value = registry.status(jobs, request.get("job_id"))
                     if request["action"] == "wait" and value["status"] in ("queued", "running"):
                         return
+                case "inspect":
+                    view = view_context[1] if view_id is not None else None
+                    if (not isinstance(view, PanelInspection) or request.get("operation") != view.operation
+                            or request.get("parameters", {}) != {}):
+                        raise ValueError("Open the panel's Ask Agent control to read its preview.")
+                    value = view.read_snapshot()
                 case "propose":
                     operation = request.get("operation")
                     parameters = request.get("parameters", {})
                     view = view_context[1] if view_id is not None else None
+                    if isinstance(view, PanelInspection):
+                        raise ValueError("Use inspect to read this panel's preview.")
                     if view is not None:
                         if operation != view.operation or not isinstance(parameters, dict):
                             raise ValueError(f"Use {view.operation} with this view.")
@@ -537,7 +545,7 @@ def _build_page(jobs, *, registry, navigate):
                             ui.button("Decline", on_click=lambda: decide(session, key, job, False)).props("flat")
                     return
                 case _:
-                    raise ValueError("Choose describe, propose, status, or wait.")
+                    raise ValueError("Choose describe, inspect, propose, status, or wait.")
         except KeyError as exc:
             value = {"error": f"Unknown operation or missing parameter {exc.args[0]}."}
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -740,10 +748,15 @@ def _build_page(jobs, *, registry, navigate):
             model_context = ""
             if view_context is not None:
                 identifier, view = view_context
-                model_context = (f"\n\n[App context from {view.panel}. Call vmi_panel with action propose, "
-                                 f"operation {view.operation}, and this view_id. {view.instruction}]\n"
-                                 + json.dumps({"view_id": identifier, "parameters": view.settings,
-                                               **({"context": view.context} if view.context is not None else {})}))
+                if isinstance(view, PanelInspection):
+                    model_context = (f"\n\n[App context from {view.panel}. Call vmi_panel with action inspect, "
+                                     f"operation {view.operation}, and this view_id to read the current preview.]\n"
+                                     + json.dumps({"view_id": identifier}))
+                else:
+                    model_context = (f"\n\n[App context from {view.panel}. Call vmi_panel with action propose, "
+                                     f"operation {view.operation}, and this view_id. {view.instruction}]\n"
+                                     + json.dumps({"view_id": identifier, "parameters": view.settings,
+                                                   **({"context": view.context} if view.context is not None else {})}))
             await asyncio.to_thread(session.prompt, message, model_context=model_context, attachments=references)
             if prompt.value == message:
                 prompt.value = ""

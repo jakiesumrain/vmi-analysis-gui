@@ -127,13 +127,11 @@ angular anisotropy parameters ($\beta$). The repository provides:
 \begin{itemize}
   \item a set of standalone Python command-line programs that perform the
         numerical analysis, and
-  \item a NiceGUI web interface with panels for individual tools and an
-        ordered Pipeline job.
+  \item a NiceGUI web interface with individual analysis panels.
 \end{itemize}
 
 Supply your experiment data through the interface or on the command line.
-The Binning and Pipeline panels are immature and need restructuring.
-Their sections document the current behavior.
+The Binning section describes the current implementation.
 
 \subsection{The analysis chain}
 \label{sec:chain}
@@ -261,11 +259,6 @@ The following sequence uses the current Binning and PES panels.
         to fit the peaks (Section~\ref{sec:pes}).
 \end{enumerate}
 
-To run the existing batch workflow, open \emph{Pipeline}. Set the dataset,
-GMD timestamp file, and map output. Click \emph{Run pipeline}. The job
-runs stages 1--4 in order. With \emph{Skip stages whose outputs exist}
-selected, the job checks for the declared output files before each stage.
-
 \subsection{What to check after the first run}
 
 \begin{itemize}
@@ -304,7 +297,7 @@ On narrow windows, scroll the tool rows above the panel.
 In \emph{Electron}, \emph{Acquire} groups \emph{GMD Map}, \emph{Movie},
 \emph{Dark Frame}, and \emph{Accumulate}. \emph{Analyze} groups
 \emph{Centroiding}, \emph{Binning}, \emph{Trig Calibration},
-\emph{Circularize}, and \emph{PES}. \emph{Automate} contains \emph{Pipeline}.
+\emph{Circularize}, and \emph{PES}.
 \emph{Ion} contains \emph{TPX3 Dump}, \emph{Ion TOF}, and \emph{Ion Pipeline}.
 
 The footer shows running and queued jobs, the job limit, and the server's
@@ -320,7 +313,7 @@ progress, log, and results. Switching tabs does not stop or restart work.
 
 Each job panel uses one button to start or stop its job. Trig Calibration
 uses separate controls for remapping, processing, and fitting. The job
-button reads \emph{Run} when idle (\emph{Run pipeline} in Pipeline). It changes to
+button shows the panel's run action when idle. It changes to
 
 \begin{itemize}
   \item \emph{Stop} while the panel's job is running,
@@ -353,8 +346,7 @@ files and directories it reads and writes. A job whose output overlaps
 another job's input or output waits, and shows a reason such as
 \code{Waiting for <job>: <path>} or \emph{Waiting for a concurrent job
 slot}. Unrelated jobs can start in the free slots. Only one job per panel
-may be active at a time. Jobs launched by the Pipeline panel reserve the
-inputs and outputs of all four stages for the whole run.
+may be active at a time.
 GMD Map can write a file inside a standalone Centroiding output directory
 when the map path is separate from the run's inputs and outputs.
 
@@ -396,8 +388,7 @@ When a job fails, read the console for error details. Results can include
 on panels that offer it.
 Use \emph{Clear output(s)} to delete the listed files after confirmation.
 Trig Calibration has separate clear buttons for the calibration and session
-files. Pipeline clears files written during the last selected run in this
-server session, excluding stages that it skipped. Jobs can reserve files and
+files. Jobs can reserve files and
 prevent deletion while they run or wait in the queue.
 
 \subsection{The local file picker}
@@ -712,8 +703,7 @@ In Centroiding, select the precomputed dark array and enable dark subtraction.
 \subsection{Circularization calibration files}
 \label{sec:calibfiles}
 
-The batch PES stage in Pipeline requires two per-experiment text files in
-\code{circularization/\allowbreak{}}:
+Circularization can use two per-experiment calibration files:
 
 \begin{description}
   \item[\code{extracted-\allowbreak{}FOC100eV-\allowbreak{}20260710.\allowbreak{}txt}] A Gascooke circularization
@@ -729,8 +719,7 @@ The batch PES stage in Pipeline requires two per-experiment text files in
 Trig Calibration can create the extracted fit file. Supply the radial
 reassignment map separately if your experiment requires one.
 Circularize accepts the two paths as fields and uses an identity map when
-the reassignment field is blank. The PES stage in Pipeline requires
-both files under the exact names shown above.
+the reassignment field is blank.
 
 \subsection{Workspace and output folders}
 \label{sec:workspace}
@@ -1336,8 +1325,7 @@ currently unused. \\
 \addlinespace
 \emph{Tuning mode only} & checkbox, off & \code{processing.\allowbreak{}tuning\_\allowbreak{}only} &
 \emph{-\allowbreak{}-\allowbreak{}tuning-\allowbreak{}only} / \code{-\allowbreak{}-\allowbreak{}no-\allowbreak{}tuning-\allowbreak{}only} & Runs the single-frame tuning
-check and stops before the batch (see below). The Pipeline panel forces this
-off in its own snapshot without changing the saved form. \\
+check and stops before the batch (see below). \\
 \addlinespace
 \emph{Frame limit (0 = all)} & integer, 0 & \code{processing.\allowbreak{}frame\_\allowbreak{}limit} &
 \code{-\allowbreak{}-\allowbreak{}frame-\allowbreak{}limit} & Processes up to the first N frames in filename
@@ -1646,9 +1634,8 @@ camera pixels and the checkpoint's real image shape is not read. The
 resolution factor is independent of the Centroiding one. Invalid thresholds
 (empty, unparseable, unsorted) are not caught by the panel. The weight
 minimum and maximum in this panel are a separate copy from the Centroiding
-tab's values; the Pipeline uses the Centroiding values instead. Binning
-writes its whole output directory, so it is queued against a concurrent
-Centroiding or Pipeline job writing the same directory.
+tab's values. Binning reserves its output directory and waits if a
+Centroiding job is writing there.
 
 \subsection{Trig Calibration}
 \label{sec:trigcal}
@@ -2074,106 +2061,6 @@ The server keeps a spectrum bundle for each run in its generated cache.
 current server session. \emph{Clear outputs} deletes the PES bundles from
 that session. Export the peak table before closing the page.
 
-\subsection{Pipeline}
-\label{sec:pipeline}
-
-\textbf{Status.} This panel is immature and needs restructuring.
-
-\textbf{Purpose.} Run GMD Map, Centroiding, Binning, and PES in sequence.
-The first failed stage stops the job. Set the Centroiding parameters in
-the Centroiding panel before you start the pipeline.
-
-\begin{center}
-\footnotesize
-\begin{longtable}{@{}L{3.4cm}L{2.3cm}L{2.5cm}L{2.8cm}L{4.9cm}@{}}
-\toprule
-Field & Type and default & Saved key & CLI flag & Meaning \\
-\midrule
-\endhead
-\bottomrule
-\endfoot
-\emph{HDF5 directory (dataset)} & folder, empty & \code{pipeline.\allowbreak{}h5\_\allowbreak{}dir} &
-stage 1 \code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}dir} & Dataset for the whole pipeline; also forced into
-the Centroiding snapshot as an absolute path. Required. \\
-\addlinespace
-\emph{HDF5 pattern} & text, \code{RAW-\allowbreak{}*.\allowbreak{}h5} &
-\code{pipeline.\allowbreak{}h5\_\allowbreak{}pattern} & stage 1
-\code{-\allowbreak{}-\allowbreak{}h5-\allowbreak{}pattern} & Glob for the GMD map and Centroiding stages; also
-written into the Centroiding snapshot. Use \code{*RAW-\allowbreak{}*.\allowbreak{}h5} for prefixed names. \\
-\addlinespace
-\emph{GMD timestamp file} & file, empty & \code{pipeline.\allowbreak{}gmd\_\allowbreak{}path} &
-stage 1 \code{-\allowbreak{}-\allowbreak{}gmd-\allowbreak{}path} & GMD table for stage 1. Required. \\
-\addlinespace
-\emph{GMD map output} & save, workspace \code{gmd\_\allowbreak{}map\_\allowbreak{}all.\allowbreak{}txt} &
-\code{pipeline.map\_\allowbreak{}out} & stage 1 \code{-\allowbreak{}-\allowbreak{}output-\allowbreak{}path} & Where the map is
-written; also passed to Centroiding and Binning. \\
-\addlinespace
-\emph{Weight mode} & select, \code{gmd\_\allowbreak{}norm} & \code{pipeline.\allowbreak{}weight\_\allowbreak{}mode} &
-Binning \code{-\allowbreak{}-\allowbreak{}weight-\allowbreak{}mode} & Weighting for the Binning stage and the
-suffix used by later stages. \\
-\addlinespace
-\emph{Weight power} & number, 1.0 & \code{pipeline.\allowbreak{}weight\_\allowbreak{}power} &
-Binning \code{-\allowbreak{}-\allowbreak{}weight-\allowbreak{}power} & Exponent for \code{gmd\_\allowbreak{}norm}. \\
-\addlinespace
-\emph{Skip stages whose outputs exist} & checkbox, on &
-\code{pipeline.skip\_\allowbreak{}existing} & job-level & A stage is skipped when all of
-its declared output files already exist. \\
-\end{longtable}
-\end{center}
-
-\textbf{Stages.} The panel shows four status badges, \emph{GMD map},
-\code{Centroiding}, \emph{Binning} and \emph{PES}, updated while the job
-runs. Each stage has a fixed working directory and output fingerprint:
-
-\begin{center}
-\footnotesize
-\begin{longtable}{@{}L{2.2cm}L{6.0cm}L{3.0cm}L{4.4cm}@{}}
-\toprule
-Stage & Command & Working directory & Output fingerprint \\
-\midrule
-\endhead
-\bottomrule
-\endfoot
-GMD map & \code{build\_\allowbreak{}gmd\_\allowbreak{}map} with the three path fields & repository
-root & the map file \\
-\addlinespace
-Centroiding & \code{process\_\allowbreak{}andor\_\allowbreak{}vmi\_\allowbreak{}PICASSO\_\allowbreak{}v5\_\allowbreak{}h5\_\allowbreak{}batch} with the
-full Centroiding snapshot & \code{centroiding/\allowbreak{}} & the checkpoint file \\
-\addlinespace
-Binning & \code{vmi\_\allowbreak{}histogram\_\allowbreak{}gmd\_\allowbreak{}bins} with the checkpoint, output
-directory, map and thresholds & \code{centroiding/\allowbreak{}} &
-\code{vmi\_\allowbreak{}2d\_\allowbreak{}gmd\_\allowbreak{}all<suffix>.npy} \\
-\addlinespace
-PES & \code{process\_\allowbreak{}gmd\_\allowbreak{}bins} with the weight suffix, bin directory and
-PyAbel backend & \code{circularization/\allowbreak{}} &
-\code{gmd\_\allowbreak{}bins\_\allowbreak{}results.npz} in the automatic output directory \\
-\end{longtable}
-\end{center}
-
-\textbf{Borrowed and forced settings.} The pipeline takes every Centroiding
-setting from the saved form, but overrides exactly three values in its own
-snapshot: the HDF5 directory, the HDF5 pattern, the GMD map path, and
-\emph{Tuning mode only} (forced off, so a pipeline run is always a full batch
-and never produces a tuning check). Thresholds, GMD column and GMD floor are taken from the
-Binning tab's saved settings; the Pipeline fields supply the weight mode and
-power. The pipeline has no output-directory field: the Centroiding output
-directory is used. The PES stage always uses the PyAbel backend with the
-\code{daun} method; MATLAB is never selected from the pipeline.
-
-\textbf{Status, resume and cancellation.} With \emph{Skip stages whose
-outputs exist} checked, a stage whose outputs are all present is marked
-\code{skipped} and the log records it; this is the only resume mechanism.
-The first failing stage stops the pipeline, marks the remaining stages
-\code{cancelled}, and fails the job. Stopping cancels queued work
-immediately and terminates the running process tree. The pipeline reserves
-the inputs and outputs of all four stages for the whole run, so overlapping
-jobs wait.
-
-\textbf{Pitfalls.} Read the stage logs and open the files that the stages
-write. After a page reload, the active job badge and console reconnect.
-To run all stages again, clear \emph{Skip stages whose outputs exist}.
-Individual programs can still reuse their own checkpoints or caches.
-
 \subsection{TPX3 Dump}
 \label{sec:tpx3dump}
 
@@ -2521,8 +2408,8 @@ backend, for example \code{Agg}. \\
     in its own panel.
   \item[Changing parameters does nothing.] Some stages resume from existing
     outputs. Accumulate and Centroiding can reuse a result or checkpoint
-    created with the same frame limit. The Pipeline can skip stages whose
-    outputs exist. Delete the relevant output to force recomputation. In
+    created with the same frame limit. Delete the relevant output to force
+    recomputation. In
     Centroiding, leave \emph{Also delete checkpoint} checked in
     \emph{Clear outputs} to rerun localisation.
   \item[GMD weighting has no effect.] The map may be missing, partial, or all
@@ -2532,10 +2419,6 @@ backend, for example \code{Agg}. \\
     \code{G\_\allowbreak{}r512\_\allowbreak{}k512\_\allowbreak{}l10.\allowbreak{}h5}. Generate it once with
     \code{save\_\allowbreak{}gData.\allowbreak{}m}; expect tens of minutes. Use the PyAbel backend to
     avoid MATLAB entirely. MATLAB bins are processed sequentially by design.
-  \item[Pipeline reports missing circularization calibration.] Both files in
-    \code{circularization/\allowbreak{}} are required. Create the extracted
-    fit file in Trig Calibration or supply a compatible export. Supply the
-    radial reassignment file before starting Pipeline.
   \item[The frame histogram or movie disagrees with another tool.] Frame
     enumeration differs between tools: GMD Map and Dark Frame use the HDF5
     pattern (\code{RAW-\allowbreak{}*.\allowbreak{}h5} by default, adjustable for prefixed names), while

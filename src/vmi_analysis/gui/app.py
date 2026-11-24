@@ -20,7 +20,7 @@ from .panel_operations import build_registry
 from .startup import startup_port
 from .panels import (accumulate, agent, binning, calibration, centroid, circularize,
                      dark, gmd_map, ion_live, ion_luna, ion_pipeline, ion_tof, ion_tof_fallback, ion_unpack,
-                     movie, pes, pipeline)
+                     movie, pes)
 from .panels.common import file_url, init_zoom_overlay
 from .panels.picker import LocalFilePicker
 
@@ -112,7 +112,6 @@ TABS = [
     ("Trig Calibration", calibration),
     ("Circularize", circularize),
     ("PES", pes),
-    ("Pipeline", pipeline),
     ("Agent", agent),
     ("TPX3 Dump", ion_luna),
     (ion_tof.JOB_NAME, ion_tof),
@@ -132,7 +131,6 @@ TAB_ICONS = {
     "Trig Calibration": "track_changes",
     "Circularize": "donut_large",
     "PES": "multiline_chart",
-    "Pipeline": "account_tree",
     "Agent": "smart_toy",
     "TPX3 Dump": "memory",
     ion_tof.JOB_NAME: "timer",
@@ -147,7 +145,6 @@ SIDEBAR_GROUPS = (
     ("Electron", (
         ("Acquire", ("GMD Map", "Movie", "Dark Frame", "Accumulate")),
         ("Analyze", ("Centroiding", "Binning", "Trig Calibration", "Circularize", "PES")),
-        ("Automate", ("Pipeline",)),
     )),
     ("Ion", ((None, ("TPX3 Dump", ion_tof.JOB_NAME, ion_pipeline.JOB_NAME, ion_live.JOB_NAME)),)),
 )
@@ -387,7 +384,7 @@ def index() -> None:
                             elif module is agent:
                                 ask_agent = module.build(MANAGER, registry=PANEL_OPERATIONS,
                                                          navigate=lambda name: setattr(panels, "value", name))
-                            elif module is ion_tof:
+                            elif module in (ion_tof, ion_live):
                                 module.build(MANAGER, ask_agent=ask_agent)
                             else:
                                 module.build(MANAGER)

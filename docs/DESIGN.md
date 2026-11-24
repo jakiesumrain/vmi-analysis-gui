@@ -119,7 +119,7 @@ The shell is a persistent workbench with four regions, and only four:
 - **Header** — application name, with *Settings* at the right.
   No navigation lives here; navigation is the rail's job.
 - **Left rail** — the tool index, with independently collapsible *Electron*
-  and *Ion* groups. *Acquire*, *Analyze*, and *Automate* are section captions
+  and *Ion* groups. *Acquire* and *Analyze* are section captions
   inside *Electron*. Each tool has an icon and a short name. The active tool
   has a colored label and a 3px indicator at the leading edge.
   The rail can collapse to icons on desktop, with tooltips and accessible
@@ -162,8 +162,6 @@ A panel that invents its own layout vocabulary is a defect.
    that shows an explicit empty state ("No results yet — …") before the
    first result.
 
-Pipeline adds one element to the anatomy: the numbered stage chip track
-(`vmi-stage-chip`), so stage order is visible before anything runs.
 
 ### State and feedback rules
 

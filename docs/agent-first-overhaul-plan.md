@@ -1,10 +1,10 @@
 # Agent-first overhaul plan
 
-**Current baseline** — Phase 2B is complete. PR #85 added screenshot paste
-and file drop to the Agent composer.
+**Current baseline** — Phase 2C has reached the planned panel coverage.
+PR #85 added screenshot paste and file drop to the Agent composer.
 
-**Next milestone** — Phase 2C moves to the electron batch panels after
-the ion rollout. The
+**Next milestone** — Verify Phase 2C end to end, then link screenshots to
+run data in Phase 3. The
 [Agent-first design guide](agent-first-design.md) defines the product goals.
 
 ## Scope
@@ -83,15 +83,14 @@ for the first configured peak divided by the second. The Ion Pipeline
 panel adopts the approved inputs and shows the same results as a
 manual run.
 
-The rollout groups below define the remaining coverage.
+The rollout groups below summarize Phase 2C coverage.
 
 | Rollout group | Initial coverage |
 | --- | --- |
 | Ion workflows | TPX3 Dump, Ion TOF, and Ion Pipeline. Cover dump handoff, GMD2 alignment and gating, and fit selection. |
 | Electron batch work | Dark Frame, GMD Map, Accumulate, Centroiding, Binning, and Circularize share their manual job builders with the Agent. |
 | Interactive electron work | Trig Calibration passes the loaded polar image context and selected ring band to the Agent. The panel reviews the draft, runs the same fit as the manual button, and hands accepted calibrations to Circularize. PES also shares its spectrum job builder with the Agent. The Agent reviews fit drafts against the current displayed spectra and runs the same peak fit as the manual button. |
-| Previews and streaming | Movie and Live TPX3. Expose preview controls and useful bounded summaries. Keep camera acquisition controls outside this scope. |
-| Electron Pipeline | Inventory its current behavior and agree on its workflow contract before exposing orchestration controls. |
+| Previews and streaming | Movie uses its manual preview and export jobs for Agent runs. Live TPX3 exposes read-only summaries from the active browser tab. Camera acquisition controls stay outside this scope. |
 
 **Acceptance** — Verify output handoff, pause and resume at an ambiguous
 GMD shift, and cancel from either interface. Follow the workflow after

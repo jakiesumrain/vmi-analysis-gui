@@ -168,8 +168,8 @@ class GuiSubmissionTests(unittest.TestCase):
     def test_clear_actions_delete_panel_outputs_and_preserve_other_files(self):
         from nicegui import Client, app, ui
         from vmi_analysis.circularization.polar_fit import SESSION_SCHEMA
-        from vmi_analysis.gui.jobs import Job, Stage
-        from vmi_analysis.gui.panels import accumulate, binning, calibration, centroid, circularize, dark, gmd_map, movie, pes, pipeline
+        from vmi_analysis.gui.jobs import Job
+        from vmi_analysis.gui.panels import accumulate, binning, calibration, centroid, circularize, dark, gmd_map, movie, pes
 
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -208,21 +208,13 @@ class GuiSubmissionTests(unittest.TestCase):
                 (calibration, "Clear session file", {"session.json": json.dumps({"schema": SESSION_SCHEMA})}),
                 (circularize, "Clear outputs", dict.fromkeys(("corrected.txt", "trig_order_1.png", "reassignment_map.png"), "plot")),
                 (pes, "Clear outputs", {"pes-spectra-test.npz": "PES"}),
-                (pipeline, "Clear outputs", {"pipeline-map.txt": "map", "vmi_2d_gmd_all.npy": "sum",
-                                             "vmi_gmd_bins.png": "plot", "gmd_bins_results.npz": "PES"}),
             )
             manager = Mock()
             for panel, label, files in cases:
                 with self.subTest(panel=panel.__name__, label=label):
                     for name, content in files.items():
                         (root / name).write_text(content, encoding="utf-8")
-                    stage = Stage("GMD map", [], cwd=folder, outputs=["pipeline-map.txt"], started=0, finished=1e12)
-                    skipped = Stage("Centroiding", [], cwd=folder, outputs=["detector.npy"], status="skipped")
-                    bins = Stage("Binning", [], cwd=folder, outputs=["vmi_2d_gmd_all.npy"], started=0, finished=1e12)
-                    spectra = Stage("PES", [], cwd=folder, outputs=["gmd_bins_results.npz"], started=0, finished=1e12)
                     manager.jobs.return_value = [
-                        Job("Pipeline", stages=[stage, skipped, bins, spectra], status="done", started=0, finished=1e12,
-                            extra={"output_dir": folder, "suffix": ""}),
                         Job("Accumulate", extra={"output_path": str(root / "sum.txt"), "live_path": str(partial)}, status="done"),
                         Job("PES", extra={"pes_spectra": str(root / "pes-spectra-test.npz")}, status="done"),
                         Job("Circularize", extra={"output": str(root / "corrected.txt"), "polar_preview": str(preview)}, status="done"),
@@ -396,34 +388,6 @@ class GuiSubmissionTests(unittest.TestCase):
             job = self.submit_form(gmd_map, store)
             self.assertEqual(job.cmd[job.cmd.index("--h5-dir") + 1], store["gmd_map.h5_dir"])
             self.assertEqual(job.cmd[job.cmd.index("--h5-pattern") + 1], "*RAW-*.h5")
-
-    def test_pipeline_overrides_stale_dataset_map_and_tuning_mode(self):
-        from vmi_analysis.gui.panels import pipeline
-        store = {MIGRATED_KEY: True,
-                 storage_key("vmi_picasso", "h5_dir"): "old data",
-                 storage_key("vmi_picasso", "gmd_map_path"): "old map",
-                 storage_key("processing", "tuning_only"): True,
-                 storage_key("processing", "num_cores"): 3.0,
-                 "pipeline.h5_dir": "pipeline data",
-                 "pipeline.h5_pattern": "*RAW-*.h5",
-                 "pipeline.gmd_path": "gmd.txt",
-                 "pipeline.map_out": "new map.txt", "binning.thresholds": "1,2"}
-        job = self.submit_form(pipeline, store, "Run pipeline")
-        self.assertEqual([s.name for s in job.stages], ["GMD map", "Centroiding", "Binning", "PES"])
-        cfg = parse_centroid_args(job.stages[1].cmd[3:]).settings["vmi_picasso"]
-        self.assertEqual(cfg["h5_dir"], str(ROOT / "pipeline data"))
-        self.assertEqual(cfg["h5_pattern"], "*RAW-*.h5")
-        self.assertEqual(job.stages[0].cmd[job.stages[0].cmd.index("--h5-pattern") + 1],
-                         "*RAW-*.h5")
-        self.assertEqual(cfg["gmd_map_path"], str(ROOT / "new map.txt"))
-        self.assertFalse(cfg["processing"]["tuning_only"])
-        self.assertEqual(cfg["processing"]["num_cores"], 3)
-        self.assertTrue(store[storage_key("processing", "tuning_only")])
-        args = job.stages[2].cmd
-        self.assertEqual(args[args.index("--gmd-map-path") + 1], cfg["gmd_map_path"])
-        self.assertEqual(args[args.index("--thresholds") + 1], "1,2")
-        for stage in job.stages:
-            self.assertNotIn("--config", stage.cmd)
 
     def test_binning_histogram_bins_start_blank_for_auto_binning(self):
         from nicegui import Client, app, ui

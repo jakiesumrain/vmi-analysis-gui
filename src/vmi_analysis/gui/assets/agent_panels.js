@@ -6,12 +6,13 @@ export default function (pi) {
         label: 'VMI panel',
         description: 'Inspect workbench operations or prepare a real panel job for the user to approve. '
             + 'Use describe first to learn the named parameters and defaults. '
+            + 'Use inspect with the view ID supplied by a read-only panel preview. '
             + 'Use status with the job ID returned after approval. Use wait to follow a running job. '
             + 'If wait returns a checkpoint, tell the user what to confirm in the app. '
             + 'Pass completed job IDs to subsequent stages. On a shared server, paths inside the container '
             + 'are /workspace and /datasets. The browser displays resolved paths and parameters before submission.',
         parameters: Type.Object({
-            action: Type.Union(['describe', 'propose', 'status', 'wait'].map(action => Type.Literal(action))),
+            action: Type.Union(['describe', 'inspect', 'propose', 'status', 'wait'].map(action => Type.Literal(action))),
             operation: Type.Optional(Type.String()),
             parameters: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
             job_id: Type.Optional(Type.String()),

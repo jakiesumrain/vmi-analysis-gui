@@ -3,19 +3,27 @@
 import json
 import os
 import sys
-import uuid
+import re
 from pathlib import Path
 
 from fastapi.responses import JSONResponse, Response
 from nicegui import app, ui
 
-from ..shared import generated_dir, workspace_root, workspace_timer
+from ..agent_panels import PanelOperation, boolean, number, resolve_path
+from ..shared import checked_path, generated_dir, workspace_root, workspace_timer
 from ..jobs import Job, JobManager, MANAGER, TERMINAL
 from ..resources import canonical_path
-from .. import theme
-from .common import (GENERATED, JobView, REPO_ROOT, action_bar, check_grid,
+from .. import shared, theme
+from .common import (GENERATED, JobView, REPO_ROOT, action_bar, adopt_agent_form, check_grid,
                      field_grid, file_url, num_input, open_folder_button,
                      path_input, persist, zoomable_image, delete_outputs)
+
+JOB_NAME = "Frame movie"
+PANEL_TITLE = "Frame Movie"
+DEFAULTS = {"h5_dataset": "raw/data", "n_frames": 20, "interval_ms": 500, "scale_frames": 10,
+            "cmap": "gray", "vmin_frac": 0.5, "vmax_pct": 99.9, "log_scale": False,
+            "save_movie": True, "movie_ext": ".mp4", "movie_fps": 0}
+
 
 # Fetch the newest frame without storing image payloads in the UI event history.
 _PLAYER_JS = """
@@ -23,9 +31,11 @@ _PLAYER_JS = """
 window.vmiMovie = null;
 
 function vmiMovieStop() {
+  window.vmiMovie?.observer?.disconnect();
   window.vmiMovie = null;
 }
 function vmiMovieStart(url) {
+  vmiMovieStop();
   const p = {url, index: 0, paused: false};
   window.vmiMovie = p;
   const img = document.getElementById('vmi-live-img');
@@ -76,25 +86,36 @@ function vmiMovieDraw(svg, frame) {
 async function vmiMovieStep(p) {
   if (p !== window.vmiMovie) return;
   try {
-    if (!p.paused) {
+    const img = document.getElementById('vmi-live-img');
+    const ctr = document.getElementById('vmi-live-counter');
+    if (!p.paused && img?.getClientRects().length && ctr) {
       const response = await fetch(p.url + '?after=' + p.index, {cache: 'no-store'});
       if (p !== window.vmiMovie || p.paused) return;
       if (response.status === 410) vmiMovieStop();
       if (response.status === 200) {
         const frame = await response.json();
-        if (p !== window.vmiMovie || p.paused) return;
-        const img = document.getElementById('vmi-live-img');
-        if (img) vmiMovieDraw(img, frame);
-        const ctr = document.getElementById('vmi-live-counter');
-        if (ctr) ctr.textContent = 'frame ' + frame.index + ' / ' + frame.total;
+        if (p !== window.vmiMovie || p.paused || !img.getClientRects().length) return;
+        const label = 'frame ' + frame.index + ' / ' + frame.total;
+        vmiMovieDraw(img, frame);
+        ctr.textContent = label;
         p.index = frame.index;
-        if (p.index === frame.total) vmiMovieStop();
+        if (p.index === frame.total) {
+          p.complete = true;
+          // Quasar remounts the plot when Movie is selected again.
+          p.observer = new MutationObserver(() => {
+            const target = document.getElementById('vmi-live-img');
+            const counter = document.getElementById('vmi-live-counter');
+            if (target && !target.firstChild) vmiMovieDraw(target, frame);
+            if (counter && counter.textContent !== label) counter.textContent = label;
+          });
+          p.observer.observe(document.body, {childList: true, subtree: true});
+        }
       }
     }
   } catch {
     // The next poll can recover from a transient network interruption.
   } finally {
-    if (p === window.vmiMovie) setTimeout(() => vmiMovieStep(p), 50);
+    if (p === window.vmiMovie && !p.complete) setTimeout(() => vmiMovieStep(p), 50);
   }
 }
 </script>
@@ -119,18 +140,153 @@ async def _preview_frame(job_id: str, after: int = 0):
 
 def _consume_preview_frame(job: Job, line: str) -> bool:
     prefix = "[preview-png] "
+    if line.startswith("Movie written: "):
+        path = canonical_path(line.removeprefix("Movie written: "), job.cwd)
+        if path in job.extra.get("movie_candidates", ()):
+            job.extra["movie_file"] = str(path)
+    elif match := re.match(r"  writing movie: frame (\d+)/(\d+) ", line):
+        frame, total = map(int, match.groups())
+        job.progress = frame / total
     if not line.startswith(prefix):
         return False
     index, total, width, height, png = line[len(prefix):].split(" ", 4)
+    job.progress = int(index) / int(total)
     job.extra["preview_frame"] = {"index": int(index), "total": int(total),
                                   "width": int(width), "height": int(height), "png": png}
     return True
 
 
+def movie_job(h5_dir, *, dark_path="", movie_dir=None, **settings):
+    cwd = workspace_root(REPO_ROOT)
+    values = DEFAULTS | settings
+    for key in ("log_scale", "save_movie"):
+        boolean(values[key])
+    source = checked_path(h5_dir, cwd=cwd) if h5_dir and str(h5_dir).strip() else None
+    if source is None or not source.is_dir():
+        raise ValueError("Choose an existing HDF5 directory.")
+    dark = checked_path(dark_path, cwd=cwd) if dark_path else None
+    if dark is not None and (not dark.is_file() or dark.suffix.lower() != ".npy"):
+        raise ValueError("Choose an existing dark frame .npy file or leave it blank.")
+    for key in ("h5_dataset", "cmap"):
+        value = values[key]
+        if not isinstance(value, str) or not value.strip() or "\x00" in value:
+            raise ValueError(f"Enter a valid {key.replace('_', ' ')}.")
+    for key in ("n_frames", "interval_ms", "scale_frames"):
+        value = values[key]
+        if ((type(value) is not int and (type(value) is not float or not value.is_integer())) or value < 1):
+            raise ValueError(f"{key.replace('_', ' ').capitalize()} must be a positive whole number.")
+        values[key] = int(value)
+    floor, percentile = map(number, (values["vmin_frac"], values["vmax_pct"]))
+    if not 0 <= floor < 1 or (values["log_scale"] and floor == 0) or not 0 < percentile <= 100:
+        raise ValueError("Use a vmin fraction below one and a vmax percentile above zero up to 100. "
+                         "Log scale requires a positive vmin fraction.")
+
+    default_dir = cwd / "movies"
+    folder = movie_dir if movie_dir is not None else default_dir
+    job = Job(JOB_NAME, cwd=str(cwd), consume_output=_consume_preview_frame)
+    cmd = [sys.executable, "-m", "vmi_analysis.imaging.h5_play_frames_movie", "--h5-dir", str(source),
+           "--headless", "--save-movie" if values["save_movie"] else "--no-save-movie"]
+    for key in ("h5_dataset", "n_frames", "interval_ms", "scale_frames", "cmap", "vmin_frac", "vmax_pct"):
+        cmd.append(f"--{key.replace('_', '-')}={values[key]}")
+    if dark is not None:
+        cmd += ["--dark-path", str(dark)]
+    if values["log_scale"]:
+        cmd.append("--log-scale")
+    if values["save_movie"]:
+        fps = number(0 if values["movie_fps"] is None else values["movie_fps"])
+        if fps < 0 or values["movie_ext"] not in (".mp4", ".gif"):
+            raise ValueError("Choose a supported movie format and a nonnegative frame rate.")
+        folder = checked_path(folder or cwd, write=True, cwd=cwd)
+        if folder.exists() and not folder.is_dir():
+            raise ValueError("Choose a movie output folder.")
+        extensions = (".mp4", ".gif") if values["movie_ext"] == ".mp4" else (".gif",)
+        targets = [folder / (source.name + ext) for ext in extensions]
+        for path in targets:
+            checked_path(path, write=True, cwd=cwd)
+            if path.is_dir():
+                raise ValueError("Choose a movie output path that is a file.")
+        frames = generated_dir(GENERATED) / "movie_frames" / job.id
+        cmd += ["--movie-dir", str(folder), "--movie-ext", values["movie_ext"],
+                "--movie-fps", str(fps), "--dump-frames", str(frames)]
+        values["movie_fps"] = fps
+        job.extra.update(frames_dir=str(frames), movie_candidates=tuple(map(canonical_path, targets)))
+    else:
+        cmd.append("--preview-stream")
+    job.cmd = cmd
+    job.extra["panel_form"] = dict(values, h5_dir=str(source), dark_path=str(dark) if dark else "",
+                                   movie_dir=str(folder))
+    return job
+
+
+def _prepare_agent(_jobs, params):
+    options = dict(params)
+    options["h5_dir"] = resolve_path(options.get("h5_dir"))
+    if options.get("dark_path"):
+        options["dark_path"] = resolve_path(options["dark_path"])
+    if options.get("movie_dir"):
+        options["movie_dir"] = resolve_path(options["movie_dir"], write=True)
+    try:
+        job = movie_job(**options)
+    except OverflowError as exc:
+        raise ValueError("Enter finite Movie settings.") from exc
+    values = job.extra["panel_form"]
+    summary = {
+        "Mode": "Export movie and frames" if values["save_movie"] else "Preview without saving files",
+        "HDF5 directory": values["h5_dir"], "Frame dataset": values["h5_dataset"],
+        "Frames": f"First {values['n_frames']} in file order",
+        "Playback interval (ms)": values["interval_ms"], "Scale frames": values["scale_frames"],
+        "Colormap": values["cmap"], "Log scale": values["log_scale"],
+        "vmin fraction": values["vmin_frac"], "vmax percentile": values["vmax_pct"],
+        "Dark frame": values["dark_path"] or "Off",
+    }
+    if values["save_movie"]:
+        summary.update({"Output directory": values["movie_dir"], "Format": values["movie_ext"],
+                        "Saved fps": values["movie_fps"] or "Match playback",
+                        "Output paths (existing files may be replaced)": [str(p) for p in job.extra["movie_candidates"]]})
+    return job, summary
+
+
+def agent_operations():
+    parameters = {
+        "h5_dir": {"type": "path", "description": "Directory of camera HDF5 files"},
+        "dark_path": {"type": "path", "description": "Optional precomputed dark frame"},
+        "movie_dir": {"type": "path", "description": "Movie output folder. Defaults to movies in the workspace."},
+    }
+    for key, value in DEFAULTS.items():
+        types = {bool: "boolean", int: "integer", float: "number", str: "string"}
+        parameters[key] = {"type": types[type(value)], "default": value}
+    parameters["movie_ext"]["choices"] = [".mp4", ".gif"]
+    parameters["n_frames"]["description"] = "First N frames in file order"
+    parameters["save_movie"]["description"] = "False streams a preview to the Movie panel without writing files"
+    parameters["movie_fps"].update(type="number", description="Zero matches playback speed")
+    return (PanelOperation("movie", {
+        "panel": PANEL_TITLE, "manual": "Movie", "parameters": parameters,
+        "summary": "Preview camera frames or export a movie. MP4 falls back to GIF when ffmpeg is unavailable.",
+    }, _prepare_agent, (JOB_NAME,), outputs=("movie_file",)),)
+
+
 def build(jobs: JobManager) -> None:
-    view = JobView(jobs, job_name='Frame movie', results_builder=_results)
+    def attach_movie(job):
+        for key, value in adopt_agent_form(job, "movie").items():
+            if key in fields:
+                fields[key].value = value
+        preview = "--preview-stream" in (job.cmd or ()) and (
+            job.status not in TERMINAL or job.status == "done" and "preview_frame" in job.extra)
+        live_state["job"] = job if preview else None
+        live_label.visible = live_row.visible = live_img.visible = preview
+        pause_btn.text = "Pause"
+        pause_btn.set_enabled(preview and job.status != "done")
+        if preview:
+            ui.run_javascript(f"vmiMovieStart({json.dumps(f'movie-preview/{job.id}')})")
+        else:
+            ui.run_javascript("vmiMovieStop()")
+        for previous in jobs.jobs():
+            if previous.created < job.created and previous.name == JOB_NAME and previous.status in TERMINAL:
+                previous.extra.pop("preview_frame", None)
+
+    view = JobView(jobs, job_name=JOB_NAME, results_builder=_results, attach_builder=attach_movie)
     theme.panel_header(
-        "Frame Movie",
+        PANEL_TITLE,
         "Preview camera frames in order or save them as a movie.",
         view=view)
     ui.add_body_html(_PLAYER_JS, shared=True)
@@ -178,52 +334,17 @@ def build(jobs: JobManager) -> None:
         for w in (movie_dir, movie_ext, movie_fps):
             w.bind_enabled_from(save_movie, "value")
 
+        fields = dict(h5_dir=h5_dir, h5_dataset=h5_dataset, dark_path=dark_path, n_frames=n_frames,
+                      interval_ms=interval_ms, scale_frames=scale_frames, cmap=cmap, vmin_frac=vmin_frac,
+                      vmax_pct=vmax_pct, log_scale=log_scale, save_movie=save_movie, movie_dir=movie_dir,
+                      movie_ext=movie_ext, movie_fps=movie_fps)
+
         def run():
-            saving = bool(save_movie.value)
-            live_label.visible = False
-            live_row.visible = False
-            live_img.visible = False
-            cmd = [sys.executable, "-m", "vmi_analysis.imaging.h5_play_frames_movie",
-                   "--h5-dir", h5_dir.value,
-                   "--h5-dataset", h5_dataset.value,
-                   "--n-frames", str(int(n_frames.value or 0)),
-                   "--interval-ms", str(int(interval_ms.value or 500)),
-                   "--cmap", cmap.value,
-                   "--vmin-frac", str(vmin_frac.value),
-                   "--vmax-pct", str(vmax_pct.value),
-                   "--scale-frames", str(int(scale_frames.value or 10)),
-                   "--dark-path", dark_path.value,
-                   "--movie-dir", movie_dir.value,
-                   "--movie-ext", movie_ext.value,
-                   "--movie-fps", str(movie_fps.value or 0),
-                   "--headless",
-                   "--save-movie" if saving else "--no-save-movie"]
-            if log_scale.value:
-                cmd.append("--log-scale")
-            for previous in jobs.jobs():
-                if previous.name == "Frame movie" and previous.status in TERMINAL:
-                    previous.extra.pop("preview_frame", None)
-            job = Job(name="Frame movie", cmd=cmd, cwd=str(workspace_root(REPO_ROOT)))
-            if saving:
-                frames_dir = generated_dir(GENERATED) / "movie_frames" / uuid.uuid4().hex
-                cmd.extend(["--dump-frames", str(frames_dir)])
-                job.extra["frames_dir"] = str(frames_dir)
-            else:
-                cmd.append("--preview-stream")
-                job.consume_output = _consume_preview_frame
-            jobs.submit(job)
-            live_state["job"] = None if saving else job
-            if saving:
-                ui.run_javascript("vmiMovieStop()")
-            else:
-                live_label.visible = True
-                live_row.visible = True
-                live_img.visible = True
-                pause_btn.text = "Pause"
-                pause_btn.enable()
-                ui.run_javascript(
-                    f"vmiMovieStart({json.dumps(f'movie-preview/{job.id}')})")
-            view.attach(job)
+            try:
+                job = movie_job(**{key: widget.value for key, widget in fields.items()})
+                view.attach(jobs.submit(job))
+            except (OSError, ValueError, OverflowError) as exc:
+                ui.notify(str(exc), type="warning")
 
         with action_bar(view, on_click=run):
             ui.button("Clear outputs", icon="delete",
@@ -358,7 +479,12 @@ def _results(job: Job):
     movie = result_path.read_text(encoding="utf-8") if result_path.is_file() else ""
     if movie and Path(movie).is_file():
         ui.label(f"Movie: {movie}").classes("vmi-subtitle")
-        open_folder_button(movie)
+        with ui.row().classes("items-center gap-2"):
+            url = file_url(movie)
+            ui.button("Download movie", icon="download",
+                      on_click=lambda: ui.download.from_url(url, filename=Path(movie).name)).props("flat")
+            if not shared.SERVER:
+                open_folder_button(movie)
         if movie.lower().endswith(".mp4"):
             ui.video(file_url(movie)).classes("w-full max-w-2xl")
         else:

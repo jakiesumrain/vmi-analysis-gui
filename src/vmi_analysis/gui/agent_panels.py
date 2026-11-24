@@ -36,6 +36,16 @@ class PanelView:
     context: dict | None = None
 
 
+@dataclass(frozen=True)
+class PanelInspection:
+    """Read-only access to a single browser tab's panel state."""
+
+    panel: str
+    operation: str
+    label: str
+    read_snapshot: Callable[[], dict]
+
+
 class PanelRegistry:
     def __init__(self):
         self._operations = {}

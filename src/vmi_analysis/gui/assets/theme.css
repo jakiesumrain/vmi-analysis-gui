@@ -592,35 +592,6 @@ html:has(.vmi-agent-page) { overflow-anchor: none; }
 .vmi-action-bar { padding-top: var(--vmi-space-2); }
 .vmi-action-danger { margin-left: auto; }
 
-/* ---- pipeline stage track ---- */
-.vmi-stage-chip {
-  border: 1px solid var(--vmi-hairline);
-  border-radius: 999px;
-  padding: 2px 8px 2px 4px;
-  background: var(--vmi-surface-card);
-}
-.vmi-stage-index {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--vmi-surface-soft);
-  color: var(--vmi-muted);
-  font-size: var(--vmi-text-overline);
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.vmi-stage-name {
-  font-size: var(--vmi-text-xs);
-  font-weight: 600;
-  color: var(--vmi-body);
-}
-.vmi-stage-sep {
-  color: var(--vmi-hairline-strong);
-  font-size: 16px;
-}
-
 /* ---- log console ---- */
 .vmi-console {
   padding-top: var(--vmi-space-3);
