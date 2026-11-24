@@ -73,6 +73,8 @@ class Job:
     exclusive: list[str] = field(default_factory=list)
     wait_reason: str = ""
     consume_output: Callable[[Job, str], bool] | None = field(default=None, repr=False)
+    on_admit: Callable[[Job], None] | None = field(default=None, repr=False)
+    on_terminal: Callable[[Job, str], None] | None = field(default=None, repr=False)
     owner: str | None = None
     checkpoint: Checkpoint | None = None
     _access: Access = field(default_factory=Access, repr=False)
@@ -136,6 +138,8 @@ class JobManager:
                 raise RuntimeError("The job manager is shutting down")
             if job.id in self._jobs:
                 raise ValueError("This job has already been submitted")
+            if job.on_admit is not None:
+                job.on_admit(job)
             job._access = access
             self._jobs[job.id] = job
             self._queue.append(job.id)
@@ -261,15 +265,28 @@ class JobManager:
         if job.status in ("queued", "waiting"):
             if job.status == "queued":
                 self._queue.remove(job.id)
-            job.status = "cancelled"
             job.finished = time.time()
             job.checkpoint = None
             job.wait_reason = ""
             for stage in job.stages or ():
                 if stage.status not in TERMINAL and stage.status != "skipped":
                     stage.status = "cancelled"
+            self._record_terminal(job, "cancelled")
         elif job._proc is not None:
             self._terminate_locked(job)
+
+    @staticmethod
+    def _record_terminal(job: Job, status: str) -> None:
+        if job.on_terminal is not None:
+            try:
+                job.on_terminal(job, status)
+            except Exception as exc:
+                job.log.append(f"[gui] could not save the run record: {exc}")
+                if status == "done":
+                    status = "failed"
+                    job.returncode = -1
+                    job.progress = None
+        job.status = status
 
     def _terminate_locked(self, job: Job) -> None:
         if job._termination_thread is not None:
@@ -380,15 +397,16 @@ class JobManager:
                 return
             job.finished = time.time()
             if job._cancel_requested:
-                job.status = "cancelled"
+                status = "cancelled"
                 for stage in job.stages or ():
                     if stage.status in ("queued", "waiting"):
                         stage.status = "cancelled"
             elif job.returncode == 0:
-                job.status = "done"
+                status = "done"
                 job.progress = 1.0
             else:
-                job.status = "failed"
+                status = "failed"
+            self._record_terminal(job, status)
             self._workers.pop(job.id)
             self._schedule_locked()
 

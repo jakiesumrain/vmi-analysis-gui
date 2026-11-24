@@ -19,6 +19,7 @@ class PanelOperation:
     outputs: tuple[str, ...] = ()
     workflow_panels: tuple[str, ...] = ()
     measure_result: Callable[[object, Job, dict], dict] | None = None
+    render_review: Callable[[Job], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,11 @@ class PanelRegistry:
             raise ValueError("Use named measurement parameters.")
         spec = self._job_operations[job.name]
         return {"job_id": job.id, "panel": job.name, **spec.measure_result(jobs, job, parameters)}
+
+    def render_review(self, job):
+        renderer = self._job_operations[job.name].render_review
+        if renderer is not None:
+            renderer(job)
 
     def workflows(self):
         return {name: operation.workflow_panels for name, operation in self._job_operations.items()

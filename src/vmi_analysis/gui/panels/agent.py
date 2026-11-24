@@ -14,7 +14,7 @@ from vmi_analysis.agent_backend import (AGENTS, API_FORMATS, SLASH_CONTROLS, Age
                                         list_provider_models)
 from vmi_analysis.paths import GENERATED_DIR
 
-from .. import shared, theme
+from .. import analysis_runs, shared, theme
 from ..agent_attachments import (IMAGE_SUFFIXES, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_FILES, MAX_BATCH_BYTES,
                                  MAX_PROMPT_IMAGES, attachment_root, prompt_image)
 from ..agent_completion import path_completions
@@ -112,6 +112,9 @@ def _build_page(jobs, *, registry, navigate):
 
     def place_connection():
         nonlocal connection_button
+        if not shared.SERVER:
+            ui.button("Analysis runs", icon="folder_open", on_click=lambda: analysis_runs.open_history(jobs)) \
+                .props("flat dense no-caps")
         connection_button = ui.button("Connection", icon="tune").props(
             'flat dense no-caps aria-label="Connection" aria-expanded="false"')
         connection_button.classes("vmi-agent-connection-toggle")
@@ -602,6 +605,7 @@ def _build_page(jobs, *, registry, navigate):
                         for label, value in inputs.items():
                             if value is not None:
                                 ui.label(f"{label} · {value}").classes("w-full break-all")
+                        registry.render_review(job)
                         with ui.row().classes("items-center gap-2"):
                             ui.button("Approve and run", icon="play_arrow",
                                       on_click=lambda: decide(session, key, job, True))

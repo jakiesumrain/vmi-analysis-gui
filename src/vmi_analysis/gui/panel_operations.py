@@ -5,6 +5,7 @@ from functools import partial
 from vmi_analysis.ion_tof import GMD_SHIFTS
 
 from .agent_panels import PanelOperation, PanelRegistry, number
+from .analysis_runs import operation as python_analysis_operation
 from .jobs import Job, Stage
 from .panels import accumulate, binning, calibration, centroid, circularize, dark, gmd_map, ion_live, ion_luna, ion_pipeline, ion_tof, movie, pes
 
@@ -58,6 +59,7 @@ def _dump_to_tof(registry, jobs, params):
 
 def build_registry():
     registry = PanelRegistry()
+    registry.register(python_analysis_operation())
     for panel in (dark, gmd_map, accumulate, centroid, binning, circularize, calibration, pes, movie, ion_luna, ion_tof, ion_pipeline, ion_live):
         for operation in panel.agent_operations():
             registry.register(operation)

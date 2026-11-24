@@ -1,10 +1,11 @@
 # Agent-first overhaul plan
 
-**Current baseline** — Phase 3 adds image messages and authorized run
-measurements for Ion TOF screenshots. Phase 2C panel coverage and its Ion
-workflow acceptance check are complete.
+**Current baseline** — Phase 4 supports reviewed Python analyses and
+temporary or saved analysis panels in local mode. Phase 3 added image
+messages and measurements for linked Ion TOF runs.
 
-**Next milestone** — Add ad hoc analysis and temporary panels in Phase 4. The
+**Next milestone** — Validate an isolated worker for shared-server Python
+analysis and temporary panels. The
 [Agent-first design guide](agent-first-design.md) defines the product goals.
 
 ## Scope
@@ -148,6 +149,17 @@ propose a built-in version through the normal project review process.
 runs, inspect the script and outputs, generate a temporary panel, and use it
 on a second dataset. Reopen the saved version and reproduce the result.
 Verify workspace ownership and the cancellation and failed-script paths.
+
+**Verified in local mode** — In Chromium, a simulated Agent proposed a
+Python script and a form for comparing saved Ion TOF peak centers. The
+reviewed script reported a 4 ns drift, the temporary panel reported
+9 ns on a second input pair, and the saved panel reproduced 9 ns after
+a browser reload. The app runs the approved script snapshot as a job
+using its Python environment. It records the script digest, input paths
+and file timestamps, parameter values, runtime, terminal status, logs,
+and generated artifacts. Tests cover rejection of paths outside the
+workspace, cancellation, and failed scripts. Shared-server execution
+remains disabled until an isolated worker is verified in deployment.
 
 ## Release criteria
 

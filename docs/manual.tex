@@ -466,6 +466,28 @@ is linked, it can check the strongest histogram bin in a TOF interval or
 read fitted Gaussian centers and FWHMs from a saved fit. A histogram bin
 center and a fitted peak center are different measurements.
 
+\subsection{Run a Python analysis with the Agent}
+
+In local mode, ask the Agent to draft a Python script and propose it as a
+Python analysis. Read the script, inputs, and parameters in the review
+before choosing \emph{Approve and run}. The job uses the Python environment
+running VMI Analysis and runs with your local account permissions.
+
+Open \emph{Analysis runs} in the Agent header to follow the log, cancel a
+run, or download the approved script, run record, log, and output files.
+The script receives the run record path as its first argument. The record
+contains named input paths and JSON parameters. Write result files directly
+in the script's current working directory, which is a fresh output folder
+for that run.
+
+Ask the Agent to include a panel declaration when the analysis should have
+an editable form. From the run record, choose \emph{Open temporary panel}
+to change inputs and rerun it. Choose \emph{Save panel} to keep that version
+in the workspace, or \emph{Discard draft} to remove the temporary form.
+A saved panel can be reopened from \emph{Analysis runs}. Download its panel
+definition to share the declaration and the approved script for project
+review. Python analysis jobs are currently available in local mode.
+
 \subsection{Server lifecycle, ports and reconnecting}
 \label{sec:lifecycle}
 
