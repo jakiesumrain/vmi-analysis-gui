@@ -3,12 +3,12 @@ async page => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   const names = ['GMD Map', 'Movie', 'Dark Frame', 'Accumulate', 'Centroiding',
-                 'Binning', 'Trig Calibration', 'Circularize', 'PES', 'TPX3 Dump', 'Ion TOF', 'Ion Pipeline', 'Live TPX3',
+                 'Binning', 'Trig Calibration', 'Circularize', 'PES', 'TPX3 Dump', 'Ion TOF', 'Ion momenta', 'Ion Pipeline', 'Live TPX3',
                  'TPX3 Dump (fallback)', 'Ion TOF (fallback)', 'Ion Pipeline (fallback)'];
   const titles = {'Movie': 'Frame Movie', 'Accumulate': 'Fast Accumulate',
                   'Centroiding': 'Picasso Centroiding', 'Binning': 'GMD Binning'};
   const runLabels = {'Trig Calibration': 'Load image & remap', 'PES': 'Generate spectra',
-                     'Ion TOF': 'Plot TOF', 'Ion Pipeline': 'Run ion pipeline', 'Live TPX3': 'Start preview',
+                     'Ion TOF': 'Plot TOF', 'Ion momenta': 'Plot positions and TOF', 'Ion Pipeline': 'Run ion pipeline', 'Live TPX3': 'Start preview',
                      'TPX3 Dump (fallback)': 'Dump TPX3', 'Ion TOF (fallback)': 'Plot TOF',
                      'Ion Pipeline (fallback)': 'Run ion pipeline'};
   const show = async name => {

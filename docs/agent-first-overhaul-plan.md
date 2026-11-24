@@ -87,7 +87,7 @@ The rollout groups below summarize Phase 2C coverage.
 
 | Rollout group | Initial coverage |
 | --- | --- |
-| Ion workflows | TPX3 Dump, Ion TOF, and Ion Pipeline. Cover dump handoff, GMD2 alignment and gating, and fit selection. |
+| Ion workflows | TPX3 Dump, Ion TOF, Ion momenta, and Ion Pipeline. Cover dump handoff, GMD2 alignment and gating, fit selection, and detector-position and TOF histograms in Ion momenta. |
 | Electron batch work | Dark Frame, GMD Map, Accumulate, Centroiding, Binning, and Circularize share their manual job builders with the Agent. |
 | Interactive electron work | Trig Calibration passes the loaded polar image context and selected ring band to the Agent. The panel reviews the draft, runs the same fit as the manual button, and hands accepted calibrations to Circularize. PES also shares its spectrum job builder with the Agent. The Agent reviews fit drafts against the current displayed spectra and runs the same peak fit as the manual button. |
 | Previews and streaming | Movie uses its manual preview and export jobs for Agent runs. Live TPX3 exposes read-only summaries from the active browser tab. Camera acquisition controls stay outside this scope. |

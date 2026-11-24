@@ -21,7 +21,7 @@ from vmi_analysis.gui.panel_operations import build_registry
 from vmi_analysis.gui.jobs import Job, JobManager, ResourceBusyError
 from vmi_analysis.ion_acquisition import SCHEMA
 from vmi_analysis.gui.resources import job_access
-from vmi_analysis.gui.panels import accumulate, agent, binning, calibration, centroid, circularize, dark, gmd_map, ion_live, ion_luna, ion_pipeline, ion_tof, movie, pes
+from vmi_analysis.gui.panels import accumulate, agent, binning, calibration, centroid, circularize, dark, gmd_map, ion_live, ion_luna, ion_momenta, ion_pipeline, ion_tof, movie, pes
 from vmi_analysis.gui.panels.common import adopt_agent_form
 
 
@@ -541,6 +541,36 @@ class AgentPanelTests(unittest.TestCase):
         ):
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, message):
                 self.registry.prepare(self.jobs, "ion_pipeline", {**params, **change})
+
+    def test_ion_momenta_reuses_dump_input_and_manual_builder(self):
+        collection = self.workspace / "dump.segments.json"
+        source = self.workspace / "hits.h5"
+        metadata = self.workspace / "metadata.h5"
+        for path in (source, metadata):
+            path.touch()
+        collection.write_text(json.dumps({"schema": SCHEMA, "segments": [
+            {"data": source.name, "metadata": metadata.name},
+        ]}), encoding="utf-8")
+        dump = Job(ion_luna.JOB_NAME, status="done", owner=self.account.name,
+                   extra={"collection": str(collection), "output": str(self.workspace / "dump.h5")})
+        self.jobs._jobs[dump.id] = dump
+        params = {"dump_job_id": dump.id, "source": "both", "bin_size_ns": 5,
+                  "minimum_ns": 8900, "maximum_ns": 11000}
+        agent_job, summary = self.registry.prepare(self.jobs, "ion_momenta", params)
+        manual = ion_momenta.positions_job(collection, source="both", width=5, low=8900, high=11000)
+        self.assertEqual(agent_job.cmd[:6] + agent_job.cmd[7:], manual.cmd[:6] + manual.cmd[7:])
+        self.assertEqual(agent_job.extra["panel_form"], manual.extra["panel_form"])
+        self.assertEqual(summary["Count"], "Both")
+        self.assertIn(collection, job_access(agent_job).reads)
+        self.assertIn(source, job_access(agent_job).reads)
+        self.assertIn(Path(agent_job.extra["histogram"]), job_access(agent_job).writes)
+        for invalid in ({"input": "/workspace/dump.segments.json"}, {"bin_size_ns": 0},
+                        {"maximum_ns": 8900}, {"source": "unknown"}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.registry.prepare(self.jobs, "ion_momenta", params | invalid)
+        with patch.object(shared, "current_account", return_value=SimpleNamespace(name="other")):
+            with self.assertRaisesRegex(ValueError, "from your workspace"):
+                self.registry.prepare(self.jobs, "ion_momenta", params)
 
     def test_folder_dump_proposal_marks_the_folder_input_mode(self):
         self.datasets.joinpath("frames").mkdir()
