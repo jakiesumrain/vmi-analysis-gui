@@ -21,7 +21,7 @@ from vmi_analysis.gui.panel_operations import build_registry
 from vmi_analysis.gui.jobs import Job, JobManager, ResourceBusyError
 from vmi_analysis.ion_acquisition import SCHEMA
 from vmi_analysis.gui.resources import job_access
-from vmi_analysis.gui.panels import agent, dark, ion_luna, ion_tof
+from vmi_analysis.gui.panels import agent, dark, ion_luna, ion_pipeline, ion_tof
 from vmi_analysis.gui.panels.common import adopt_agent_form
 
 
@@ -209,6 +209,42 @@ class AgentPanelTests(unittest.TestCase):
             self.registry.prepare(self.jobs, "ion_tof", {"input": "missing.h5", "pending_input": True})
         with self.assertRaisesRegex(ValueError, "does not exist"):
             self.registry.prepare(self.jobs, "ion_tof", {"input": "missing.h5"})
+
+    def test_ion_pipeline_proposal_uses_manual_builder_and_workspace_paths(self):
+        scan = self.datasets / "scan"
+        point = scan / "Tr200p8_ion"
+        point.mkdir(parents=True)
+        params = {
+            "input": "/datasets/scan", "output": "/workspace/ion-results",
+            "source": "clusters", "fit_tof": "ungated", "gmd_shift": -2,
+            "peaks": [{"name": " A ", "low": 10150, "high": 11050, "center": 10545},
+                      {"name": "B", "low": 8800, "high": 9600, "center": 9155}],
+        }
+        description = self.registry.describe("ion_pipeline")
+        self.assertEqual(description["parameters"]["gmd_shift"]["default"], -1)
+        self.assertNotIn("wsl_executable", description["parameters"])
+        self.assertNotIn("ion_pipeline_fallback", self.registry.describe())
+        self.account.settings["ion_pipeline.wsl_executable"] = "tpx3dump-custom"
+        proposed, summary = self.registry.prepare(self.jobs, "ion_pipeline", params)
+        manual = ion_pipeline.pipeline_job(scan, self.workspace / "ion-results", params)
+        self.assertEqual(proposed.extra["settings"], manual.extra["settings"])
+        self.assertEqual(proposed.extra["settings"]["wsl_executable"], "")
+        self.assertEqual(proposed.extra["panel_form"]["gate"], True)
+        self.assertEqual(summary["Ratio CSV peak pair"], ["A", "B"])
+        self.assertEqual(proposed.reads, [str(point)])
+        self.assertEqual(self.jobs.jobs(), [])
+        access = job_access(proposed)
+        self.assertIn(point, access.reads)
+        self.assertIn(Path(proposed.extra["output"]), access.writes)
+        for change, message in (
+            ({"output": "/datasets/output"}, "read-only"),
+            ({"fit_bins": True}, "finite numeric"),
+            ({"disable_clustering": True}, "Enable clustering"),
+            ({"wsl_executable": "custom"}, "listed by describe"),
+            ({"peaks": [params["peaks"][0]] * 2}, "distinct name"),
+        ):
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, message):
+                self.registry.prepare(self.jobs, "ion_pipeline", {**params, **change})
 
     def test_folder_dump_proposal_marks_the_folder_input_mode(self):
         self.datasets.joinpath("frames").mkdir()

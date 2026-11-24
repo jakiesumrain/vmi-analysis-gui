@@ -3,8 +3,8 @@
 **Current baseline** — Phase 2B is complete. PR #85 added screenshot paste
 and file drop to the Agent composer.
 
-**Next milestone** — Phase 2C rolls out Agent support across the standard
-panels after the ion workflow checkpoint. The
+**Next milestone** — Phase 2C moves to the electron batch panels after
+the ion rollout. The
 [Agent-first design guide](agent-first-design.md) defines the product goals.
 
 ## Scope
@@ -75,7 +75,15 @@ and Ion TOF panels show the correlations and ask the user to confirm
 the shift. A paused run keeps its file reservations and releases its
 worker slot. It survives browser reload within the same server process.
 
-The remaining rollout follows the groups below.
+Ion Pipeline shares a job builder between the panel and the Agent. The
+approval shows the resolved GMD2 gate, shift, fit source, peak windows,
+and LUNA settings. The Agent can follow output by completed delay
+position. Results include the yield CSV, yield plot, and a ratio CSV
+for the first configured peak divided by the second. The Ion Pipeline
+panel adopts the approved inputs and shows the same results as a
+manual run.
+
+The rollout groups below define the remaining coverage.
 
 | Rollout group | Initial coverage |
 | --- | --- |

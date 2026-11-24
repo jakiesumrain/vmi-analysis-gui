@@ -20,6 +20,7 @@ DEFAULT_PEAKS = [
 ]
 CSV_NAME = "ion-yields.csv"
 FIGURE_NAME = "ion-yields.png"
+RATIO_NAME = "ion-yield-ratio.csv"
 COLUMNS = ("folder", "delay_mm", "peak", "frames", "selected_frames", "segments",
            "center_ns", "sigma_ns", "window_min_ns", "window_max_ns", "counts",
            "hits_per_frame", "poisson_error", "status")
@@ -105,6 +106,22 @@ def measure(position, options, selected, fit_peak):
                    status="OK")
 
 
+def yield_ratios(rows, numerator, denominator):
+    """Return (folder, delay in mm, ratio) for each folder with either peak."""
+    pairs = {}
+    for row in rows:
+        if row["peak"] in (numerator, denominator):
+            pairs.setdefault(row["folder"], {})[row["peak"]] = row
+    for folder, pair in sorted(pairs.items(), key=lambda item: float(next(iter(item[1].values()))["delay_mm"])):
+        first, second = pair.get(numerator), pair.get(denominator)
+        ratio = None
+        if first and second and first["status"] == second["status"] == "OK":
+            a, b = float(first["hits_per_frame"]), float(second["hits_per_frame"])
+            if isfinite(a) and isfinite(b) and b > 0 and isfinite(quotient := a / b):
+                ratio = quotient
+        yield folder, float(next(iter(pair.values()))["delay_mm"]), ratio
+
+
 def save_plot(path, rows, names, ylabel):
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
@@ -159,7 +176,7 @@ def run(root, output, options):
             ThreadPoolExecutor(max_workers=options.get("workers", 1)) as executor:
         csv_writer = csv.DictWriter(file, COLUMNS)
         csv_writer.writeheader()
-        for measured in executor.map(process, enumerate(points, 1)):
+        for completed, measured in enumerate(executor.map(process, enumerate(points, 1)), 1):
             rows.extend(measured)
             csv_writer.writerows(measured)
             file.flush()
@@ -167,7 +184,17 @@ def run(root, output, options):
                 summary = (f"{row['counts']:,} / {row['selected_frames']:,} frames"
                            if row["status"] == "OK" else row["status"])
                 print(f"  {row['folder']} · {row['peak']}: {summary}", flush=True)
-    save_plot(output / FIGURE_NAME, rows, [peak["name"] for peak in options["peaks"]], backend.y_label(options))
+            if options.get("backend") != "fallback":
+                print(f"Delay positions written: {completed}/{len(points)}", flush=True)
+    names = [peak["name"] for peak in options["peaks"]]
+    if options.get("backend") != "fallback" and len(names) > 1:
+        numerator, denominator = names[:2]
+        with (output / RATIO_NAME).open("w", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow(("folder", "delay_mm", "numerator", "denominator", "ratio"))
+            writer.writerows((folder, delay, numerator, denominator, ratio)
+                             for folder, delay, ratio in yield_ratios(rows, numerator, denominator))
+    save_plot(output / FIGURE_NAME, rows, names, backend.y_label(options))
     print(f"{sum(row['status'] == 'OK' for row in rows)}/{len(rows)} peak measurements completed.", flush=True)
     return rows
 
