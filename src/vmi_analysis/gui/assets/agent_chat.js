@@ -149,6 +149,121 @@
     };
   }
 
+  function setupAttachments(prompt) {
+    const composer = prompt?.closest('.vmi-agent-composer');
+    const eventName = composer?.dataset.agentUploadEvent;
+    if (!composer || !eventName) return () => {};
+    const maxFiles = Number(composer.dataset.agentMaxFiles);
+    const maxFileBytes = Number(composer.dataset.agentMaxFileBytes);
+    const maxBatchBytes = Number(composer.dataset.agentMaxBatchBytes);
+    const controllers = new Set();
+    let dragDepth = 0;
+    let pending = 0;
+
+    const report = payload => emitEvent(eventName, payload);
+    const hasFiles = event => Array.from(event.dataTransfer?.types || []).includes('Files');
+
+    function screenshot(file) {
+      const extension = {'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp'}[file.type] || 'png';
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      return new File([file], `screenshot-${stamp}.${extension}`, {type: file.type || 'image/png'});
+    }
+
+    async function receive(fileList, {paste = false} = {}) {
+      let files = Array.from(fileList || []);
+      if (!files.length) return;
+      if (paste) files = files.map(file =>
+        file.type.startsWith('image/') && (!file.name || file.name === 'image.png') ? screenshot(file) : file);
+      const total = files.reduce((sum, file) => sum + file.size, 0);
+      let error = '';
+      if (files.length > maxFiles) error = `Attach up to ${maxFiles} files at a time.`;
+      else if (files.some(file => file.size > maxFileBytes)) error = 'Each attachment must be 25 MiB or smaller.';
+      else if (total > maxBatchBytes) error = 'Keep each attachment batch below 100 MiB.';
+      if (error) return report({action: 'error', message: error});
+
+      const controller = new AbortController();
+      controllers.add(controller);
+      pending += 1;
+      composer.setAttribute('aria-busy', 'true');
+      report({action: 'start', count: files.length});
+      try {
+        const form = new FormData();
+        files.forEach(file => form.append('files', file, file.name));
+        const response = await fetch('/agent-attachments', {
+          method: 'POST', body: form, signal: controller.signal, credentials: 'same-origin',
+        });
+        let payload = null;
+        try { payload = await response.json(); } catch { /* The server may return a plain-text error. */ }
+        if (!response.ok) {
+          const detail = typeof payload?.detail === 'string' ? payload.detail : `Upload failed (${response.status}).`;
+          throw new Error(detail);
+        }
+        if (!Array.isArray(payload?.paths)) throw new Error('The upload returned an invalid response.');
+        report({action: 'add', paths: payload.paths});
+        prompt.focus({preventScroll: true});
+      } catch (cause) {
+        if (cause.name !== 'AbortError') report({action: 'error', message: cause.message});
+      } finally {
+        controllers.delete(controller);
+        pending -= 1;
+        if (!pending) composer.setAttribute('aria-busy', 'false');
+        report({action: 'finish'});
+      }
+    }
+
+    function onPaste(event) {
+      const files = Array.from(event.clipboardData?.files || []);
+      if (!files.length) return;
+      event.preventDefault();
+      receive(files, {paste: true});
+    }
+
+    function onDragEnter(event) {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      dragDepth += 1;
+      composer.classList.add('vmi-agent-composer-receiving');
+    }
+
+    function onDragOver(event) {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+      composer.classList.add('vmi-agent-composer-receiving');
+    }
+
+    function onDragLeave(event) {
+      if (!hasFiles(event)) return;
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (!dragDepth || !composer.contains(event.relatedTarget)) {
+        dragDepth = 0;
+        composer.classList.remove('vmi-agent-composer-receiving');
+      }
+    }
+
+    function onDrop(event) {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      dragDepth = 0;
+      composer.classList.remove('vmi-agent-composer-receiving');
+      receive(event.dataTransfer.files);
+    }
+
+    prompt.addEventListener('paste', onPaste);
+    composer.addEventListener('dragenter', onDragEnter);
+    composer.addEventListener('dragover', onDragOver);
+    composer.addEventListener('dragleave', onDragLeave);
+    composer.addEventListener('drop', onDrop);
+    return () => {
+      controllers.forEach(controller => controller.abort());
+      prompt.removeEventListener('paste', onPaste);
+      composer.removeEventListener('dragenter', onDragEnter);
+      composer.removeEventListener('dragover', onDragOver);
+      composer.removeEventListener('dragleave', onDragLeave);
+      composer.removeEventListener('drop', onDrop);
+    };
+  }
+
   function watchConversation() {
     const next = tabs.querySelector('.vmi-agent-page');
     if (next === page) return;
@@ -160,6 +275,7 @@
     const latest = page.querySelector('.vmi-agent-latest');
     const prompt = page.querySelector('.vmi-agent-prompt textarea');
     const stopCompletion = setupCompletion(prompt, page.querySelector('.vmi-agent-completions'));
+    const stopAttachments = setupAttachments(prompt);
     const scroller = document.scrollingElement;
     let follow = true;
 
@@ -183,6 +299,7 @@
     latest.addEventListener('click', jumpToLatest);
     disconnect = () => {
       stopCompletion();
+      stopAttachments();
       observer.disconnect();
       window.removeEventListener('scroll', updateLatest);
       latest.removeEventListener('click', jumpToLatest);

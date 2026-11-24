@@ -442,6 +442,23 @@ html:has(.vmi-agent-page) { overflow-anchor: none; }
   border-radius: 1.5rem;
   box-shadow: var(--vmi-shadow-1);
 }
+.vmi-agent-composer-receiving { border-color: var(--vmi-primary); }
+.vmi-agent-drop-label {
+  position: absolute;
+  inset: var(--vmi-space-2);
+  z-index: 4;
+  visibility: hidden;
+  pointer-events: none;
+  color: var(--vmi-primary);
+  background: var(--vmi-surface-elevated);
+  border: 1px dashed var(--vmi-primary);
+  border-radius: var(--vmi-radius-xl);
+}
+.vmi-agent-composer-receiving .vmi-agent-drop-label { visibility: visible; }
+.vmi-agent-upload-status {
+  padding: var(--vmi-space-1) var(--vmi-space-2);
+  color: var(--vmi-muted);
+}
 .vmi-agent-completions {
   position: absolute;
   bottom: calc(100% + var(--vmi-space-2));

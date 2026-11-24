@@ -15,6 +15,8 @@ from vmi_analysis.agent_backend import (AGENTS, API_FORMATS, SLASH_CONTROLS, Age
 from vmi_analysis.paths import GENERATED_DIR
 
 from .. import shared, theme
+from ..agent_attachments import (MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_FILES, MAX_BATCH_BYTES,
+                                 attachment_root)
 from ..agent_completion import path_completions
 from ..agent_panels import PanelView
 from ..jobs import TERMINAL
@@ -158,26 +160,34 @@ def _build_page(jobs, *, registry, navigate):
     workflow_views = {name: _workflow_card(jobs, name, targets, navigate)
                       for name, targets in registry.workflows().items()}
 
-    with ui.column().classes("vmi-agent-composer w-full"):
+    with ui.column().classes("vmi-agent-composer w-full") as composer:
         ui.button("Latest messages", icon="arrow_downward").props(
             'flat dense no-caps hidden').classes("vmi-agent-latest")
         context_note = ui.label().classes("vmi-agent-context")
         context_note.visible = False
+        upload_status = ui.label("").classes("vmi-agent-upload-status vmi-caption").props('role="status"')
+        upload_status.visible = False
         attachments_row = ui.row().classes("vmi-agent-attachments w-full items-center gap-2")
         attachments_row.visible = False
         prompt = (
             ui.textarea("Instruction", placeholder="Message the Agent")
             .classes("vmi-agent-prompt w-full")
-            .props('borderless dense autogrow rows=1 aria-label="Instruction" autocomplete=off')
+            .props('borderless dense autogrow rows=1 aria-label="Instruction" autocomplete=off '
+                   'aria-description="Paste or drop files to attach them"')
         )
         completion_event = f"agent-completion-{prompt.id}"
+        upload_event = f"agent-upload-{prompt.id}"
+        composer.props(
+            f'data-agent-upload-event="{upload_event}" data-agent-max-files="{MAX_ATTACHMENT_FILES}" '
+            f'data-agent-max-file-bytes="{MAX_ATTACHMENT_BYTES}" data-agent-max-batch-bytes="{MAX_BATCH_BYTES}" '
+            'aria-busy="false"')
         ui.element("div").classes("vmi-agent-completions").props(
             f'role="listbox" aria-label="Suggestions" hidden '
             f'data-agent-event="{completion_event}" data-agent-prompt="{prompt.id}"')
         with ui.row().classes("vmi-agent-composer-actions w-full items-center no-wrap"):
             with ui.button(icon="add").props(
                     'flat round aria-label="Attach file or folder"').classes("vmi-agent-attach"):
-                ui.tooltip("Attach file or folder")
+                ui.tooltip("Attach file or folder · paste or drop files")
                 with ui.menu().props('anchor="top left" self="bottom left" auto-close'):
                     attach_file = ui.menu_item("Attach file")
                     attach_folder = ui.menu_item("Attach folder")
@@ -189,6 +199,9 @@ def _build_page(jobs, *, registry, navigate):
             with ui.button(icon="arrow_upward").props(
                     'round color=primary unelevated aria-label="Send"').classes("vmi-agent-send") as send_button:
                 send_tooltip = ui.tooltip("Send (Enter)")
+        with ui.row().classes("vmi-agent-drop-label items-center justify-center gap-2").props('aria-hidden="true"'):
+            ui.icon("upload_file")
+            ui.label("Drop files to attach")
 
     rendered = []
     rendered_session = None
@@ -201,6 +214,8 @@ def _build_page(jobs, *, registry, navigate):
     updating_models = False
     stop_visible = False
     loading_models = False
+    uploading = 0
+    upload_note = ""
 
     def configured_models():
         values = (model.value or "").split(",")
@@ -291,6 +306,49 @@ def _build_page(jobs, *, registry, navigate):
         if path not in attached_paths:
             attached_paths.append(path)
             refresh_attachments()
+
+    def add_uploaded(paths):
+        if not isinstance(paths, list) or not paths or len(paths) > MAX_ATTACHMENT_FILES:
+            raise ValueError("The upload returned an invalid attachment list.")
+        root = attachment_root()
+        selected = []
+        for value in paths:
+            if not isinstance(value, str):
+                raise ValueError("The upload returned an invalid attachment path.")
+            path = shared.checked_path(value)
+            if not path.is_relative_to(root):
+                raise ValueError("The upload is outside the Agent attachment workspace.")
+            _attachment_reference(path, container=container_mode())
+            if path not in attached_paths and path not in selected:
+                selected.append(path)
+        attached_paths.extend(selected)
+        refresh_attachments()
+
+    def receive_upload(event):
+        nonlocal uploading, upload_note
+        payload = event.args
+        if not isinstance(payload, dict):
+            return
+        action = payload.get("action")
+        if action == "start":
+            clear_error()
+            uploading += 1
+            count = payload.get("count")
+            upload_note = f"Uploading {count} attachment{'s' if count != 1 else ''}…"
+        elif action == "add":
+            try:
+                add_uploaded(payload.get("paths"))
+            except (OSError, RuntimeError, ValueError) as exc:
+                show_error(exc)
+        elif action == "error":
+            show_error(str(payload.get("message") or "Could not upload the attachments."))
+        elif action == "finish":
+            uploading = max(0, uploading - 1)
+            if not uploading:
+                upload_note = ""
+        upload_status.text = upload_note
+        upload_status.visible = bool(upload_note)
+        refresh()
 
     async def attach_path(mode):
         clear_error()
@@ -559,7 +617,8 @@ def _build_page(jobs, *, registry, navigate):
             send_button.props('icon=arrow_upward aria-label="Send"')
             send_button.classes(remove="vmi-agent-stop")
         send_tooltip.text = "Stop reply" if stop_visible else "Send (Enter)"
-        send_button.set_enabled(stop_visible or session_status == "ready" and not (model_pending or control_pending))
+        send_button.set_enabled(stop_visible or not uploading and session_status == "ready"
+                                and not (model_pending or control_pending))
         if snapshot is None:
             if rendered_session is not None:
                 reset_transcript(None)
@@ -653,6 +712,8 @@ def _build_page(jobs, *, registry, navigate):
         clear_error()
         session = AGENTS.current(owner)
         try:
+            if uploading:
+                raise RuntimeError("Wait for the attachments to finish uploading.")
             message = prompt.value or ""
             if await run_slash(message, session):
                 if prompt.value == message:
@@ -713,6 +774,7 @@ def _build_page(jobs, *, registry, navigate):
     model_select.on_value_change(request_model_change)
     send_button.on_click(send_or_stop)
     ui.on(completion_event, complete)
+    ui.on(upload_event, receive_upload)
     prompt.on(
         "keydown", send,
         js_handler="(event) => { if (!event.defaultPrevented && event.key === 'Enter' && !event.shiftKey && !event.isComposing) "
