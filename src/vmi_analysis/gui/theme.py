@@ -74,7 +74,7 @@ def status_badge(text: str = "idle") -> ui.badge:
 
 
 def set_badge(badge: ui.badge, status: str) -> None:
-    for cls in ("idle", "queued", "running", "done", "failed", "cancelled", "skipped"):
+    for cls in ("idle", "queued", "running", "waiting", "done", "failed", "cancelled", "skipped"):
         badge.classes(remove=f"vmi-badge-{cls}")
     badge.classes(f"vmi-badge-{status}")
     badge.text = status

@@ -381,6 +381,28 @@ def action_bar(view: "JobView", label: str = "Run", *, on_click):
 # JobView: status badge + progress + cancel + log console + results
 # --------------------------------------------------------------------------
 
+def checkpoint_view(jobs, *, stop_label=None):
+    """Display a pending workflow decision and keep draft choices across refreshes."""
+    container = ui.column().classes("w-full min-w-0 gap-3")
+    current = None
+
+    def refresh(job):
+        nonlocal current
+        pending = job.checkpoint if job is not None and job.status == "waiting" else None
+        if pending is current:
+            return
+        current = pending
+        container.clear()
+        if pending is not None:
+            with container:
+                pending.render(jobs, job, pending)
+                if stop_label:
+                    ui.button(stop_label, icon="stop",
+                              on_click=lambda: jobs.cancel(job.id)).props("flat")
+
+    return refresh
+
+
 class JobView:
     """Tracks one job; refresh via a NiceGUI timer.
 
@@ -596,6 +618,7 @@ class JobView:
             self.console_hint.text = {
                 "running": "Streaming output…",
                 "queued": "Queued — waiting for a slot",
+                "waiting": "Waiting for your decision",
                 "done": "Finished — results below",
                 "failed": "Failed — see log for details",
                 "cancelled": "Cancelled",

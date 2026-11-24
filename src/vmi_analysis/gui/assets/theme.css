@@ -891,6 +891,7 @@ html:has(.vmi-agent-page) { overflow-anchor: none; }
   padding: 3px 7px;
   font-family: var(--vmi-font-body);
 }
+.q-badge.vmi-badge-waiting,
 .q-badge.vmi-badge-queued    { background: #f1f5f9 !important; color: #475569 !important; border: 1px solid #cbd5e1; }
 .q-badge.vmi-badge-running   { background: #dbeafe !important; color: #1e40af !important; border: 1px solid #93c5fd; }
 .q-badge.vmi-badge-done      { background: #dcfce7 !important; color: #166534 !important; border: 1px solid #86efac; }

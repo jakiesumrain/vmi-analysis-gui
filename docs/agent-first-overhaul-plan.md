@@ -1,12 +1,10 @@
 # Agent-first overhaul plan
 
-**Current baseline** — `feature/agent-panel` at `6f8938a` after PR #83.
-The PR updated the conversation layout and composer and added model
-switching, Pi command discovery, and path completion. Panel registration
-and execution still use the Phase 2A design.
+**Current baseline** — Phase 2B is complete. PR #85 added screenshot paste
+and file drop to the Agent composer.
 
-**Next milestone** — Phase 2B uses Dark Frame to verify that a panel can
-join through registration alone. The
+**Next milestone** — Phase 2C rolls out Agent support across the standard
+panels after the ion workflow checkpoint. The
 [Agent-first design guide](agent-first-design.md) defines the product goals.
 
 ## Scope
@@ -53,11 +51,11 @@ fit opens on the correct plot and stays tied to the original tab and run. Inputs
 later manual edits preserved across reload. Invalid inputs and access to
 another workspace are rejected on the server.
 
-### 2B. Prove the extension contract with Dark Frame
+### 2B. Completed extension contract check with Dark Frame
 
-Add Dark Frame through its operation registration and normal app setup.
-Give the Agent enough structured information to explain the settings,
-prepare a run, monitor it, and open its output.
+Dark Frame registers its operation and shares validation, execution, and
+output handling with its manual run. Manual and Agent runs produced the
+same mean and median dark-frame arrays and statistics.
 
 **Acceptance** — Adding Dark Frame requires no edits to the Agent core,
 chat UI, or Pi tool definitions. Test discovery, validation, approval,
@@ -67,11 +65,17 @@ the corresponding test for an interactive panel.
 
 ### 2C. Finish the ion workflow and roll out across panels
 
-Extend the existing Dump → TOF workflow to pause for a GMD2 alignment
-decision and resume from that step. Pass explicit input and output
-references between operations. Report progress, errors, and results in
-the workbench and chat. Roll out in the groups below after the extension
-contract passes.
+Dump → TOF passes the exact output collection and matching metadata to
+Ion TOF. An optional GMD2 gate accepts a specified shift or checks
+alignment first. Automatic selection requires each count source's
+Pearson and Spearman maxima to agree on the same shift, reach 0.50, and
+exceed their runner-up by at least 0.05. These thresholds control when the
+workflow asks for confirmation. When the criteria are unmet, the Agent
+and Ion TOF panels show the correlations and ask the user to confirm
+the shift. A paused run keeps its file reservations and releases its
+worker slot. It survives browser reload within the same server process.
+
+The remaining rollout follows the groups below.
 
 | Rollout group | Initial coverage |
 | --- | --- |

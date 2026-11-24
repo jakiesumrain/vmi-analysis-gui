@@ -84,6 +84,8 @@ class PanelRegistry:
                   "progress": job.progress, "note": job.wait_reason,
                   "log_tail": [line[:500] for line in tuple(job.log.copy())[-15:]]}
         if spec.workflow_panels:
+            if (checkpoint := job.checkpoint) is not None and job.status == "waiting":
+                result["checkpoint"] = checkpoint.summary
             result["steps"] = []
             for stage in job.stages:
                 step = {"panel": stage.name, "status": stage.status}
@@ -93,6 +95,9 @@ class PanelRegistry:
                     step.pop("log_tail")
                 result["steps"].append(step)
         elif job.status == "done":
+            if "gmd_shift_source" in job.extra:
+                result["alignment"] = {"shift": job.extra["gmd_shift"],
+                                       "source": job.extra["gmd_shift_source"]}
             keys = spec.artifacts(job) if spec.artifacts else spec.outputs
             result["files"] = {key: _container_path(job.extra[key]) for key in keys
                                if key in job.extra and resolve_path(job.extra[key]).is_file()}

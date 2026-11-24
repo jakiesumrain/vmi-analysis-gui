@@ -18,7 +18,8 @@ from vmi_analysis.agent_backend import AgentRequest, AgentSession, ContainerLaun
 from vmi_analysis.gui import shared
 from vmi_analysis.gui.agent_completion import path_completions
 from vmi_analysis.gui.panel_operations import build_registry
-from vmi_analysis.gui.jobs import Job, JobManager
+from vmi_analysis.gui.jobs import Job, JobManager, ResourceBusyError
+from vmi_analysis.ion_acquisition import SCHEMA
 from vmi_analysis.gui.resources import job_access
 from vmi_analysis.gui.panels import agent, dark, ion_luna, ion_tof
 from vmi_analysis.gui.panels.common import adopt_agent_form
@@ -328,6 +329,94 @@ class AgentPanelTests(unittest.TestCase):
         run.assert_called_once()
         self.assertEqual(workflow.status, "cancelled")
         self.assertEqual([stage.status for stage in workflow.stages], ["cancelled", "cancelled"])
+
+    def test_gmd_checkpoint_releases_worker_and_preserves_exact_inputs(self):
+        (self.datasets / "sample.tpx3").touch()
+        self.jobs.set_max_concurrent(1)
+        self.addCleanup(self.jobs.shutdown)
+        workflow, _ = self.registry.prepare(self.jobs, "ion_dump_to_tof", {
+            "dump": {"input": "/datasets/sample.tpx3", "output": "/workspace/ions.h5"},
+            "tof": {"bin_size_ns": 1, "maximum_ns": 10},
+            "gate": {"gmd_min_na": 2, "gmd_max_na": 4},
+        })
+        dump, spectrum, gate = workflow.stages
+        collection = Path(spectrum.result.extra["source_file"])
+        data = self.workspace / "ions_segments" / "hits.h5"
+        metadata = data.with_name("metadata.h5")
+        run_command = self.jobs._run_cmd
+        other, _ = self.registry.prepare(self.jobs, "tpx3_dump", {
+            "input": "/datasets/sample.tpx3", "output": "/workspace/other.h5",
+        })
+
+        def simulate_luna(job, command, cwd, **kwargs):
+            if job is other:
+                return 0
+            if command != dump.cmd:
+                return run_command(job, command, cwd, **kwargs)
+            data.parent.mkdir()
+            with h5py.File(data, "w") as handle:
+                handle["TDCEvents"] = np.array([(1, 100_000), (1, 300_000)],
+                                               dtype=[("tdc_type", "u1"), ("timestamp", "u8")])
+                handle["PixelHits"] = np.array([(150_000,), (350_000,)], dtype=[("toa", "u8")])
+            with h5py.File(metadata, "w") as handle:
+                handle["frames"] = np.array([(1, 9e-9, 9e-9), (2, 3e-9, 3e-9)],
+                                           dtype=[("timestamp_ns", "i8"), ("gmd1", "f8"), ("gmd2", "f8")])
+            collection.write_text(json.dumps({
+                "schema": SCHEMA, "segments": [{"data": "ions_segments/hits.h5",
+                                                 "metadata": "ions_segments/metadata.h5"}],
+            }), encoding="utf-8")
+            return 0
+
+        def wait(job, status):
+            deadline = time.monotonic() + 15
+            while job.status not in (status, "failed", "cancelled") and time.monotonic() < deadline:
+                time.sleep(.02)
+            self.assertEqual(job.status, status, "\n".join(job.log))
+
+        with patch.object(self.jobs, "_run_cmd", side_effect=simulate_luna) as run:
+            self.jobs.submit(workflow)
+            wait(workflow, "waiting")
+            checkpoint = workflow.checkpoint
+            self.assertEqual(self.registry.status(self.jobs, workflow.id)["checkpoint"]["tof_job_id"],
+                             spectrum.result.id)
+            self.assertEqual([step.status for step in workflow.stages], ["done", "done", "waiting"])
+            with self.assertRaises(ResourceBusyError), self.jobs.write_access([metadata]):
+                pass
+            with patch.object(shared, "current_account", return_value=SimpleNamespace(name="other")):
+                with self.assertRaisesRegex(ValueError, "no longer pending"):
+                    self.jobs.resolve_checkpoint(workflow.id, checkpoint, -1)
+            with self.assertRaisesRegex(ValueError, "available option"):
+                self.jobs.resolve_checkpoint(workflow.id, checkpoint, True)
+            self.jobs.submit(other)
+            wait(other, "done")
+            self.jobs.resolve_checkpoint(workflow.id, checkpoint, -1)
+            with self.assertRaisesRegex(ValueError, "no longer pending"):
+                self.jobs.resolve_checkpoint(workflow.id, checkpoint, 0)
+            wait(workflow, "done")
+            self.assertEqual(sum(call.args[1] == dump.cmd for call in run.call_args_list), 1)
+            self.assertEqual(sum(call.args[1] == spectrum.cmd for call in run.call_args_list), 1)
+        filtered = self.jobs.get(gate.result.id)
+        self.assertEqual(filtered.extra["parent_id"], spectrum.result.id)
+        self.assertEqual(filtered.extra["metadata"], str(collection))
+        self.assertEqual(self.registry.status(self.jobs, filtered.id)["alignment"],
+                         {"shift": -1, "source": "confirmed"})
+        with np.load(filtered.extra["histogram"], allow_pickle=False) as result:
+            self.assertEqual(int(result["selected_triggers"]), 1)
+            self.assertEqual(int(result["pixels"].sum()), 1)
+
+    def test_gmd_automatic_shift_requires_agreement_and_clear_peaks(self):
+        coefficients = np.tile([.1, .1], (len(ion_tof.GMD_SHIFTS), 1))
+        result = {"gmd_shifts": np.array(ion_tof.GMD_SHIFTS),
+                  "pixels_gmd_correlation": coefficients,
+                  "clusters_gmd_correlation": coefficients.copy()}
+        index = ion_tof.GMD_SHIFTS.index(-1)
+        coefficients[index] = [.8, .75]
+        result["clusters_gmd_correlation"][index] = [.7, .65]
+        self.assertEqual(ion_tof._automatic_shift(result, ("pixels", "clusters")), -1)
+        coefficients[index + 1, 0] = .77
+        self.assertIsNone(ion_tof._automatic_shift(result, ("pixels", "clusters")))
+        coefficients[index + 1, 0] = .92
+        self.assertIsNone(ion_tof._automatic_shift(result, ("pixels", "clusters")))
 
     def test_stale_and_duplicate_approvals_cannot_be_claimed(self):
         clock = [0.0]

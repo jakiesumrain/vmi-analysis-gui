@@ -19,15 +19,17 @@ from .. import shared, theme
 from ..agent_panels import (PanelOperation, PanelView, boolean, number, require_completed_job,
                             resolve_path)
 from ..centroid_plots import _style, plot_options
-from ..jobs import Job, ResourceBusyError
+from ..jobs import Checkpoint, Job, ResourceBusyError
 from . import ion_luna
-from .common import JobView, action_bar, adopt_agent_form, field_grid, num_input, path_input, persist
+from .common import (JobView, action_bar, adopt_agent_form, checkpoint_view, field_grid, num_input,
+                     path_input, persist)
 
 
 JOB_NAME = "Ion TOF"
 FILTER_JOB_NAME = "GMD-filtered TOF"
 FIT_JOB_NAME = "TOF peak fit"
 UNFILTERED_FIT_JOB_NAME = "Unfiltered TOF peak fit"
+GMD_PAIRING = "GMD2 row j selects camera frame j + d within the same acquisition."
 SOURCES = {"pixels": "Raw pixel hits", "clusters": "Clustered events", "both": "Both"}
 SOURCE_COLORS = {"pixels": "#1e40af", "clusters": "#c2410c"}
 REFERENCE_LABELS = {name: name.replace("Rising", " rising").replace("Falling", " falling")
@@ -159,6 +161,96 @@ def _gmd_histogram(label, values):
     fig.update_xaxes(title_text=f"{label} (nA)")
     fig.update_yaxes(title_text="Frames / bin", rangemode="tozero")
     return fig
+
+
+def _automatic_shift(result, sources):
+    """Require agreement and a separated positive maximum for both statistics."""
+    shifts = set()
+    for source in sources:
+        for coefficients in result[f"{source}_gmd_correlation"].T:
+            valid = np.flatnonzero(np.isfinite(coefficients))
+            order = valid[np.argsort(coefficients[valid])]
+            if (len(order) < 2 or coefficients[order[-1]] < 0.5
+                    or coefficients[order[-1]] - coefficients[order[-2]] < 0.05):
+                return None
+            shifts.add(int(result["gmd_shifts"][order[-1]]))
+    return shifts.pop() if len(shifts) == 1 else None
+
+
+def workflow_alignment(tof_job, gate_job):
+    """Prepare a gate on the exact histogram and metadata produced by this workflow."""
+    server, account = shared.SERVER, shared.current_account()
+    histogram = gate_job.cmd[gate_job.cmd.index("--tof-result") + 1]
+    metadata = gate_job.extra["metadata"]
+    shift_arg = gate_job.cmd.index("--gmd-shift") + 1
+
+    def apply(shift):
+        gate_job.cmd[shift_arg] = str(shift)
+        gate_job.extra["gmd_shift"] = shift
+
+    def check():
+        if account:
+            for path in collection_reads(metadata):
+                server.path(account, path)
+        result, counts, _ = _load_gmd_diagnostics(histogram, metadata)
+        if issue := result["gmd_alignment_issue"]:
+            raise ValueError(f"Cannot filter by GMD2. {issue}")
+        if (shift := _automatic_shift(result, counts)) is not None:
+            apply(shift)
+            gate_job.extra["gmd_shift_source"] = "automatic"
+            return None
+
+        sources = tuple(counts)
+        chart_data = {key: value for key, value in result.items()
+                      if key in ("gmd_shifts", "gmd_alignment_issue")
+                      or key.endswith(("_gmd_correlation", "_gmd_pairs"))}
+
+        def confirm(shift):
+            apply(shift)
+            gate_job.extra["gmd_shift_source"] = "confirmed"
+
+        def render(jobs, job, checkpoint):
+            ui.label(checkpoint.summary["message"]).classes("vmi-subtitle").props('role="status"')
+            ui.label(GMD_PAIRING).classes("vmi-caption")
+            ui.label(checkpoint.summary["reason"]).classes("vmi-caption")
+            ui.plotly(plot_options(_correlation_plot(chart_data, sources)[0])).classes("w-full min-w-0")
+
+            def resume():
+                try:
+                    jobs.resolve_checkpoint(job.id, checkpoint, field.value)
+                except ValueError as exc:
+                    ui.notify(str(exc), type="warning")
+                else:
+                    ui.notify(f"Continuing with alignment shift d = {field.value:+d}.", type="positive")
+
+            with ui.row().classes("items-center gap-3"):
+                field = ui.select({d: f"{d:+d}" for d in checkpoint.choices}, label="Shift to confirm (frames)")
+                field.props("outlined dense").classes("min-w-52")
+                submit = ui.button("Confirm shift and continue", on_click=resume)
+                submit.bind_enabled_from(field, "value", lambda value: value is not None)
+
+        coefficients = {
+            source: [[float(value) if np.isfinite(value) else None for value in row]
+                     for row in result[f"{source}_gmd_correlation"]]
+            for source in counts
+        }
+        reason = ("The diagnostic requires at least 10 pairs with positive GMD2 and counts per shift."
+                  if not any(np.isfinite(chart_data[f"{source}_gmd_correlation"]).any() for source in sources)
+                  else "The correlation peaks are weak, close together, or disagree on the best shift.")
+        return Checkpoint(
+            summary={
+                "message": "Confirm a GMD2 alignment shift before filtering.",
+                "pairing": GMD_PAIRING,
+                "reason": reason,
+                "tof_job_id": tof_job.id,
+                "shifts": list(GMD_SHIFTS),
+                "correlations": coefficients,
+                "statistics": ["Pearson", "Spearman"],
+            },
+            choices=GMD_SHIFTS, apply=confirm, render=render,
+        )
+
+    return check
 
 
 def _correlation_plot(result, sources):
@@ -332,13 +424,13 @@ def spectrum_job(path, *, source="pixels", reference=DEFAULT_REFERENCE, width=DE
     return job
 
 
-def filtered_job(original_job, metadata, low, high, shift):
+def filtered_job(original_job, metadata, low, high, shift, *, pending_metadata=False):
     if "source_file" not in original_job.extra:
         raise ValueError("Plot TOF again before filtering this older result.")
     source = shared.checked_path(original_job.extra["source_file"])
     original = shared.checked_path(original_job.extra["histogram"])
     metadata = shared.checked_path(metadata)
-    if not metadata.is_file():
+    if not pending_metadata and not metadata.is_file():
         raise ValueError("Choose an existing acquisition metadata file or collection.")
     if (not isfinite(low) or not isfinite(high) or low > high or type(shift) is not int
             or shift not in GMD_SHIFTS):
@@ -492,6 +584,8 @@ def _gmd_section(jobs, view, save, *, ask_agent=None):
                 filter_card.set_visibility(True)
                 refresh_gmd_plot()
                 if (finished := filter_view.job) and finished.status == "done":
+                    restore_agent_filter(finished)
+                    refresh_gmd_plot()
                     show_filtered(finished)
         except (OSError, ValueError, ResourceBusyError) as exc:
             ui.notify(str(exc), type="warning")
@@ -580,7 +674,39 @@ def _gmd_section(jobs, view, save, *, ask_agent=None):
                                                        "Unfiltered time-of-flight spectra"))).classes("w-full")
                     ui.label("Select triggers with TOF data before fitting peak yields.").classes("vmi-caption")
 
-    filter_view = JobView(jobs, job_name=FILTER_JOB_NAME, results_builder=show_filtered)
+    def restore_agent_filter(job):
+        if job.extra.get("agent_panel") and job.extra["parent_id"] == getattr(view.job, "id", None):
+            gmd_low.value = job.extra["gmd_min"]
+            gmd_high.value = job.extra["gmd_max"]
+            shift.value = job.extra["gmd_shift"]
+
+    with theme.panel_card().props('data-ion-tof-checkpoint') as checkpoint_card:
+        checkpoint_card.set_visibility(False)
+        theme.form_section("GMD2 alignment decision")
+        show_checkpoint = checkpoint_view(jobs, stop_label="Stop alignment workflow")
+
+    shown_diagnostics = None
+
+    async def refresh_workflow():
+        nonlocal shown_diagnostics
+        current_id = getattr(view.job, "id", None)
+        pending = next((job for job in jobs.jobs()
+                        if job.status == "waiting" and (checkpoint := job.checkpoint) is not None
+                        and checkpoint.summary.get("tof_job_id") == current_id), None)
+        checkpoint_card.set_visibility(pending is not None)
+        show_checkpoint(pending)
+        filtered = filter_view.job
+        if (filtered is not None and filtered.status == "done" and filtered.id != shown_diagnostics
+                and filtered.extra.get("gmd_shift_source")
+                and filtered.extra["parent_id"] == current_id
+                and filtered.extra["metadata"] == metadata_file.value.strip()):
+            shown_diagnostics = filtered.id
+            if loaded_job is not view.job:
+                await plot_gmd()
+
+    shared.workspace_timer(0.5, refresh_workflow)
+    filter_view = JobView(jobs, job_name=FILTER_JOB_NAME, results_builder=show_filtered,
+                          attach_builder=restore_agent_filter)
     with theme.panel_card() as filter_card:
         filter_card.set_visibility(False)
         theme.form_section("GMD2 range")
@@ -609,6 +735,7 @@ def _gmd_section(jobs, view, save, *, ask_agent=None):
         filtered = filter_view.job
         if (filtered is not None and filtered.extra.get("agent_panel")
                 and filtered.extra.get("parent_id") == parent.id):
+            restore_agent_filter(filtered)
             show_filtered(filtered)
 
     with filter_console:

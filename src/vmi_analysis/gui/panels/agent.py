@@ -19,8 +19,8 @@ from ..agent_attachments import (MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_FILES, MAX
                                  attachment_root)
 from ..agent_completion import path_completions
 from ..agent_panels import PanelView
-from ..jobs import TERMINAL
-from .common import JobView, field_grid
+from ..jobs import ACTIVE
+from .common import JobView, checkpoint_view, field_grid
 from .picker import LocalFilePicker
 
 
@@ -67,6 +67,7 @@ def _workflow_card(jobs, name, targets, navigate):
         with ui.row().classes("items-center gap-2"):
             for target in targets:
                 ui.button(f"Open {target}", on_click=lambda target=target: navigate(target)).props("flat")
+        show_checkpoint = checkpoint_view(jobs)
         view.place_console("Workflow console")
     card.classes("vmi-agent-workflow")
     card.set_visibility(False)
@@ -74,9 +75,10 @@ def _workflow_card(jobs, name, targets, navigate):
     def refresh():
         job = view.job
         card.set_visibility(job is not None)
+        show_checkpoint(job)
         if job is not None:
             steps.text = " · ".join(f"{stage.name} {stage.status}" for stage in job.stages)
-            stop.set_visibility(job.status in ("queued", "running"))
+            stop.set_visibility(job.status in ACTIVE)
             stop.set_enabled(not job.cancel_requested)
 
     shared.workspace_timer(0.4, refresh)
@@ -481,7 +483,7 @@ def _build_page(jobs, *, registry, navigate):
                     value = registry.describe(request.get("operation"))
                 case "status" | "wait":
                     value = registry.status(jobs, request.get("job_id"))
-                    if request["action"] == "wait" and value["status"] not in TERMINAL:
+                    if request["action"] == "wait" and value["status"] in ("queued", "running"):
                         return
                 case "propose":
                     operation = request.get("operation")
