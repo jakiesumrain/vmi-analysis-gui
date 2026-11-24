@@ -20,7 +20,7 @@ from vmi_analysis.gui.agent_completion import path_completions
 from vmi_analysis.gui.panel_operations import build_registry
 from vmi_analysis.gui.jobs import Job, JobManager
 from vmi_analysis.gui.resources import job_access
-from vmi_analysis.gui.panels import agent, ion_luna, ion_tof
+from vmi_analysis.gui.panels import agent, dark, ion_luna, ion_tof
 from vmi_analysis.gui.panels.common import adopt_agent_form
 
 
@@ -33,13 +33,122 @@ class AgentPanelTests(unittest.TestCase):
         self.workspace.mkdir()
         self.datasets = self.root / "data"
         self.datasets.mkdir()
-        self.account = SimpleNamespace(name="analyst", root=self.workspace)
+        self.account = SimpleNamespace(name="analyst", root=self.workspace, settings={})
         server = shared.SharedServer.__new__(shared.SharedServer)
         server.datasets = self.datasets
         self.enterContext(patch.object(shared, "SERVER", server))
         self.enterContext(patch.object(shared, "current_account", return_value=self.account))
         self.jobs = JobManager()
         self.registry = build_registry()
+
+    def test_dark_frame_registration_validates_and_reserves_paths(self):
+        raw = self.datasets / "dark"
+        raw.mkdir()
+        (raw / "RAW-dark.h5").touch()
+        description = self.registry.describe()["dark_frame"]
+        self.assertEqual(description["panel"], "Dark Frame")
+        self.assertEqual(description["parameters"]["method"]["choices"], ["median", "mean"])
+        job, summary = self.registry.prepare(self.jobs, "dark_frame", {
+            "dark_dir": "/datasets/dark", "frames": 0,
+        })
+        output = self.workspace / "centroiding"
+        self.assertEqual(summary["Dark frame count"], "All frames")
+        access = job_access(job)
+        self.assertIn(raw.resolve(), access.reads)
+        self.assertEqual(access.writes, {(output / name).resolve()
+                                        for name in ("dark_median.npy", "dark_median_info.txt")})
+        self.assertEqual(self.jobs.jobs(), [])
+        for invalid in ({"out_dir": "/datasets/dark"}, {"pattern": "../RAW-*.h5"}):
+            with self.assertRaises(shared.WorkspaceDenied):
+                self.registry.prepare(self.jobs, "dark_frame", {"dark_dir": "/datasets/dark", **invalid})
+        for invalid in ({"frames": 1.5}, {"method": "unknown"}, {"pattern": "missing-*.h5"}):
+            with self.assertRaises(ValueError):
+                self.registry.prepare(self.jobs, "dark_frame", {"dark_dir": "/datasets/dark", **invalid})
+
+    def test_manual_and_agent_dark_frame_outputs_and_panel_handoff(self):
+        raw = self.datasets / "dark"
+        raw.mkdir()
+        data = np.arange(6 * 8 * 8, dtype=np.uint16).reshape(6, 8, 8)
+        for index, frames in enumerate(np.split(data, 2)):
+            with h5py.File(raw / f"RAW-{index}.h5", "w") as handle:
+                handle["raw/data"] = frames
+        target = self.workspace / "centroiding"
+        self.addCleanup(self.jobs.shutdown)
+
+        def run_and_read(job):
+            self.jobs.submit(job)
+            deadline = time.monotonic() + 20
+            while job.status in ("queued", "running") and time.monotonic() < deadline:
+                time.sleep(.04)
+            self.assertEqual(job.status, "done", "\n".join(job.log))
+            self.assertTrue(any("% |" in line for line in job.log))
+            stats = Path(job.extra["info"]).read_text().splitlines()
+            return np.load(job.extra["dark_npy"]), [line for line in stats if not line.startswith("computed_seconds=")]
+
+        for method, calculate in (("mean", np.mean), ("median", np.median)):
+            with self.subTest(method=method):
+                manual = dark.dark_frame_job(raw, method=method, frames=4, out_dir=target)
+                prepared, _ = self.registry.prepare(self.jobs, "dark_frame", {
+                    "dark_dir": "/datasets/dark", "method": method, "frames": 4,
+                    "out_dir": "/workspace/centroiding",
+                })
+                self.assertEqual(manual.cmd, prepared.cmd)
+                manual_frame, manual_info = run_and_read(manual)
+                agent_frame, agent_info = run_and_read(prepared)
+                np.testing.assert_array_equal(agent_frame, manual_frame)
+                np.testing.assert_array_equal(agent_frame, calculate(data[:4], axis=0))
+                self.assertEqual(agent_info, manual_info)
+                outcome = self.registry.status(self.jobs, prepared.id)
+                self.assertEqual(outcome["progress"], 1.0)
+                self.assertEqual(outcome["files"], {
+                    "dark_npy": f"/workspace/centroiding/dark_{method}.npy",
+                    "info": f"/workspace/centroiding/dark_{method}_info.txt",
+                })
+
+        views = []
+        real_view = dark.JobView
+
+        def track_view(*args, **kwargs):
+            view = real_view(*args, **kwargs)
+            views.append(view)
+            return view
+
+        client = Client(ui.page("/_test_dark_frame_agent_result"))
+        self.addCleanup(client.delete)
+        with (client, patch.object(dark, "JobView", side_effect=track_view),
+              patch.object(shared, "workspace_timer")):
+            dark.build(self.jobs)
+            views[-1].refresh()
+            self.assertIs(views[-1].job, prepared)
+            count = next(element for element in client.elements.values()
+                         if element._props.get("label") == "Dark frame count (0 = all)")
+            self.assertEqual(count.value, 4)
+            self.assertTrue(any(str(getattr(element, "text", "")).startswith("Dark frame: ")
+                                for element in client.elements.values()))
+
+    def test_agent_dark_frame_can_be_cancelled_while_queued_in_its_panel(self):
+        (self.datasets / "RAW-dark.h5").touch()
+        manual = dark.dark_frame_job(self.datasets)
+        proposal, _ = self.registry.prepare(self.jobs, "dark_frame", {"dark_dir": "/datasets"})
+        running, release = Event(), Event()
+        self.addCleanup(self.jobs.shutdown)
+
+        def hold_job(*_args, **_kwargs):
+            running.set()
+            release.wait(5)
+            return 0
+
+        with patch.object(self.jobs, "_run_cmd", side_effect=hold_job) as run:
+            self.jobs.submit(manual)
+            try:
+                self.assertTrue(running.wait(5))
+                self.jobs.submit(proposal)
+                self.assertEqual(self.registry.status(self.jobs, proposal.id)["status"], "queued")
+                self.jobs.cancel(proposal.id)
+                self.assertEqual(self.registry.status(self.jobs, proposal.id)["status"], "cancelled")
+            finally:
+                release.set()
+        run.assert_called_once()
 
     def test_dump_proposal_uses_normal_defaults_and_does_not_submit(self):
         (self.datasets / "sample.tpx3").touch()

@@ -449,7 +449,9 @@ class GuiSubmissionTests(unittest.TestCase):
         self.assertNotIn("--config", job.cmd)
         self.assertEqual(job.cmd[job.cmd.index("--checkpoint-path") + 1], "chosen.h5")
         self.assertEqual(Path(job.extra["output_dir"]), ROOT / "centroiding/chosen out")
-        job = self.submit_form(dark, store)
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / "RAW-dark.h5").touch()
+            job = self.submit_form(dark, {**store, "dark.dark_dir": folder})
         self.assertNotIn("--config", job.cmd)
         self.assertEqual(job.cmd[job.cmd.index("--frames") + 1], "0")
 

@@ -4,7 +4,7 @@ from functools import partial
 
 from .agent_panels import PanelOperation, PanelRegistry
 from .jobs import Job, Stage
-from .panels import ion_luna, ion_tof
+from .panels import dark, ion_luna, ion_tof
 
 
 DUMP_TO_TOF = "TPX3 Dump → Ion TOF"
@@ -30,7 +30,7 @@ def _dump_to_tof(registry, jobs, params):
 
 def build_registry():
     registry = PanelRegistry()
-    for panel in (ion_luna, ion_tof):
+    for panel in (dark, ion_luna, ion_tof):
         for operation in panel.agent_operations():
             registry.register(operation)
     workflow = {

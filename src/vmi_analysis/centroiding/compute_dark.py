@@ -98,9 +98,10 @@ def compute_mean(dark_files, dataset: str, frame_count: int):
             else:
                 running_sum += data.sum(axis=0, dtype=np.float64)
             n_total += data.shape[0]
-            if idx % 50 == 0 or (frame_count > 0 and n_total >= frame_count):
+            if idx % max(1, n_files // 100) == 0 or idx == n_files or (0 < frame_count <= n_total):
                 elapsed = time.time() - t0
-                print(f"  [{idx}/{n_files}] {n_total} frames, "
+                fraction = min(1.0, n_total / frame_count) if frame_count > 0 else idx / n_files
+                print(f"  {fraction:.0%} | [{idx}/{n_files}] {n_total} frames, "
                       f"{n_total/elapsed:.0f} frames/s", flush=True)
             if frame_count > 0 and n_total >= frame_count:
                 break
@@ -127,15 +128,19 @@ def compute_median(dark_files, dataset: str, frame_count: int):
     n_workers = min(len(selected), cpu_count())
     print(f"[Median] Reading {len(selected)} files ({n_workers} workers)...")
     t0 = time.time()
-    all_frames = []
+    all_frames = [None] * len(selected)
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        futures = {executor.submit(_read_h5_data, f, dataset): f
-                   for f in selected}
-        for fut in as_completed(futures):
+        futures = {executor.submit(_read_h5_data, path, dataset): index
+                   for index, path in enumerate(selected)}
+        for completed, fut in enumerate(as_completed(futures), start=1):
             try:
-                all_frames.append(fut.result())
+                all_frames[futures[fut]] = fut.result()
             except Exception as e:
                 print(f"  WARNING: {e}")
+            if completed % max(1, len(futures) // 100) == 0 or completed == len(futures):
+                print(f"  {completed / len(futures):.0%} | [{completed}/{len(futures)}] dark files read",
+                      flush=True)
+    all_frames = [frames for frames in all_frames if frames is not None]
     if not all_frames:
         raise RuntimeError("No dark frames could be read!")
     stack = np.concatenate(all_frames, axis=0)
