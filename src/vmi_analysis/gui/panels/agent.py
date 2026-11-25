@@ -641,7 +641,7 @@ def _build_page(jobs, *, registry, navigate, connection_button):
         if model_pending:
             activity_text = "Changing model…"
         elif session_status == "running":
-            activity_text = "Waiting for approval…" if waiting_for_approval else "Working…"
+            activity_text = "Waiting for approval…" if waiting_for_approval else "Working"
         activity_label.text = activity_text
         activity_row.visible = bool(activity_text)
         activity_spinner.visible = model_pending or (
