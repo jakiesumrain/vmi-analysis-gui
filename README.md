@@ -1,7 +1,5 @@
 # VMI Analysis
 
-![Illustration of concentric velocity-map detector rings and ion arrival traces](docs/assets/vmi-workbench-art.png)
-
 VMI Analysis is an **Agent-native scientific workbench** for electron and ion velocity-map imaging. Run an analysis from its panel or ask the embedded Agent to prepare a supported operation. Review the inputs before approval, then follow the same queue, logs, and results in the workbench.
 
 - **Electron** covers camera frames, dark subtraction, accumulation, spot localization, GMD binning, ring calibration, circularization, and photoelectron spectra.
