@@ -2289,10 +2289,18 @@ $j+d$ within the same acquisition. Select an inclusive GMD2 interval by
 dragging on the histogram or entering its limits. A blank limit uses the
 corresponding data extreme.
 
+Before choosing \emph{Apply GMD2 range}, enable \emph{Weight by GMD2} to
+normalize each included shot to the mean GMD2 of the aligned, selected
+shots. Each arrival receives the mean divided by its shot's GMD2. Weighted
+runs include only finite positive GMD2 values. The weighted TOF shows the
+reference GMD2 and the weighted sum per bin.
+
 Select a fit interval on the gated or unfiltered spectrum and fit Gaussian
 peaks. The fitted windows can use either spectrum. Counting uses individual
-arrivals in the GMD2-selected frames, and normalization divides by the number
-of selected frames. Overlapping peak windows can count the same arrival.
+arrivals in the GMD2-selected frames and uses the gate's saved weights when
+enabled. Yield divides the raw or weighted count by the number of selected
+frames, including those with zero hits. Overlapping peak windows can count
+the same arrival.
 Use \emph{Capture plot for Agent} to attach an image and link a supported run
 for measurement.
 
@@ -2316,9 +2324,18 @@ output directory. Set the LUNA and trigger options, the number of parallel
 delay positions, and whether to keep intermediate HDF5 dumps. Check the
 GMD2 pairing shift in Ion TOF before applying the same shift to the scan.
 
+Enable \emph{Weight by GMD2} to use one reference for the scan. The reference
+is the mean GMD2 across all aligned, selected shots with finite positive
+GMD2, including shots with zero arrivals. Each arrival is weighted by the
+scan reference divided by the GMD2 of its shot. The results record the
+reference in nA. The weighted counting error is the square root of the sum
+of squared arrival weights divided by the number of selected shots.
+
 Enter separate fit intervals for the peaks. Choose gated or ungated TOF
-for the fits. The pipeline fits each peak separately, counts individual
-arrivals in its fitted window, and divides by the selected frame count.
+for the fits. The gated fit uses the weighted TOF when weighting is enabled.
+Both fit sources use the selected shots for the final count, summing arrival
+weights in each fitted window when enabled. Yield divides the result by the
+selected shot count at each delay.
 The output includes a yield CSV and plot. Use the result controls to
 choose two peaks, view their ratio, and switch between linear and log
 scales. Delay-line position is in mm, with a displayed conversion of

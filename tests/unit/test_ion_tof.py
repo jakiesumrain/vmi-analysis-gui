@@ -8,7 +8,7 @@ import h5py
 import numpy as np
 
 from vmi_analysis.ion_tof import (GMD_SHIFTS, filtered_histogram, fit_filtered_peaks, gmd_count_pairs,
-                                gmd_diagnostics, histogram)
+                                gmd_diagnostics, histogram, main)
 
 
 class IonTofTests(unittest.TestCase):
@@ -127,6 +127,44 @@ class IonTofTests(unittest.TestCase):
         np.testing.assert_array_equal(sized["pixels"], [2, 1, 1])
         np.testing.assert_array_equal(sized_filtered["edges"], sized["edges"])
         np.testing.assert_array_equal(sized_filtered["pixels"], [0, 1, 1])
+
+    def test_weighted_gate_cli_and_both_fit_sources_use_saved_frame_weights(self):
+        with TemporaryDirectory() as directory:
+            path, metadata, original, filtered = [Path(directory) / name for name in
+                                                 ("luna.h5", "meta.h5", "original.npz", "filtered.npz")]
+            with h5py.File(path, "w") as file:
+                file["TDCEvents"] = np.array([(1, t) for t in range(100_000, 700_000, 100_000)],
+                                             dtype=[("tdc_type", "u1"), ("timestamp", "u8")])
+                file["PixelHits"] = np.array([(140_000,), (210_000,), (240_000,), (269_999,),
+                                              (270_000,), (440_000,)], dtype=[("toa", "u8")])
+            with h5py.File(metadata, "w") as file:
+                file["frames"] = np.array([(j, v, v) for j, v in enumerate([2e-9, 4e-9, 0, -1e-9, np.nan, 20e-9])],
+                                          dtype=[("timestamp_ns", "i8"), ("gmd1", "f8"), ("gmd2", "f8")])
+            original_data = histogram(path, ("pixels",), bins=8, maximum=8)
+            np.savez(original, **original_data)
+            with patch("sys.argv", ["ion_tof", "--input", str(path), "--output", str(filtered),
+                                    "--metadata", str(metadata), "--tof-result", str(original),
+                                    "--gmd-shift", "1", "--weight-by-gmd2"]):
+                main()
+            with np.load(filtered, allow_pickle=False) as gated:
+                self.assertEqual(gated["selected_triggers"], 2)
+                self.assertAlmostEqual(float(gated["gmd2_reference_na"]), 3.)
+                np.testing.assert_allclose(gated["frame_weights"], [0, 1.5, .75, 0, 0, 0])
+                np.testing.assert_allclose(gated["pixels"], [0, 1.5, 0, 0, 1.5, 0, 1.5, 1.5])
+                weighted_histogram = gated["pixels"]
+            with self.assertRaisesRegex(ValueError, "no aligned triggers with positive GMD2"):
+                filtered_histogram(path, original, metadata, "TDC1Rising", -1, 0, 1, weight_by_gmd2=True)
+
+            x = np.arange(8, dtype=float) + 0.5
+            for fit_input, fit_counts in ((None, weighted_histogram), (original, original_data["pixels"])):
+                peak = {"center": 4., "gaussian_fwhm": 2 * np.sqrt(2 * np.log(2))}
+                with patch("vmi_analysis.pes.fit_peaks", return_value=(x, x, x, None, x, [peak])) as fitter:
+                    fitted = fit_filtered_peaks(path, filtered, "TDC1Rising", ["pixels"], (0, 8), [], "Constant",
+                                                tof_result=fit_input)
+                np.testing.assert_array_equal(fitter.call_args.args[1], fit_counts)
+                counted = json.loads(fitted["pixels_peaks"])[0]
+                self.assertAlmostEqual(counted["counts"], 4.5)
+                self.assertAlmostEqual(counted["yield_per_trigger"], 2.25)
 
     def test_peak_yield_counts_exact_arrivals_on_selected_triggers(self):
         with TemporaryDirectory() as directory:

@@ -213,6 +213,19 @@ def gmd_limits(readings, low, high):
     return low, high
 
 
+def gmd2_by_frame(readings, segment_offsets, shift):
+    """Align GMD2 row j to frame j + shift without crossing segments."""
+    aligned = np.full(len(readings), np.nan)
+    for start, stop in zip(segment_offsets[:-1], segment_offsets[1:]):
+        if abs(shift) >= stop - start:
+            continue
+        if shift >= 0:
+            aligned[start + shift:stop] = readings[start:stop - shift]
+        else:
+            aligned[start:stop + shift] = readings[start - shift:stop]
+    return aligned
+
+
 def _saved_blocks(path, reference, source, expected, boundaries):
     paths = segment_files(path)
     if len(paths) + 1 != len(boundaries):
@@ -227,7 +240,7 @@ def _saved_blocks(path, reference, source, expected, boundaries):
                 yield values, indices + start, unmatched
 
 
-def filtered_histogram(path, tof_result, metadata, reference, low, high, shift):
+def filtered_histogram(path, tof_result, metadata, reference, low, high, shift, *, weight_by_gmd2=False):
     """Gate within each acquisition and use the saved combined TOF grid."""
     with np.load(tof_result, allow_pickle=False) as original:
         if "trigger_times" not in original:
@@ -241,22 +254,37 @@ def filtered_histogram(path, tof_result, metadata, reference, low, high, shift):
         raise ValueError(gmd["gmd_alignment_issue"])
     readings = gmd["gmd2_na"]
     low, high = gmd_limits(readings, low, high)
-    selected = np.zeros(len(expected), dtype=bool)
-    for start, stop in zip(boundaries[:-1], boundaries[1:]):
-        values = readings[start:stop]
-        rows = np.flatnonzero(np.isfinite(values) & (values >= low) & (values <= high)) + shift
-        selected[start + rows[(rows >= 0) & (rows < stop - start)]] = True
+    aligned = gmd2_by_frame(readings, boundaries, shift)
+    selected = np.isfinite(aligned) & (aligned >= low) & (aligned <= high)
+    weights = np.zeros(len(expected), dtype=float) if weight_by_gmd2 else None
+    if weights is not None:
+        selected &= aligned > 0
     count = int(selected.sum())
     result = {"edges": edges, "selected_triggers": count, "triggers": len(expected),
               "trigger_times": expected, "selected_mask": selected, "segment_offsets": boundaries,
               "gmd_min": low, "gmd_max": high}
     print(f"GMD2 {low:g} to {high:g} nA, shift {shift:+d}: {count:,} selected triggers.")
+    if weights is not None:
+        if not count:
+            raise ValueError("The GMD2 gate contains no aligned triggers with positive GMD2.")
+        reference_na = float(aligned[selected].mean())
+        with np.errstate(over="ignore", divide="ignore"):
+            weights[selected] = reference_na / aligned[selected]
+        if not np.isfinite(weights).all():
+            raise ValueError("GMD2 weights are not finite. Increase the GMD2 minimum.")
+        result.update(frame_weights=weights, gmd2_reference_na=reference_na)
+        print(f"GMD2 reference: {reference_na:.6g} nA (mean of selected triggers).")
     for source in sources:
-        counts = np.zeros(len(edges) - 1, dtype=np.int64)
+        counts = np.zeros(len(edges) - 1, dtype=np.int64 if weights is None else float)
         for values, indices, _ in _saved_blocks(path, reference, source, expected, boundaries):
-            counts += np.histogram(values[selected[indices]], bins=edges)[0]
+            keep = selected[indices]
+            counts += np.histogram(values[keep], bins=edges,
+                                   weights=None if weights is None else weights[indices[keep]])[0]
         result[source] = counts
-        print(f"{source}: {int(counts.sum()):,} selected counts in the TOF range.")
+        if weights is None:
+            print(f"{source}: {int(counts.sum()):,} selected counts in the TOF range.")
+        else:
+            print(f"{source}: {counts.sum():,.6g} weighted counts in the TOF range.")
     return result
 
 def fit_filtered_peaks(path, filtered_result, reference, sources, region, estimates, baseline, tof_result=None):
@@ -272,6 +300,9 @@ def fit_filtered_peaks(path, filtered_result, reference, sources, region, estima
         edges = filtered["edges"]
         centers = (edges[:-1] + edges[1:]) / 2
         selected = filtered["selected_mask"]
+        weights = filtered["frame_weights"] if "frame_weights" in filtered else None
+        if weights is not None:
+            results["gmd2_reference_na"] = float(filtered["gmd2_reference_na"])
         selected_count = int(filtered["selected_triggers"])
         if selected_count < 1:
             raise ValueError("Select at least one GMD2-gated trigger before fitting peak yields.")
@@ -303,9 +334,13 @@ def fit_filtered_peaks(path, filtered_result, reference, sources, region, estima
                 peak.update(low=peak["center"] - half_width, high=peak["center"] + half_width, counts=0)
             print(f"Counting {source} in {len(peaks)} Gaussian peak windows…")
             for values, assigned, _ in _saved_blocks(path, reference, source, triggers, boundaries):
-                arrivals = values[selected[assigned]]
+                keep = selected[assigned]
+                arrivals = values[keep]
+                arrival_weights = weights[assigned[keep]] if weights is not None else None
                 for peak in peaks:
-                    peak["counts"] += int(np.count_nonzero((arrivals >= peak["low"]) & (arrivals < peak["high"])))
+                    inside = (arrivals >= peak["low"]) & (arrivals < peak["high"])
+                    peak["counts"] += (int(np.count_nonzero(inside)) if arrival_weights is None
+                                       else float(arrival_weights[inside].sum()))
             for peak in peaks:
                 peak["yield_per_trigger"] = peak["counts"] / selected_count
             results[f"{source}_curve"] = np.stack((x, fitted, background, residual))
@@ -322,6 +357,8 @@ def main():
     parser.add_argument("--gmd-min", type=float, help="Inclusive GMD2 minimum in nA")
     parser.add_argument("--gmd-max", type=float, help="Inclusive GMD2 maximum in nA")
     parser.add_argument("--gmd-shift", type=int, help="Pair GMD row j with camera frame j + shift")
+    parser.add_argument("--weight-by-gmd2", action="store_true",
+                        help="Weight gated frames by the selected mean GMD2 divided by frame GMD2")
     parser.add_argument("--filtered-result", type=Path, help="Existing GMD2-filtered histogram (.npz)")
     parser.add_argument("--fit-spec", type=json.loads, help="Gaussian peak fit settings as JSON")
     parser.add_argument("--source", choices=(*ARRIVALS, "both"), default="pixels")
@@ -338,6 +375,8 @@ def main():
                                                        ("unfiltered TOF result", args.tof_result),
                                                        ("filtered TOF result", args.filtered_result)])
         if args.filtered_result is not None or args.fit_spec is not None:
+            if args.weight_by_gmd2:
+                raise ValueError("Set GMD2 weighting when filtering TOF. Fitting uses the saved gate's weights.")
             if args.filtered_result is None or not isinstance(args.fit_spec, dict):
                 raise ValueError("Peak fitting requires the filtered TOF result and fit settings.")
             try:
@@ -345,11 +384,11 @@ def main():
                                             **args.fit_spec, tof_result=args.tof_result)
             except TypeError as exc:
                 raise ValueError(f"Invalid TOF peak fit settings. {exc}") from exc
-        elif any(value is not None for value in (args.tof_result, args.gmd_min, args.gmd_max, args.gmd_shift)):
+        elif args.weight_by_gmd2 or any(value is not None for value in (args.tof_result, args.gmd_min, args.gmd_max, args.gmd_shift)):
             if any(value is None for value in (args.tof_result, args.metadata, args.gmd_shift)):
                 raise ValueError("Filtering requires the unfiltered TOF result, metadata, and shift.")
             result = filtered_histogram(args.input, args.tof_result, args.metadata, args.reference,
-                                        args.gmd_min, args.gmd_max, args.gmd_shift)
+                                        args.gmd_min, args.gmd_max, args.gmd_shift, weight_by_gmd2=args.weight_by_gmd2)
         else:
             sources = tuple(ARRIVALS) if args.source == "both" else (args.source,)
             result = histogram(args.input, sources, args.reference, args.bins, args.minimum, args.maximum,

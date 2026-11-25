@@ -24,6 +24,7 @@ RATIO_NAME = "ion-yield-ratio.csv"
 COLUMNS = ("folder", "delay_mm", "peak", "frames", "selected_frames", "segments",
            "center_ns", "sigma_ns", "window_min_ns", "window_max_ns", "counts",
            "hits_per_frame", "poisson_error", "status")
+GMD2_REFERENCE = "gmd2_reference_na"
 
 
 @dataclass
@@ -54,6 +55,11 @@ def delay_from_files(paths, fallback):
 def validate_settings(options):
     if options.get("backend", "luna") not in ("luna", "fallback"):
         raise ValueError("Choose the LUNA or fallback decoder.")
+    weighted = options.get("weight_by_gmd2", False)
+    if type(weighted) is not bool:
+        raise ValueError("Use true or false for GMD2 weighting.")
+    if weighted and (not options["gate_gmd"] or options.get("backend") == "fallback"):
+        raise ValueError("GMD2 weighting requires an enabled GMD2 gate in the LUNA pipeline.")
     peaks = options["peaks"]
     if not peaks:
         raise ValueError("Add at least one peak.")
@@ -83,26 +89,37 @@ def validate_settings(options):
             raise ValueError("Enter finite GMD2 limits with minimum at or below maximum.")
 
 
-def measure(position, options, selected, fit_peak):
+def measure(position, options, selected, fit_peak, *, frame_weights=None):
     selected_count = int(np.count_nonzero(selected))
-    gated_tof = position.tof_ns[selected[position.frame_index]]
-    fit_tof = gated_tof if options.get("fit_tof", "gated") == "gated" else position.tof_ns
+    keep = selected[position.frame_index]
+    gated_tof = position.tof_ns[keep]
+    arrival_weights = frame_weights[position.frame_index[keep]] if frame_weights is not None else None
+    fit_gated = options.get("fit_tof", "gated") == "gated"
+    fit_tof = gated_tof if fit_gated else position.tof_ns
+    fit_options = {"weights": arrival_weights} if fit_gated and arrival_weights is not None else {}
     for peak in options["peaks"]:
         row = dict(peak=peak["name"], delay_mm=position.delay_mm, frames=len(selected),
                    selected_frames=selected_count, segments=len(position.segment_lengths))
         if not selected_count:
             yield dict(row, status="No frames pass the GMD2 gate.")
             continue
-        fit = fit_peak(fit_tof, peak["low"], peak["high"], peak["center"], options["fit_bins"])
+        fit = fit_peak(fit_tof, peak["low"], peak["high"], peak["center"], options["fit_bins"], **fit_options)
         if fit is None:
             yield dict(row, status="Gaussian fit unavailable in the requested range.")
             continue
         center, width = fit["mu"], fit["sigma"]
         half_width = options["window_sigma"] * width
         low, high = center - half_width, center + half_width
-        n = int(np.count_nonzero((gated_tof >= low) & (gated_tof < high)))
+        inside = (gated_tof >= low) & (gated_tof < high)
+        if arrival_weights is None:
+            n = int(np.count_nonzero(inside))
+            error = sqrt(n)
+        else:
+            weights = arrival_weights[inside]
+            n = float(weights.sum())
+            error = float(np.linalg.norm(weights))
         yield dict(row, center_ns=center, sigma_ns=width, window_min_ns=low, window_max_ns=high,
-                   counts=n, hits_per_frame=n / selected_count, poisson_error=sqrt(n) / selected_count,
+                   counts=n, hits_per_frame=n / selected_count, poisson_error=error / selected_count,
                    status="OK")
 
 
@@ -148,6 +165,7 @@ def save_plot(path, rows, names, ylabel):
 
 def run(root, output, options):
     validate_settings(options)
+    weighted = options.get("weight_by_gmd2", False)
     if options.get("backend") == "fallback":
         from vmi_analysis import ion_fallback_backend as backend
     else:
@@ -156,36 +174,76 @@ def run(root, output, options):
     if not points:
         raise ValueError("No delay-position folders were found.")
     output.mkdir(parents=True, exist_ok=True)
-    (output / "settings.json").write_text(json.dumps(options, indent=2, ensure_ascii=False), encoding="utf-8")
+    settings_path = output / "settings.json"
+    settings_path.write_text(json.dumps(options, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def process(task):
         index, (delay, folder) = task
         print(f"[{index}/{len(points)}] {folder.name}", flush=True)
+        gmd2_sum = eligible_frames = 0
         try:
             data = backend.decode(folder, delay, output, options)
-            selected = backend.select_frames(data, options) if options["gate_gmd"] else np.ones(
-                len(data.gmd2_na), dtype=bool
-            )
-            measured = list(measure(data, options, selected, backend.fit_peak))
+            weights = None
+            if weighted:
+                aligned = backend.gated_gmd2(data, options)
+                selected = np.isfinite(aligned)
+                eligible_frames = int(selected.sum())
+                gmd2_sum = float(aligned[selected].sum())
+                weights = np.zeros_like(aligned)
+                with np.errstate(over="ignore", divide="ignore"):
+                    weights[selected] = 1.0 / aligned[selected]
+                if not np.isfinite(weights).all():
+                    raise ValueError("GMD2 weights are not finite. Increase the GMD2 minimum.")
+            else:
+                selected = (backend.select_frames(data, options) if options["gate_gmd"]
+                            else np.ones(len(data.gmd2_na), dtype=bool))
+            measured = list(measure(data, options, selected, backend.fit_peak, frame_weights=weights))
         except (OSError, ValueError, RuntimeError) as exc:
             measured = [dict(peak=peak["name"], delay_mm=delay, status=str(exc)) for peak in options["peaks"]]
-        return [dict(row, folder=folder.name) for row in measured]
+        return [dict(row, folder=folder.name) for row in measured], gmd2_sum, eligible_frames
+
+    def write_rows(measured):
+        csv_writer.writerows(measured)
+        file.flush()
+        for row in measured:
+            summary = row["status"]
+            if summary == "OK":
+                counts = f"{row['counts']:,.6g} weighted counts" if weighted else f"{row['counts']:,}"
+                summary = f"{counts} / {row['selected_frames']:,} frames"
+            print(f"  {row['folder']} · {row['peak']}: {summary}", flush=True)
 
     rows = []
+    total_gmd2 = selected_frames = 0
     with (output / CSV_NAME).open("w", encoding="utf-8", newline="") as file, \
             ThreadPoolExecutor(max_workers=options.get("workers", 1)) as executor:
-        csv_writer = csv.DictWriter(file, COLUMNS)
+        csv_writer = csv.DictWriter(file, (*COLUMNS, GMD2_REFERENCE) if weighted else COLUMNS)
         csv_writer.writeheader()
-        for completed, measured in enumerate(executor.map(process, enumerate(points, 1)), 1):
+        for completed, (measured, gmd2_sum, eligible_frames) in enumerate(executor.map(process, enumerate(points, 1)), 1):
             rows.extend(measured)
-            csv_writer.writerows(measured)
-            file.flush()
-            for row in measured:
-                summary = (f"{row['counts']:,} / {row['selected_frames']:,} frames"
-                           if row["status"] == "OK" else row["status"])
-                print(f"  {row['folder']} · {row['peak']}: {summary}", flush=True)
+            if weighted:
+                total_gmd2 += gmd2_sum
+                selected_frames += eligible_frames
+            else:
+                write_rows(measured)
             if options.get("backend") != "fallback":
-                print(f"Delay positions written: {completed}/{len(points)}", flush=True)
+                stage = "processed" if weighted else "written"
+                print(f"Delay positions {stage}: {completed}/{len(points)}", flush=True)
+        if weighted:
+            if selected_frames:
+                # The common numerator only scales the gated histogram's height.
+                # Fit with 1/GMD2, then scale counts and uncertainties once the scan mean is known.
+                reference = total_gmd2 / selected_frames
+                if not isfinite(reference):
+                    raise ValueError("The scan-wide mean GMD2 is not finite.")
+                settings_path.write_text(json.dumps({**options, GMD2_REFERENCE: reference}, indent=2, ensure_ascii=False),
+                                         encoding="utf-8")
+                print(f"Scan-wide GMD2 reference: {reference:.6g} nA from {selected_frames:,} selected frames.", flush=True)
+                for row in rows:
+                    row[GMD2_REFERENCE] = reference
+                    if row["status"] == "OK":
+                        for key in ("counts", "hits_per_frame", "poisson_error"):
+                            row[key] *= reference
+            write_rows(rows)
     names = [peak["name"] for peak in options["peaks"]]
     if options.get("backend") != "fallback" and len(names) > 1:
         numerator, denominator = names[:2]

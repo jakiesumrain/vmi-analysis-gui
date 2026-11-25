@@ -108,6 +108,11 @@ class AgentPanelTests(unittest.TestCase):
         })
         self.assertEqual(result["selected_triggers"], 12)
         self.assertEqual(self.registry.measure(self.jobs, fit.id, params)["peaks"], [row])
+        np.savez(histogram, edges=np.array([10490, 10495, 10500, 10505, 10510]),
+                 pixels=np.array([0., .2, .75, .4]), selected_triggers=12, gmd2_reference_na=3.)
+        weighted = self.registry.measure(self.jobs, spectrum.id, params)
+        self.assertEqual(weighted["strongest_bin"]["counts"], .75)
+        self.assertEqual(weighted["gmd2_reference_na"], 3.)
         with patch.object(shared, "current_account", return_value=SimpleNamespace(name="other")):
             with self.assertRaisesRegex(ValueError, "in your workspace"):
                 self.registry.measure(self.jobs, spectrum.id, params)
@@ -574,7 +579,7 @@ class AgentPanelTests(unittest.TestCase):
         point.mkdir(parents=True)
         params = {
             "input": "/datasets/scan", "output": "/workspace/ion-results",
-            "source": "clusters", "fit_tof": "ungated", "gmd_shift": -2,
+            "source": "clusters", "fit_tof": "ungated", "gmd_shift": -2, "weight_by_gmd2": True,
             "peaks": [{"name": " A ", "low": 10150, "high": 11050, "center": 10545},
                       {"name": "B", "low": 8800, "high": 9600, "center": 9155}],
         }
@@ -588,6 +593,7 @@ class AgentPanelTests(unittest.TestCase):
         self.assertEqual(proposed.extra["settings"], manual.extra["settings"])
         self.assertEqual(proposed.extra["settings"]["wsl_executable"], "")
         self.assertEqual(proposed.extra["panel_form"]["gate"], True)
+        self.assertTrue(proposed.extra["panel_form"]["weight_by_gmd2"])
         self.assertEqual(summary["Ratio CSV peak pair"], ["A", "B"])
         self.assertEqual(proposed.reads, [str(point)])
         self.assertEqual(self.jobs.jobs(), [])
@@ -597,6 +603,7 @@ class AgentPanelTests(unittest.TestCase):
         for change, message in (
             ({"output": "/datasets/output"}, "read-only"),
             ({"fit_bins": True}, "finite numeric"),
+            ({"gate_gmd": False}, "enabled GMD2 gate"),
             ({"disable_clustering": True}, "Enable clustering"),
             ({"wsl_executable": "custom"}, "listed by describe"),
             ({"peaks": [params["peaks"][0]] * 2}, "distinct name"),
@@ -687,6 +694,12 @@ class AgentPanelTests(unittest.TestCase):
         })
         self.assertEqual(options["Alignment shift d (frames)"], -1)
         self.assertEqual(gate.extra["metadata"], str(metadata))
+        self.assertNotIn("--weight-by-gmd2", gate.cmd)
+        weighted_gate, weighted_options = self.registry.prepare(self.jobs, "ion_tof_gate", {
+            "tof_job_id": spectrum.id, "gmd_min_na": 2, "gmd_max_na": 8, "shift": -1, "weight_by_gmd2": True,
+        })
+        self.assertIn("--weight-by-gmd2", weighted_gate.cmd)
+        self.assertEqual(weighted_options["Weight by GMD2"], "Yes")
         gate.status = "done"
         gate.owner = self.account.name
         self.jobs._jobs[gate.id] = gate
