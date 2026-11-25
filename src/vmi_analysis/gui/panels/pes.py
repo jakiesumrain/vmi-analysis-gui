@@ -17,7 +17,7 @@ from plotly.subplots import make_subplots
 from vmi_analysis.centroiding.plot_data import load_plot_data
 from vmi_analysis.pes import (ABEL_METHODS, BASELINE_PARAMETERS, BETA_ORDERS, QUADRANT_LABELS,
                               QUADRANT_ORDER, SYMMETRY_AXES, Geometry, PeakGuess, anisotropy_values,
-                              average_anisotropy, evaluate_fit_for_plot, fit_peaks)
+                              average_anisotropy, evaluate_fit_for_plot, fit_peaks, integrate_spectral_bins)
 
 from ..agent_panels import PanelOperation, PanelView, number as finite_number, require_completed_job, resolve_path
 from ..shared import checked_path, generated_dir, workspace_root
@@ -32,6 +32,7 @@ from .picker import LocalFilePicker
 JOB_NAME = "PES"
 FIT_OPERATION = "pes_fit"
 PROFILES = ("Gaussian", "Voigt")
+MAX_RESAMPLED_BINS = 10_000
 _AXIS_SCRIPT = (files("vmi_analysis.gui.assets") / "pes_axes.js").read_text(encoding="utf-8")
 
 
@@ -479,8 +480,8 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             state["plot"] = _scientific_plot()
             state["plot"].on("plotly_selected", select_range,
                                js_handler="event => emit(event?.range ?? null)")
-            if state["angular"]:
-                show_anisotropy()
+            beta_spectrum = show_anisotropy() if state["angular"] else None
+            show_resampled(beta_spectrum)
         with ui.row().classes("gap-2"):
             ui.button("Download spectra CSV", icon="download", on_click=download_spectra).props("flat")
             if state["angular"]:
@@ -550,6 +551,68 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
 
         spectrum.on_value_change(lambda _: redraw())
         redraw(update_axes=True)
+        return spectrum
+
+    def show_resampled(beta_spectrum):
+        spectra, angular = state["spectra"], state["angular"]
+        units, x_label = state["units"], state["x_label"]
+        orders = state["beta_orders"]
+        sampled = [x for _, x, _ in spectra.values() if x.size >= 2]
+        with ui.expansion("Uniform-grid spectra", icon="show_chart", value=False).classes("w-full").props(
+                'header-class="vmi-section-toggle text-primary" expand-icon-class="text-primary"') as section:
+            if not sampled:
+                ui.label("Resampling requires at least two spectrum samples.").classes("vmi-subtitle")
+                return
+            low = min(x[0] for x in sampled)
+            span = max(x[-1] for x in sampled) - low
+            applied_width = float(f"{span / 200:.2g}")
+            with ui.row().classes("items-center gap-2"):
+                width = num_input(f"Bin width ({units})", applied_width, step="any")
+                ui.button("Apply bin width", on_click=lambda: apply_width()).props("flat")
+            ui.label("Intensity is averaged over each bin. Edge bins include only the measured yield."
+                     + (" β follows the β spectrum selected above." if beta_spectrum else "")).classes("vmi-subtitle")
+            plots = ui.column().classes("w-full gap-0")
+
+        def apply_width():
+            nonlocal applied_width
+            step = width.value
+            if step is None or not np.isfinite(step) or not np.isfinite(low + step) or step <= 0:
+                ui.notify("Enter a positive, finite bin width.", type="warning")
+                return
+            if step < span / MAX_RESAMPLED_BINS or low + step == low:
+                ui.notify(f"Use a larger bin width for at most {MAX_RESAMPLED_BINS:,} bins.", type="warning")
+                return
+            applied_width = step
+            redraw()
+
+        def redraw():
+            step = applied_width
+            count = max(1, int(np.ceil(span / step)))
+            edges = low + np.arange(count + 1) * step
+            centers = edges[:-1] + step / 2
+            rows = 1 + len(orders)
+            fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.04)
+            for name, (_, x, y) in spectra.items():
+                density = integrate_spectral_bins(x, y, edges) / step
+                fig.add_scatter(x=centers, y=density, name=name, mode="lines+markers", marker={"size": 4},
+                                row=1, col=1)
+            fig.update_yaxes(title_text="Bin-average intensity", row=1, col=1)
+            if beta_spectrum:
+                x, moments = angular[beta_spectrum.value]
+                beta = anisotropy_values(integrate_spectral_bins(x, moments, edges))
+                for row, (order, values) in enumerate(zip(orders, beta), start=2):
+                    fig.add_scatter(x=centers, y=values, mode="lines+markers", marker={"size": 4},
+                                    name=f"β{order}", showlegend=False, row=row, col=1)
+                    fig.update_yaxes(title_text=f"β{order} (dimensionless)", row=row, col=1)
+            _style_comparison_plot(fig, max(347, 210 * rows + 100))
+            fig.update_xaxes(title_text=f"{x_label} ({units})", row=rows, col=1)
+            plots.clear()
+            with plots:
+                _scientific_plot().update_figure(plot_options(fig))
+
+        section.on_value_change(lambda event: redraw() if event.value else None)
+        if beta_spectrum:
+            beta_spectrum.on_value_change(lambda _: redraw() if section.value else None)
 
     with theme.panel_card():
         theme.form_section("VMI images")

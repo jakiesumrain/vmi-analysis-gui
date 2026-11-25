@@ -135,6 +135,36 @@ def anisotropy_values(moments):
                      where=np.isfinite(isotropic) & (isotropic > 0))
 
 
+def integrate_spectral_bins(x, values, edges):
+    """Integrate piecewise-linear samples over the measured part of each bin.
+
+    The last dimension of values indexes x. Bins outside coverage and bins
+    intersecting a segment with missing data have NaN integrals.
+    """
+    x, values, edges = (np.asarray(array, dtype=float) for array in (x, values, edges))
+    if (x.ndim != 1 or values.ndim == 0 or values.shape[-1] != x.size
+            or edges.ndim != 1 or edges.size < 2 or not np.isfinite(x).all()
+            or not np.isfinite(edges).all() or np.any(np.diff(x) <= 0)
+            or np.any(np.diff(edges) <= 0)):
+        raise ValueError("Expected increasing spectral coordinates and bin edges with matching sample values.")
+    integrated = np.full((*values.shape[:-1], edges.size - 1), np.nan)
+    if x.size < 2:
+        return integrated
+    start = np.searchsorted(edges, x[0], side="right") - 1
+    stop = np.searchsorted(edges, x[-1], side="left")
+    start, stop = max(0, start), min(edges.size - 1, stop)
+    if start >= stop:
+        return integrated
+    clipped = edges[start:stop + 1].clip(x[0], x[-1])
+    grid = np.union1d(clipped, x[(x > clipped[0]) & (x < clipped[-1])])
+    bin_starts = np.searchsorted(grid, clipped[:-1])
+    for samples, output in zip(values.reshape(-1, x.size), integrated.reshape(-1, edges.size - 1)):
+        y = np.interp(grid, x, samples)
+        areas = (y[:-1] + y[1:]) * (np.diff(grid) / 2)
+        output[start:stop] = np.add.reduceat(areas, bin_starts)
+    return integrated
+
+
 def average_anisotropy(x, moments, center, fwhm):
     """Integrate the angular moments over a complete, sampled FWHM window."""
     low, high = center - fwhm / 2, center + fwhm / 2

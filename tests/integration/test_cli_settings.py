@@ -342,6 +342,50 @@ class GuiSubmissionTests(unittest.TestCase):
         self.assertEqual(job.reads, [source])
         self.assertEqual(job.writes, [job.extra["pes_spectra"]])
 
+    def test_pes_uniform_grid_uses_the_completed_run_units_and_bin_width(self):
+        import numpy as np
+        from nicegui import Client, app, ui
+        from vmi_analysis.centroiding.plot_data import save_plot_data
+        from vmi_analysis.gui.jobs import Job
+        from vmi_analysis.gui.panels import pes
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pes.npz"
+            for alpha, units in ((None, "pixel²"), (0.5, "eV")):
+                with self.subTest(alpha=alpha):
+                    q = np.array([1, 4, 9])
+                    x = q * (alpha or 1)
+                    save_plot_data(path, {"alpha": alpha, "beta_order": 2, "images": [{"path": "image.npy"}]},
+                                   r2_0=q, x_0=x, y_0=[2, 2, 2], beta_x_0=x,
+                                   moments_0=[[2., 2., 2.], [1., 1., 1.]])
+                    job = Job("PES", status="done", extra={"pes_spectra": str(path)})
+                    client = Client(ui.page("/_test_pes_uniform_grid"))
+                    callbacks = {}
+                    try:
+                        with client, patch.object(app.storage, "_general", {MIGRATED_KEY: True}), \
+                                patch.object(ui.button, "on_click", lambda button, handler:
+                                             callbacks.__setitem__(button.text, handler)), \
+                                patch.object(pes, "plot_options", wraps=pes.plot_options) as plot_options:
+                            pes.build(Mock(jobs=Mock(return_value=[job])))
+                            callbacks["View latest spectra"]()
+                            section = next(element for element in client.elements.values()
+                                           if isinstance(element, ui.expansion) and element.text == "Uniform-grid spectra")
+                            self.assertFalse(section.value)
+                            section.open()
+                            width = next(element for element in client.elements.values()
+                                         if isinstance(element, ui.number) and element.label == f"Bin width ({units})")
+                            width.value = 3 * (alpha or 1)
+                            callbacks["Apply bin width"]()
+                            fig = plot_options.call_args.args[0]
+                            intensity, beta = fig.data
+                            np.testing.assert_allclose(intensity.x, x[0] + width.value * np.array([0.5, 1.5, 2.5]))
+                            np.testing.assert_allclose(intensity.y, [2, 2, 4 / 3])
+                            np.testing.assert_allclose(beta.x, intensity.x)
+                            np.testing.assert_allclose(beta.y, [0.5, 0.5, 0.5])
+                            self.assertIn(units, fig.layout.xaxis2.title.text)
+                    finally:
+                        client.delete()
+
     def test_centroid_frame_limit_sanitizes_on_blur(self):
         from nicegui import Client, app, ui
         from vmi_analysis.gui.panels import centroid
