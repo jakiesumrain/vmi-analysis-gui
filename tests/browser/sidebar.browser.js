@@ -55,6 +55,21 @@ async page => {
 
   const sidebar = page.locator('.vmi-sidebar');
   const settings = sidebar.getByRole('button', {name: 'Settings', exact: true});
+  const agent = sidebar.locator('.vmi-sidebar-foot').getByRole('tab', {name: 'Agent', exact: true});
+  if (await electron.getByRole('tab', {name: 'Agent', exact: true}).count()) {
+    throw new Error('Agent is still grouped with Electron tools');
+  }
+  await agent.click();
+  await panel('Agent').waitFor();
+  await page.getByRole('tab', {name: 'Agent', exact: true, selected: true}).waitFor();
+  const connection = page.locator('.vmi-agent-connection');
+  const connectionButton = page.getByRole('button', {name: 'Connection', exact: true});
+  const baseUrl = connection.getByRole('textbox', {name: 'Base URL', exact: true});
+  if (await baseUrl.isVisible()) throw new Error('Agent connection settings should start collapsed');
+  await connectionButton.click();
+  await baseUrl.waitFor({state: 'visible'});
+  await connectionButton.click();
+  await baseUrl.waitFor({state: 'hidden'});
   if (await page.locator('.vmi-header').getByRole('button', {name: 'Settings', exact: true}).count()) {
     throw new Error('Settings is still in the header');
   }
@@ -68,7 +83,7 @@ async page => {
   if (await settings.locator('.block').isVisible()) {
     throw new Error('Settings label text is shown in the icon rail');
   }
-  for (const name of ['Circularize', 'TPX3 Dump', 'Ion Pipeline']) {
+  for (const name of ['Circularize', 'TPX3 Dump', 'Ion Pipeline', 'Agent']) {
     await tab(name).click();
     await panel(name).waitFor();
   }

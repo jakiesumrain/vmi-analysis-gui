@@ -55,8 +55,10 @@ def file_url(path) -> str:
         from urllib.parse import quote
 
         root = shared.workspace_root()
-        area = "private" if p.is_relative_to(root) else "datasets"
-        relative = p.relative_to(root if area == "private" else shared.SERVER.datasets)
+        roots = {"private": root, "analysis": shared.analysis_root(shared.current_account()),
+                 "datasets": shared.SERVER.datasets}
+        area = next(name for name, base in roots.items() if p.is_relative_to(base))
+        relative = p.relative_to(roots[area])
         return f"/workspace-file/{area}/{quote(relative.as_posix())}?t={stamp}"
     return f"{serve_dir(p.parent)}/{p.name}?t={stamp}"
 
@@ -276,6 +278,19 @@ def persist(widget, key: str):
     return widget
 
 
+def adopt_agent_form(job, panel):
+    """Adopt an Agent job's inputs once per workspace, then respect saved edits."""
+    form = job.extra.get("panel_form") if job.extra.get("agent_panel") else None
+    if not isinstance(form, dict) or not form:
+        return {}
+    store = shared.settings_store()
+    marker = f"{panel}._adopted_agent_job"
+    if store.get(marker) == job.id:
+        return {key: store.get(f"{panel}.{key}", value) for key, value in form.items()}
+    store.update({f"{panel}.{key}": value for key, value in form.items()} | {marker: job.id})
+    return form
+
+
 def delete_outputs(paths, *, expected=None):
     """Delete only when no running/queued job reads or writes these files."""
     try:
@@ -389,16 +404,41 @@ def action_bar(view: "JobView", label: str = "Run", *, on_click):
 # JobView: status badge + progress + cancel + log console + results
 # --------------------------------------------------------------------------
 
+def checkpoint_view(jobs, *, stop_label=None):
+    """Display a pending workflow decision and keep draft choices across refreshes."""
+    container = ui.column().classes("w-full min-w-0 gap-3")
+    current = None
+
+    def refresh(job):
+        nonlocal current
+        pending = job.checkpoint if job is not None and job.status == "waiting" else None
+        if pending is current:
+            return
+        current = pending
+        container.clear()
+        if pending is not None:
+            with container:
+                pending.render(jobs, job, pending)
+                if stop_label:
+                    ui.button(stop_label, icon="stop",
+                              on_click=lambda: jobs.cancel(job.id)).props("flat")
+
+    return refresh
+
+
 class JobView:
     """Tracks one job; refresh via a NiceGUI timer.
 
     results_builder(job) is called once when the job reaches a terminal state.
     live_builder(job) is called on every refresh while the job runs (e.g. to
     update a live partial image).
+    attach_builder(job) is called whenever the view takes over a job, including
+    the reload and Agent reconnect paths, so a panel can show the run's inputs.
     """
 
     def __init__(self, jobs: JobManager, results_builder=None, live_builder=None,
-                 interval: float = 0.7, job_name: str | None = None, command_key: str | None = None):
+                 interval: float = 0.7, job_name: str | None = None, command_key: str | None = None,
+                 attach_builder=None):
         self.jobs = jobs
         self.job_name = job_name
         self._command_key = command_key
@@ -410,6 +450,7 @@ class JobView:
         self._results_shown = False
         self._results_builder = results_builder
         self._live_builder = live_builder
+        self._attach_builder = attach_builder
         # Status controls are created inline in the panel header by
         # place_status() (theme.panel_header passes the view there).
         self.badge = None
@@ -556,6 +597,11 @@ class JobView:
         if self.log is not None:
             self.log.clear()
         self._reset_results()
+        if self._attach_builder is not None:
+            try:
+                self._attach_builder(job)
+            except Exception:
+                pass  # a stale saved form must never block status or results
         self.refresh()
 
     def cancel(self) -> None:
@@ -570,6 +616,9 @@ class JobView:
             active = [j for j in owned if j.status in ("running", "queued")]
             if active:
                 self.attach(next((j for j in active if j.status == "running"), active[-1]))
+                return
+            if owned and owned[-1].extra.get("agent_panel") and self.job is not owned[-1]:
+                self.attach(owned[-1])
                 return
             if shared.SERVER and self.job is None and owned:
                 self.attach(owned[-1])
@@ -592,6 +641,7 @@ class JobView:
             self.console_hint.text = {
                 "running": "Streaming output…",
                 "queued": "Queued — waiting for a slot",
+                "waiting": "Waiting for your decision",
                 "done": "Finished — results below",
                 "failed": "Failed — see log for details",
                 "cancelled": "Cancelled",

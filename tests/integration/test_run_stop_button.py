@@ -135,6 +135,47 @@ class RunStopButtonTests(ButtonFixture):
         self.assertEqual(other_view.action_button.text, "Run")
 
 
+class AttachHookTests(unittest.TestCase):
+    """A panel takes over an Agent job's inputs when the view adopts the job."""
+
+    def make_view(self, manager, hook):
+        client = Client(ui.page("/_test_attach_hook"))
+        self.addCleanup(client.delete)
+        with client:
+            view = JobView(manager, job_name="Ion TOF", attach_builder=hook)
+            view.run_button("Plot TOF", on_click=lambda: None)
+            view.place_console()
+        return view
+
+    def test_attach_and_reload_adoption_call_the_hook(self):
+        manager = Mock()
+        manager.jobs.return_value = []
+        seen = []
+        view = self.make_view(manager, seen.append)
+        job = Job(name="Ion TOF", status="running")
+        job.extra["agent_panel"] = True
+        view.attach(job)
+        self.assertEqual(seen, [job])
+        job.status = "done"
+        manager.jobs.return_value = [job]
+        reloaded = self.make_view(manager, seen.append)
+        self.assertIs(reloaded.job, job)
+        self.assertEqual(seen, [job, job])
+
+    def test_a_failing_hook_still_shows_status(self):
+        manager = Mock()
+        manager.jobs.return_value = []
+
+        def hook(job):
+            raise ValueError("stale saved value")
+
+        view = self.make_view(manager, hook)
+        job = Job(name="Ion TOF", status="running")
+        view.attach(job)
+        self.assertIs(view.job, job)
+        self.assertEqual(view.action_button.text, "Stop")
+
+
 class RealStopButtonTests(ButtonFixture):
     def setUp(self):
         self.manager = JobManager(max_concurrent=1)

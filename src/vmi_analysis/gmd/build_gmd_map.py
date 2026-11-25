@@ -12,9 +12,10 @@ import argparse
 import h5py
 import numpy as np
 import glob
-import ntpath
 import os
 import time
+
+from vmi_analysis.paths import validate_distinct_output
 
 # --- default config (override via CLI) ---
 DEFAULT_H5_DIR = ""                  # required: folder of HDF5 files
@@ -47,11 +48,22 @@ def parse_args():
     return args
 
 
+def validate_h5_pattern(pattern):
+    if (not isinstance(pattern, str) or not pattern or "\x00" in pattern
+            or pattern in (".", "..") or any(char in pattern for char in "/\\:")):
+        raise ValueError(f"Invalid HDF5 pattern {pattern!r}. Use a filename pattern such as '*RAW-*.h5'.")
+
+
 def main(h5_dir, gmd_path, output_path, n_files, h5_pattern=DEFAULT_H5_PATTERN):
     pattern = h5_pattern or DEFAULT_H5_PATTERN
-    if (pattern in (".", "..") or "/" in pattern or "\\" in pattern
-            or ntpath.splitdrive(pattern)[0]):
-        raise SystemExit(f"Invalid HDF5 pattern {pattern!r}. Use a filename pattern such as '*RAW-*.h5'.")
+    try:
+        validate_h5_pattern(pattern)
+        output_path = validate_distinct_output(
+            output_path, (("GMD timestamp file", gmd_path), ("HDF5 directory", h5_dir)),
+            output_label="GMD map output",
+        )
+    except (OSError, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
     t0 = time.time()
 
     # --- Load GMD data ---
@@ -65,6 +77,11 @@ def main(h5_dir, gmd_path, output_path, n_files, h5_pattern=DEFAULT_H5_PATTERN):
 
     # --- Scan H5 files ---
     files = sorted(glob.glob(os.path.join(glob.escape(h5_dir), pattern)))
+    if output_path.exists():
+        target = output_path.stat()
+        for source in files:
+            if os.path.samestat(target, os.stat(source)):
+                raise SystemExit(f"The GMD map output points to the HDF5 input {source}.")
     if n_files > 0:
         files = files[:n_files]
     print(f"\nScanning {len(files)} HDF5 files matching {pattern!r}...")
@@ -75,7 +92,8 @@ def main(h5_dir, gmd_path, output_path, n_files, h5_pattern=DEFAULT_H5_PATTERN):
     frame_list = []  # list of [global_idx, h5_name, in_file_idx, timestamp]
     global_idx = 0
 
-    for fpath in files:
+    last_percent = 0
+    for scanned, fpath in enumerate(files, 1):
         fname = os.path.basename(fpath)
         with h5py.File(fpath, 'r') as hf:
             meta = hf['raw/meta'][:]
@@ -83,6 +101,10 @@ def main(h5_dir, gmd_path, output_path, n_files, h5_pattern=DEFAULT_H5_PATTERN):
             ft = meta[i, 3] + meta[i, 4] / 1e9
             frame_list.append([global_idx, fname, i, ft])
             global_idx += 1
+        percent = scanned * 100 // len(files)
+        if percent > last_percent:
+            print(f"Scanned HDF5 files: {scanned}/{len(files)}", flush=True)
+            last_percent = percent
 
     n_frames = len(frame_list)
     print(f"  {n_frames} frames total")

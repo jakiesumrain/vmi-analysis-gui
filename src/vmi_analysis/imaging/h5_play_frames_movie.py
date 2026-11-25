@@ -191,8 +191,7 @@ def main():
 
     frames = list_frames(h5_dir, n_frames)
     if not frames:
-        print("No frames found.")
-        return
+        raise SystemExit("No frames found.")
     n_total = len(frames)
     print(f"Playing {n_total} frames from {os.path.normpath(h5_dir)}")
 

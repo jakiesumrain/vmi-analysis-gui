@@ -26,25 +26,32 @@ and [GUI design](docs/DESIGN.md) for implementation context.
 - `centroiding/options.py` owns defaults and CLI serialization.
   `gui/settings.py` owns GUI persistence and read-only legacy migration.
   TOML is an explicit CLI option. The GUI uses saved fields and passes explicit
-  arguments. Pipeline overrides dataset, map, and tuning mode only in its
-  submitted snapshot. Read result paths from the job snapshot.
+  arguments. Read result paths from the job snapshot.
 - Launch analysis scripts as subprocesses. Use one `JobView.run_button` per
   job panel and match its `job_name` to the submitted job name for reconnect.
   Preserve job snapshots and stop all process trees during server shutdown.
+  An approved Agent run records `job.extra["panel_form"]`; the panel adopts it
+  through `attach_builder` so its fields match the submitted run.
 - Trig Calibration runs interactive fitting in the web process. Use the
   same detector origin in Trig Calibration and Circularize. Circularize
   preserves the input matrix shape and the selected origin.
 - Keep `gui/resources.py` reservations in sync with CLI reads and writes.
-  Reserve every Pipeline stage for the full run. Only an independent
+  Reserve every stage of a multi-stage job for the full run. Only an independent
   standalone GMD Map may write beside standalone Centroiding. Use
   `delete_outputs` for clear actions.
 - Use the shared `image_zoom.js` overlay. Pan, zoom, and cropping affect the
   preview only. Reset restores the original image. Browser regression checks
   are in `tests/browser/`.
+- Agent sessions are per account and use the container launcher in shared mode.
+  Mount only the account workspace read-write and shared datasets read-only.
+  Pass API keys only through the child environment; never save them in settings,
+  workflows, model configuration, arguments, or logs. Clear key copies and remove
+  temporary configuration on startup failure, process exit, stop, and shutdown.
+  Agent is an interactive session panel, not a finite `JobView` job.
 - Follow the workbench patterns in [GUI design](docs/DESIGN.md) and use the
   UI/UX Pro Max skill for UI design. Keep panel summaries short. Describe
-  the task without naming the Python module. Binning and Pipeline are
-  immature and need restructuring.
+  the task without naming the Python module. Binning is immature and
+  needs restructuring.
 
 ## Git workflow
 

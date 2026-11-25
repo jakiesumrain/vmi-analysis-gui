@@ -12,12 +12,15 @@ from nicegui import app, background_tasks, ui
 
 from vmi_analysis.paths import WORKSPACE_ROOT
 
+from vmi_analysis.agent_backend import AGENTS
+
 from . import shared, theme, workflow
 from .jobs import MANAGER, ResourceBusyError
+from .panel_operations import build_registry
 from .startup import startup_port
-from .panels import (accumulate, binning, calibration, centroid, circularize,
-                     dark, gmd_map, ion_live, ion_luna, ion_momenta, ion_pipeline, ion_tof, ion_tof_fallback, ion_unpack,
-                     movie, pes, pipeline)
+from .panels import (accumulate, agent, binning, calibration, centroid, circularize,
+                     dark, gmd_map, ion_live, ion_luna, ion_momenta, ion_pipeline, ion_tof,
+                     ion_tof_fallback, ion_unpack, movie, pes)
 from .panels.common import file_url, init_zoom_overlay
 from .panels.picker import LocalFilePicker
 
@@ -60,13 +63,17 @@ app.on_connect(_cancel_shutdown_check)
 
 @app.on_shutdown
 async def _cleanup_jobs() -> None:
-    await asyncio.to_thread(MANAGER.shutdown)
+    await asyncio.gather(
+        asyncio.to_thread(MANAGER.shutdown),
+        asyncio.to_thread(AGENTS.shutdown),
+    )
 
 
 def _shutdown_now(reason: str) -> None:
     if app.is_stopping:
         return
     MANAGER.begin_shutdown()
+    AGENTS.begin_shutdown()
     print(f"[gui] {reason} — shutting down", flush=True)
     app.shutdown()
 
@@ -93,6 +100,8 @@ def _schedule_shutdown_after_last_client(client) -> None:
         _shutdown_after(_env_float("VMI_GUI_SHUTDOWN_GRACE", DEFAULT_SHUTDOWN_GRACE)),
         name="auto-shutdown-check")
 
+PANEL_OPERATIONS = build_registry()
+
 TABS = [
     ("GMD Map", gmd_map),
     ("Movie", movie),
@@ -103,7 +112,7 @@ TABS = [
     ("Trig Calibration", calibration),
     ("Circularize", circularize),
     ("PES", pes),
-    ("Pipeline", pipeline),
+    ("Agent", agent),
     ("TPX3 Dump", ion_luna),
     (ion_tof.JOB_NAME, ion_tof),
     (ion_momenta.JOB_NAME, ion_momenta),
@@ -123,7 +132,7 @@ TAB_ICONS = {
     "Trig Calibration": "track_changes",
     "Circularize": "donut_large",
     "PES": "multiline_chart",
-    "Pipeline": "account_tree",
+    "Agent": "smart_toy",
     "TPX3 Dump": "memory",
     ion_tof.JOB_NAME: "timer",
     ion_momenta.JOB_NAME: "open_with",
@@ -138,7 +147,6 @@ SIDEBAR_GROUPS = (
     ("Electron", (
         ("Acquire", ("GMD Map", "Movie", "Dark Frame", "Accumulate")),
         ("Analyze", ("Centroiding", "Binning", "Trig Calibration", "Circularize", "PES")),
-        ("Automate", ("Pipeline",)),
     )),
     ("Ion", ((None, ("TPX3 Dump", ion_tof.JOB_NAME, ion_momenta.JOB_NAME, ion_pipeline.JOB_NAME, ion_live.JOB_NAME)),)),
 )
@@ -349,6 +357,9 @@ def index() -> None:
                     with disclosure:
                         sidebar_group("Fallback", ((None, FALLBACK_TABS),)).classes("vmi-sidebar-fallback")
             with ui.column().classes("vmi-sidebar-foot"):
+                with ui.tabs().props('inline-label aria-label="Agent session"') as tabs:
+                    tab_groups.append(tabs)
+                    ui.tab("Agent", icon=TAB_ICONS["Agent"]).props('aria-label="Agent"').tooltip("Agent")
                 settings_button = ui.button("Settings", icon="settings", on_click=settings_dialog.open).props(
                     'flat no-caps aria-label="Settings"').classes("vmi-sidebar-settings")
                 settings_button.tooltip("Server controls and workflow files" if administrator
@@ -366,9 +377,17 @@ def index() -> None:
                             if module is circularize:
                                 use_calibration = module.build(MANAGER)
                             elif module is calibration:
-                                module.build(MANAGER, use_calibration=export_calibration)
+                                module.build(MANAGER, use_calibration=export_calibration,
+                                             ask_agent=lambda view: ask_agent(view))
+                            elif module is pes:
+                                module.build(MANAGER, ask_agent=lambda view: ask_agent(view))
                             elif name == ion_pipeline.FALLBACK_JOB_NAME:
                                 module.build(MANAGER, fallback=True)
+                            elif module is agent:
+                                ask_agent = module.build(MANAGER, registry=PANEL_OPERATIONS,
+                                                         navigate=lambda name: setattr(panels, "value", name))
+                            elif module in (ion_tof, ion_live):
+                                module.build(MANAGER, ask_agent=ask_agent)
                             else:
                                 module.build(MANAGER)
 

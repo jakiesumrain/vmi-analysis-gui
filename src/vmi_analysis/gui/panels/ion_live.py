@@ -13,11 +13,13 @@ from vmi_analysis.ion_live import GMD_HISTORY, LivePreview, gmd_histogram
 from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS, tof_bin_edges
 
 from .. import shared, theme
+from ..agent_panels import PanelInspection, PanelOperation
 from ..centroid_plots import SERIES_COLORS, _style, plot_options
 from .common import field_grid, num_input
 
 
 JOB_NAME = "Live TPX3"
+INSPECT_OPERATION = "live_tpx3"
 DETECTOR_ROW_HEIGHT = 580
 GMD_TIMELINE_SECONDS = 60
 
@@ -38,7 +40,55 @@ def _endpoint(value):
     return value.strip()
 
 
-def build(_jobs):
+def agent_operations():
+    return (PanelOperation(INSPECT_OPERATION, {
+        "panel": JOB_NAME, "manual": JOB_NAME, "parameters": {}, "action": "inspect",
+        "summary": "Read the current tab's live preview counters, accumulated hit map and TOF summaries, "
+                   "and recent GMD readings. Open Ask Agent about preview in Live TPX3.",
+    }, None, ()),)
+
+
+def _preview_summary(receiver):
+    image, counts, readings, frames, trigger_issues, invalid, error = receiver.snapshot()
+    pixel_hits = int(image.sum())
+    peak_pixel = None
+    if pixel_hits:
+        y, x = np.unravel_index(image.argmax(), image.shape)
+        peak_pixel = {"x_px": int(x), "y_px": int(y), "hits": int(image[y, x])}
+    bins = np.flatnonzero(counts)
+    if len(bins) > 3:
+        bins = bins[np.argpartition(counts[bins], -3)[-3:]]
+    busiest = [{"minimum_ns": float(receiver.edges[i]), "maximum_ns": float(receiver.edges[i + 1]),
+                "hits": int(counts[i])} for i in sorted(bins, key=lambda i: (-counts[i], i))]
+    times = readings[:, 0]
+    right = max(GMD_TIMELINE_SECONDS, float(times.max())) if times.size else GMD_TIMELINE_SECONDS
+    recent = readings[times >= right - GMD_TIMELINE_SECONDS]
+    gmd = {}
+    for column, name in enumerate(("GMD1", "GMD2"), 1):
+        values = recent[:, column]
+        finite = values[np.isfinite(values)]
+        gmd[name] = {
+            "valid_recent_frames": len(finite),
+            "latest_na": float(values[-1]) if len(values) and np.isfinite(values[-1]) else None,
+        }
+        if len(finite):
+            gmd[name].update(minimum_na=float(finite.min()), maximum_na=float(finite.max()), mean_na=float(finite.mean()))
+    return {
+        "status": "stream error" if error else "preview active" if frames else "waiting for frames",
+        "error": error,
+        "frames_received": int(frames), "frames_without_exactly_one_trigger": int(trigger_issues),
+        "invalid_messages": int(invalid),
+        "detector": {"pixel_hits": pixel_hits, "occupied_pixels": int(np.count_nonzero(image)),
+                     "busiest_pixel": peak_pixel},
+        "tof": {"hits_in_range": int(counts.sum()), "minimum_ns": float(receiver.edges[0]),
+                "maximum_ns": float(receiver.edges[-1]), "bins": len(counts), "busiest_bins": busiest,
+                "timing": "Go4 convention. About 23.4 ns later than LUNA for the same hit and trigger."},
+        "gmd": {"window_s": GMD_TIMELINE_SECONDS, "recent_frames": len(recent),
+                "latest_elapsed_s": float(readings[-1, 0]) if len(readings) else None, **gmd},
+    }
+
+
+def build(_jobs, *, ask_agent=None):
     theme.panel_header(JOB_NAME, "Watch detector hits, time of flight, and GMD readings during acquisition.")
     configured_endpoint = os.environ.get("VMI_TPX3_LIVE_ENDPOINT", "")
     if shared.SERVER and not configured_endpoint:
@@ -50,9 +100,19 @@ def build(_jobs):
     revision = 0
     charts = None
     gmd_limits = {}
+    last_error = None
+
+    def read_preview():
+        if receiver is None:
+            return {"status": "stream error" if last_error else "stopped", "error": last_error}
+        return _preview_summary(receiver)
+
+    def open_agent():
+        ask_agent(PanelInspection(panel=JOB_NAME, operation=INSPECT_OPERATION,
+                                  label="Live TPX3 preview", read_snapshot=read_preview))
 
     def refresh():
-        nonlocal previous
+        nonlocal previous, last_error
         if receiver is None:
             return
         image, counts, readings, frames, trigger_issues, invalid, error = receiver.snapshot()
@@ -62,6 +122,7 @@ def build(_jobs):
         previous = key
         if error:
             stop()
+            last_error = error
             status.set_text(f"Stream error: {error}")
             return
         status.set_text(f"{frames:,} frames received · {trigger_issues:,} without exactly one TDC1 rising edge "
@@ -126,7 +187,7 @@ def build(_jobs):
         refresh()
 
     def start():
-        nonlocal receiver, charts, previous, revision
+        nonlocal receiver, charts, previous, revision, last_error
         if receiver is not None:
             return
         try:
@@ -154,6 +215,7 @@ def build(_jobs):
                     histograms = [ui.plotly(plot_options(go.Figure())).classes("w-full min-w-0") for _ in range(2)]
                 charts = (*plots, timeline, *histograms)
         gmd_limits.update(limits)
+        last_error = None
         receiver = LivePreview(address, edges)
         receiver.start()
         start_button.disable()
@@ -187,6 +249,8 @@ def build(_jobs):
             start_button = ui.button("Start preview", icon="play_arrow", on_click=start)
             stop_button = ui.button("Stop", icon="stop", on_click=stop).props("flat")
             reset_button = ui.button("Reset counts", icon="restart_alt", on_click=reset).props("flat")
+            if ask_agent:
+                ui.button("Ask Agent about preview", icon="smart_toy", on_click=open_agent).props("flat")
             stop_button.disable()
             reset_button.disable()
         status = ui.label("Preview stopped.").classes("vmi-caption")

@@ -12,14 +12,50 @@ selects the person's workspace.
    Keep the shared data read-only at the filesystem level as well.
    Host only datasets from trusted sources. Keep the workspace directory
    private to the service account and the host administrator.
-2. From the checkout, run `uv sync`. Run the following command once per
+2. Install [Bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) and
+   verify that the service account can create unprivileged user namespaces.
+   Standard panel jobs require Bubblewrap and fail if the sandbox cannot start.
+   Keep the Python environment, application code, and host tools outside the
+   shared data and workspace roots. Put the Linux LUNA executable on the
+   service account's `PATH`.
+
+   From the checkout, run `uv sync`. Run the following command once per
    VMI account to generate a password hash:
 
    ```sh
    uv run python -m vmi_analysis.gui.shared
    ```
 
-3. Save a JSON file outside the shared data and workspace directories.
+3. To enable the Agent panel, install Docker or Podman for the service account,
+   preferably in rootless mode, and build the bundled image from the checkout:
+
+   ```sh
+   docker build -f packaging/agent/Dockerfile -t vmi-analysis-agent:latest .
+   ```
+
+   Use `podman build` instead when Podman is the selected runtime, then set
+   `VMI_AGENT_CONTAINER_RUNTIME=podman` in the server environment. The default
+   runtime and image are `docker` and `vmi-analysis-agent:latest`; set
+   `VMI_AGENT_IMAGE` to use another local image name. The container needs
+   outbound network access to each user's chosen model endpoint, but no inbound
+   ports. Docker group membership is host-root-equivalent; use rootless Docker
+   or Podman where possible.
+
+   Build from the same checkout the app runs. The image installs VMI Analysis
+   and the dependencies in its `uv.lock`. It defaults to Python 3.13. Use
+   `--build-arg VMI_PYTHON_VERSION=<version>` to match the app's Python version
+   if needed. Rebuild when the app or lockfile changes. Keep the runtime's
+   outbound access limited to services the Agent is authorized to use.
+
+   On Linux, the same image runs approved Python analyses and saved
+   analysis panels. The job worker runs without networking or the model
+   API key. It mounts the signed-in account's files, analysis records,
+   and shared datasets read-only, and gives only that run a writable
+   output folder. Docker workers require Linux kernel 5.12 or newer for
+   recursive read-only bind mounts. Use a local container runtime on
+   the server host.
+
+4. Save a JSON file outside the shared data and workspace directories.
    Replace each sample path and password hash. Keep the file readable only by
    the service account and host administrator.
 
@@ -35,7 +71,7 @@ selects the person's workspace.
    }
    ```
 
-4. Launch the server as the service account. Keep the process under your
+5. Launch the server as the service account. Keep the process under your
    service manager if it must survive an administrator's SSH logout.
 
    ```sh
@@ -104,7 +140,65 @@ administrators can change the running server's limit or stop it from Settings.
 Set the startup limit in the JSON file. Restart the server to add or remove
 accounts or change a password hash.
 
+## Use the Agent panel
+
+Every signed-in account can open **Agent** in the sidebar footer above
+**Settings**. Enter the
+model endpoint's base URL, model ID, API format, and API key, then choose
+**Start session**. The key is never saved in account settings or workflow files.
+It is passed only to that session's container through an environment variable;
+the temporary model configuration contains an environment-variable reference,
+not the literal key. The key field clears after startup. **Stop session** stops
+the container, removes the temporary configuration, and clears the backend's
+remaining key copies. Process exit and server shutdown perform the same cleanup.
+
+Each account has at most one agent session. It survives a browser reload or
+disconnect so the user can sign back in and continue. The container can read
+`/datasets` and write only `/workspace`, which map to Shared datasets and My
+workspace. It runs without Linux capabilities, with a read-only root filesystem,
+a 1 GiB memory limit, and one CPU. Prompts, file excerpts, command output, and
+other context may be sent to the chosen model endpoint. Users should select an
+endpoint they trust with the data they ask the agent to inspect. The endpoint
+and model must be compatible with the selected API format. Connection settings
+start collapsed. Assistant replies render as Markdown. In the instruction box,
+**Enter** sends the instruction and **Shift+Enter** inserts a new line.
+
+The container's `python` can import `vmi_analysis`, `h5py`, and the other
+locked Python dependencies for scripts. For standard panel work, ask the
+Agent to explain or prepare a run. It supports **TPX3 Dump**, **Ion TOF**,
+**GMD2 gating**, and **Gaussian TOF peak fitting**. Review the resolved
+inputs, parameters, and output paths in the approval card, then choose
+**Approve and run** or **Decline**. Approved jobs run through the regular
+VMI job queue and use the host's configured analysis tools, including LUNA.
+
+For example, ask the Agent to prepare a dump of a specific shared folder,
+then use that dump to plot raw pixel hits with a specified TOF bin width.
+Each stage has its own approval. The Agent can follow the job status and
+report the output paths. For a gated fit, supply the GMD2 limits and
+alignment shift after checking the Ion TOF diagnostics, then supply the
+fit range and whether to fit the gated or unfiltered spectrum. Both fit
+modes count and normalize using the GMD2-gated frames.
+
+To run the first two panels together, ask the Agent to dump a TPX3 input
+and plot its unfiltered TOF. The approval shows both stages and the
+output passed between them. After approval, the workflow console shows
+each stage and offers **Stop workflow** while it is active. Reopen
+**Agent** after a browser reload to follow the workflow on the running
+server. The completed stages also appear in **TPX3 Dump** and **Ion TOF**.
+
+## Security boundary
+
 This deployment separates application accounts for an approved lab team.
-Analysis jobs run under the service account. Use separate OS accounts or
-isolated services if you need to run untrusted datasets or give users shell
-access as the service account.
+Standard panel subprocesses run in a Linux mount namespace. They can write to
+the signed-in account's workspace and read shared datasets and that account's
+analysis records. They cannot open another account's files. The namespace is
+created when the job starts, after any wait in the queue. Approved Python
+analyses use the separate container described above.
+
+Downloads and Agent image attachments open files from the signed-in account's
+authorized directories. Agent uploads create new files inside that account's
+workspace. The server uses open file and directory handles for these operations
+so a path change during the request cannot redirect them to another account.
+
+Use separate OS accounts or isolated services if you need to run untrusted
+datasets or give users shell access as the service account.

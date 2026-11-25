@@ -25,9 +25,11 @@ from vmi_analysis.pes import evaluate_fit_for_plot, fit_peaks
 from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS
 
 from .. import shared, theme
+from ..agent_panels import PanelOperation, number, require_completed_job, resolve_path
 from ..centroid_plots import COLORMAPS, _style, plot_options
 from ..jobs import Job, ResourceBusyError
-from .common import (JobView, action_bar, confirm_clear_outputs, field_grid, num_input,
+from . import ion_luna
+from .common import (JobView, action_bar, adopt_agent_form, confirm_clear_outputs, field_grid, num_input,
                      path_input, persist)
 from .ion_tof import REFERENCE_LABELS, SOURCES, _drag_interval, _mark_interval, _tof_figure
 
@@ -732,47 +734,101 @@ def _results(job, jobs, species_file):
             append_assignment = _momentum_controls(job, jobs, result, species_file, read_current)
 
 
+def positions_job(path, *, source="pixels", reference=DEFAULT_REFERENCE, width=DEFAULT_BIN_SIZE_NS,
+                  low=0, high=None):
+    if not path:
+        raise ValueError("Choose a LUNA HDF5 file or acquisition collection.")
+    source_file = shared.checked_path(path)
+    if not source_file.is_file():
+        raise ValueError("The selected input file does not exist.")
+    for member in collection_reads(source_file):
+        shared.checked_path(member)
+    if source not in SOURCES or reference not in REFERENCE_LABELS:
+        raise ValueError("Choose a valid count source and trigger reference.")
+    if width is None or number(width) <= 0:
+        raise ValueError("TOF bin size must be finite and greater than zero.")
+    if low is None or number(low) < 0:
+        raise ValueError("TOF minimum must be finite and at least zero.")
+    if high is not None and number(high) <= low:
+        raise ValueError("TOF maximum must be greater than the minimum.")
+
+    job = Job(JOB_NAME, cwd=str(shared.workspace_root()))
+    result = shared.generated_dir() / f"ion-momenta-{job.id}.npz"
+    job.cmd = [sys.executable, "-m", "vmi_analysis.ion_momenta",
+               "--input", str(source_file), "--output", str(result), "--source", source,
+               "--reference", reference, "--bin-size", str(width), "--minimum", str(low)]
+    if high is not None:
+        job.cmd += ["--maximum", str(high)]
+    job.extra.update(
+        histogram=str(result), reference=reference, input_name=source_file.name,
+        source_file=str(source_file), bin_size_ns=width,
+        panel_form={"input": str(source_file), "source": source, "reference": reference,
+                    "bin_size_ns": width, "minimum": low, "maximum": high},
+    )
+    return job
+
+
+def _prepare_agent(jobs, params):
+    dump_id, path = params.get("dump_job_id"), params.get("input")
+    if bool(dump_id) == bool(path):
+        raise ValueError("Supply one TPX3 Dump job ID or one input file.")
+    if dump_id:
+        dump = require_completed_job(jobs, dump_id, name=ion_luna.JOB_NAME)
+        path, _ = ion_luna.completed_dump_input(dump)
+    job = positions_job(resolve_path(path), source=params.get("source", "pixels"),
+                        reference=params.get("reference", DEFAULT_REFERENCE),
+                        width=params.get("bin_size_ns", DEFAULT_BIN_SIZE_NS),
+                        low=params.get("minimum_ns", 0), high=params.get("maximum_ns"))
+    form = job.extra["panel_form"]
+    return job, {"LUNA input": form["input"], "Count": SOURCES[form["source"]],
+                 "Trigger": REFERENCE_LABELS[form["reference"]], "Bin size (ns)": form["bin_size_ns"],
+                 "TOF minimum (ns)": form["minimum"],
+                 "TOF maximum (ns)": form["maximum"] if form["maximum"] is not None else "Automatic"}
+
+
+def agent_operations():
+    return (PanelOperation("ion_momenta", {
+        "panel": JOB_NAME,
+        "summary": "Build linked detector-position and TOF histograms from a LUNA dump. "
+                   "The Ion momenta panel opens the results for interactive gating, species assignment and reconstruction.",
+        "parameters": {
+            "input": {"type": "path", "description": "LUNA HDF5 file or acquisition collection"},
+            "dump_job_id": {"type": "job ID", "description": "Completed TPX3 Dump job ID in place of input"},
+            "source": {"type": "string", "default": "pixels", "choices": list(SOURCES)},
+            "reference": {"type": "string", "default": DEFAULT_REFERENCE, "choices": list(REFERENCE_LABELS)},
+            "bin_size_ns": {"type": "number", "unit": "ns", "default": DEFAULT_BIN_SIZE_NS},
+            "minimum_ns": {"type": "number", "unit": "ns", "default": 0},
+            "maximum_ns": {"type": "number or null", "unit": "ns", "default": None},
+        },
+    }, _prepare_agent, (JOB_NAME,), outputs=("histogram",)),)
+
+
 def build(jobs):
-    view = JobView(jobs, job_name=JOB_NAME, results_builder=lambda job: _results(job, jobs, species_file))
+    def restore_form(job):
+        values = adopt_agent_form(job, "ion_momenta")
+        for key, widget in fields.items():
+            if key in values:
+                widget.value = values[key]
+
+    view = JobView(jobs, job_name=JOB_NAME, results_builder=lambda job: _results(job, jobs, species_file),
+                   attach_builder=restore_form)
     theme.panel_header(JOB_NAME, "Inspect detector positions and time of flight for ion momentum analysis.", view=view)
 
     def save(widget, key):
         return persist(widget, f"ion_momenta.{key}")
 
     def use_latest():
-        candidates = [job for job in jobs.jobs() if job.name == "TPX3 Dump" and job.status == "done"]
+        candidates = [job for job in jobs.jobs() if job.name == ion_luna.JOB_NAME and job.status == "done"]
         if not candidates:
             ui.notify("Complete a TPX3 dump first or choose a saved collection.", type="warning")
             return
         latest = max(candidates, key=lambda job: job.finished or job.created)
-        input_file.value = latest.extra.get("collection") or latest.extra["output"]
+        input_file.value, _ = ion_luna.completed_dump_input(latest)
 
     def run():
         try:
-            if not input_file.value.strip():
-                raise ValueError("Choose a LUNA HDF5 file or acquisition collection.")
-            source_file = shared.checked_path(input_file.value.strip())
-            if not source_file.is_file():
-                raise ValueError("The selected input file does not exist.")
-            for path in collection_reads(source_file):
-                shared.checked_path(path)
-            width, low, high = bin_size.value, minimum.value, maximum.value
-            if width is None or not isfinite(width) or width <= 0:
-                raise ValueError("TOF bin size must be finite and greater than zero.")
-            if low is None or not isfinite(low) or low < 0:
-                raise ValueError("TOF minimum must be finite and at least zero.")
-            if high is not None and (not isfinite(high) or high <= low):
-                raise ValueError("TOF maximum must be greater than the minimum.")
-            job = Job(JOB_NAME, cwd=str(shared.workspace_root()))
-            result = shared.generated_dir() / f"ion-momenta-{job.id}.npz"
-            job.cmd = [sys.executable, "-m", "vmi_analysis.ion_momenta",
-                       "--input", str(source_file), "--output", str(result),
-                       "--source", source.value, "--reference", reference.value,
-                       "--bin-size", str(width), "--minimum", str(low)]
-            if high is not None:
-                job.cmd += ["--maximum", str(high)]
-            job.extra.update(histogram=str(result), reference=reference.value, input_name=source_file.name,
-                             source_file=str(source_file), bin_size_ns=width)
+            job = positions_job(input_file.value.strip(), source=source.value, reference=reference.value,
+                                width=bin_size.value, low=minimum.value, high=maximum.value)
             view.attach(jobs.submit(job))
         except (OSError, ValueError) as exc:
             ui.notify(str(exc), type="warning")
@@ -811,6 +867,8 @@ def build(jobs):
             bin_size = save(num_input("TOF bin size (ns)", DEFAULT_BIN_SIZE_NS, step="any"), "bin_size_ns")
             minimum = save(num_input("TOF minimum (ns)", 0, min=0, step="any"), "minimum")
             maximum = save(num_input("TOF maximum (ns, blank = auto)", None, step="any"), "maximum")
+        fields = {"input": input_file, "source": source, "reference": reference,
+                  "bin_size_ns": bin_size, "minimum": minimum, "maximum": maximum}
         species_file = save(ui.input(), "species_file").set_visibility(False)
         ui.label("Momentum reconstruction requires the ion mass and charge, detector center, "
                  "and spectrometer calibration or flight-field model.").classes("vmi-subtitle")

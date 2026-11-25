@@ -318,7 +318,9 @@ def main(argv=None):
     if not all(use_quadrants) and symmetry_axis is None:
         parser.error("--symmetry-axis is required when using only some quadrants")
     records, arrays = [], {}
-    for filename, x, y, angle, resolution in args.image:
+    from tqdm import tqdm
+
+    for filename, x, y, angle, resolution in tqdm(args.image, desc="Generating PES spectra"):
         try:
             geometry = Geometry(None if x == y == "auto" else (float(x), float(y)), float(angle), float(resolution))
             q, energy, intensity, center, angular = _analyze_image(

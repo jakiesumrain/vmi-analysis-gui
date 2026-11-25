@@ -39,12 +39,15 @@ def apply_theme() -> None:
 # Component helpers (DESIGN.md component vocabulary)
 # --------------------------------------------------------------------------
 
-def panel_header(title: str, subtitle: str | None = None, view=None) -> None:
-    """Panel heading; with a JobView the badge/spinner/progress sit inline."""
+def panel_header(title: str, subtitle: str | None = None, view=None, actions=None) -> None:
+    """Panel heading with inline status and optional actions at the trailing edge."""
     with ui.row().classes("vmi-panel-head w-full items-center gap-3 no-wrap"):
         ui.label(title).classes("vmi-title vmi-title-sm")
         if view is not None:
             view.place_status()
+        if actions is not None:
+            with ui.row().classes("vmi-panel-head-actions items-center"):
+                actions()
     if subtitle:
         ui.label(subtitle).classes("vmi-subtitle vmi-panel-subtitle")
 
@@ -71,7 +74,7 @@ def status_badge(text: str = "idle") -> ui.badge:
 
 
 def set_badge(badge: ui.badge, status: str) -> None:
-    for cls in ("idle", "queued", "running", "done", "failed", "cancelled", "skipped"):
+    for cls in ("idle", "queued", "running", "waiting", "done", "failed", "cancelled", "skipped"):
         badge.classes(remove=f"vmi-badge-{cls}")
     badge.classes(f"vmi-badge-{status}")
     badge.text = status

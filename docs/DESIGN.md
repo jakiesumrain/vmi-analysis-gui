@@ -17,6 +17,9 @@ components, or extending the theme. It states principles and the shared
 vocabulary; it does not re-document the implementation. The authoritative
 sources are:
 
+- [Agent-first design](agent-first-design.md) — principles for the embedded
+  Agent, shared panel operations, and reusable analyses.
+
 - `src/vmi_analysis/gui/assets/theme.css` — the token scales. **Tokens are
   the design system.** If a value is not a token, it does not belong in
   component CSS.
@@ -116,7 +119,7 @@ The shell is a persistent workbench with four regions, and only four:
 - **Header** — application name, with *Settings* at the right.
   No navigation lives here; navigation is the rail's job.
 - **Left rail** — the tool index, with independently collapsible *Electron*
-  and *Ion* groups. *Acquire*, *Analyze*, and *Automate* are section captions
+  and *Ion* groups. *Acquire* and *Analyze* are section captions
   inside *Electron*. Each tool has an icon and a short name. The active tool
   has a colored label and a 3px indicator at the leading edge.
   The rail can collapse to icons on desktop, with tooltips and accessible
@@ -159,8 +162,6 @@ A panel that invents its own layout vocabulary is a defect.
    that shows an explicit empty state ("No results yet — …") before the
    first result.
 
-Pipeline adds one element to the anatomy: the numbered stage chip track
-(`vmi-stage-chip`), so stage order is visible before anything runs.
 
 ### State and feedback rules
 

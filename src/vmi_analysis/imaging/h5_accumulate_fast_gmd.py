@@ -59,6 +59,8 @@ def parse_args():
         description="Accumulate camera frames with threshold, denoising and optional GMD scaling.")
     p.add_argument("--h5-dir", default=h5_dir)
     p.add_argument("--output-path", default=output_path)
+    p.add_argument("--require-new-output", action="store_true",
+                   help="Fail if the output image or its PNG already exists.")
     p.add_argument("--im-threshold", type=float, default=im_threshold)
     p.add_argument("--do-denoise", action=argparse.BooleanOptionalAction,
                    default=do_denoise)
@@ -197,7 +199,15 @@ def plot_accumulated(total_acc, title_suffix="", show=True):
     plt.close()
 
 
-def main():
+def main(*, require_new_output=False):
+    if require_new_output:
+        outputs = [Path(output_path)]
+        if no_show:
+            outputs.append(Path(output_path).with_suffix(".png"))
+        for path in outputs:
+            if os.path.lexists(path):
+                raise SystemExit(f"[Error] {path} already exists. Choose a new output path.")
+
     # Skip straight to plotting if the accumulated result already exists
     if os.path.exists(output_path):
         with DataSource().open(output_path, mode="rt", encoding="utf-8") as saved:
@@ -237,7 +247,7 @@ def main():
         print("Simple sum mode: ON (no threshold, no denoising)")
 
     # Load dark frame
-    dark_frame = np.load(dark_path) if dark_path and os.path.exists(dark_path) else None
+    dark_frame = np.load(dark_path, allow_pickle=False) if dark_path else None
     if dark_frame is not None:
         print(f"Dark frame loaded: mean={dark_frame.mean():.1f}, std={dark_frame.std():.1f}")
     else:
@@ -281,13 +291,13 @@ def main():
                     print(f"\n[Error] {e}")
                 n_done += 1
                 if live_path and total_acc is not None and n_done % live_every == 0:
+                    Path(live_path).parent.mkdir(parents=True, exist_ok=True)
                     np.save(live_path, total_acc)
                 pbar.update(1)
 
     t_end = time.time()
-    if total_acc is None:
-        print("No files processed successfully; nothing to save.")
-        return
+    if total_acc is None or not total_frames:
+        raise SystemExit("No frames processed successfully. No accumulated image was written.")
     print(f"\n{total_frames} frames processed in {t_end - t_start:.1f}s")
     print(f"Sum of all counts: {np.sum(total_acc):.0f}")
 
@@ -327,4 +337,4 @@ if __name__ == '__main__':
     no_show = _args.no_show
     live_path = _args.live_path
     live_every = _args.live_every
-    main()
+    main(require_new_output=_args.require_new_output)

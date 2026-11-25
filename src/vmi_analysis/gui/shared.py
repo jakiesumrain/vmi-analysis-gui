@@ -17,17 +17,19 @@ import os
 from pathlib import Path
 import re
 import secrets
+import sys
 from tempfile import NamedTemporaryFile
 from time import monotonic
 from urllib.parse import parse_qs
 
 from fastapi import HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from nicegui import app, ui
 from nicegui.client import Client
 from starlette.datastructures import Headers
 
 from vmi_analysis.paths import WORKSPACE_ROOT, GENERATED_DIR
+from .workspace_io import WorkspaceFileResponse
 
 COOKIE = 'vmi_session'
 MAX_SESSION_AGE = 12 * 3600
@@ -94,6 +96,10 @@ class Account:
     settings: Settings
 
 
+def analysis_root(account):
+    return account.root.parent / 'analysis'
+
+
 def password_hash(password, salt=None):
     salt = secrets.token_hex(16) if salt is None else salt
     digest = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt), n=2**14, r=8, p=1)
@@ -116,12 +122,14 @@ class SharedServer:
             parent = root / name
             workspace = parent / 'files'
             settings = parent / 'settings.json'
-            if any(path.is_symlink() for path in (parent, workspace, settings)):
+            analysis = parent / 'analysis'
+            if any(path.is_symlink() for path in (parent, workspace, settings, analysis)):
                 raise ValueError('Private workspace and settings paths must be regular paths.')
             digest = entry['password_hash']
             if not re.fullmatch(r'[0-9a-f]{32}:[0-9a-f]{128}', digest):
                 raise ValueError(f'Invalid password hash for {name}.')
-            for folder in (parent, workspace, workspace / 'centroiding', workspace / 'circularization', workspace / '.cache'):
+            for folder in (parent, workspace, analysis, workspace / 'centroiding', workspace / 'circularization',
+                           workspace / '.cache'):
                 folder.mkdir(exist_ok=True, mode=0o700)
             self.accounts[name] = Account(name, workspace, digest, entry.get('admin') is True, Settings(settings))
         if not self.accounts:
@@ -145,7 +153,8 @@ class SharedServer:
 
     def path(self, account, value, *, write=False, cwd=None):
         path = (Path(cwd or account.root) / Path(value).expanduser()).resolve()
-        if path.is_relative_to(account.root) or (not write and path.is_relative_to(self.datasets)):
+        if path.is_relative_to(account.root) or (not write and (
+                path.is_relative_to(self.datasets) or path.is_relative_to(analysis_root(account)))):
             return path
         raise WorkspaceDenied('Choose a path in your workspace or the shared datasets. Shared datasets are read-only.')
 
@@ -296,6 +305,8 @@ class AccountMiddleware:
 
 def install(config_path):
     global SERVER
+    if sys.platform != 'linux':
+        raise RuntimeError('Shared-server mode requires a Linux host.')
     SERVER = SharedServer(json.loads(Path(config_path).read_text(encoding='utf-8')))
     app.add_middleware(AccountMiddleware)
     assets = files('vmi_analysis.gui.assets')
@@ -362,16 +373,16 @@ def install(config_path):
     @app.get('/workspace-file/{area}/{relative:path}')
     async def workspace_file(request: Request, area: str, relative: str, download: bool = False):
         account = request_account(request.scope)
-        if not account or area not in ('private', 'datasets') or (download and area != 'private'):
+        if not account or area not in ('private', 'datasets', 'analysis') or (download and area == 'datasets'):
             raise HTTPException(404)
-        root = account.root if area == 'private' else SERVER.datasets
+        root = {'private': account.root, 'datasets': SERVER.datasets, 'analysis': analysis_root(account)}[area]
         try:
             path = SERVER.path(account, root / relative)
-            if not path.is_relative_to(root) or not path.is_file():
+            if not path.is_relative_to(root):
                 raise HTTPException(404)
         except (WorkspaceDenied, OSError, RuntimeError):
             raise HTTPException(404) from None
-        return FileResponse(path, filename=path.name if download else None, headers={
+        return WorkspaceFileResponse(root, path, filename=path.name if download else None, headers={
             'Cache-Control': 'private, no-store',
             'Content-Security-Policy': "sandbox; default-src 'none'",
             'X-Content-Type-Options': 'nosniff',

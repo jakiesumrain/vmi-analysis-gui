@@ -23,9 +23,20 @@ from contextlib import contextmanager
 
 from .resources import Access, canonical_path, job_access
 from . import shared
+from .job_sandbox import panel_command
 
 TERMINAL = {"done", "failed", "cancelled"}
+ACTIVE = {"queued", "running", "waiting"}
 _PROGRESS_RE = re.compile(r"(\d{1,3})%\s*\|")
+_MANAGED_STOP_SECONDS = 42
+
+
+@dataclass(frozen=True)
+class Checkpoint:
+    summary: dict
+    choices: tuple[int, ...]
+    apply: Callable[[int], None]
+    render: Callable
 
 
 @dataclass
@@ -38,6 +49,8 @@ class Stage:
     status: str = "queued"
     started: float | None = None
     finished: float | None = None
+    result: Job | None = None
+    checkpoint: Callable[[], Checkpoint | None] | None = None
 
 
 @dataclass
@@ -62,7 +75,13 @@ class Job:
     exclusive: list[str] = field(default_factory=list)
     wait_reason: str = ""
     consume_output: Callable[[Job, str], bool] | None = field(default=None, repr=False)
+    on_admit: Callable[[Job], None] | None = field(default=None, repr=False)
+    on_terminal: Callable[[Job, str], None] | None = field(default=None, repr=False)
+    request_process_stop: Callable[[], None] | None = field(default=None, repr=False)
     owner: str | None = None
+    _launches_isolated_worker: bool = field(default=False, repr=False)
+    _shared_roots: tuple[Path, Path, Path] | None = field(default=None, init=False, repr=False)
+    checkpoint: Checkpoint | None = None
     _access: Access = field(default_factory=Access, repr=False)
     _proc: subprocess.Popen | None = field(default=None, repr=False)
     _cancel_requested: bool = field(default=False, repr=False)
@@ -96,6 +115,7 @@ class JobManager:
         account = shared.current_account()
         if account:
             job.owner = account.name
+            job._shared_roots = (account.root, shared.SERVER.datasets, shared.analysis_root(account))
             job.cwd = job.cwd or str(account.root)
             for stage in job.stages or ():
                 stage.cwd = stage.cwd or job.cwd
@@ -104,8 +124,10 @@ class JobManager:
                        'XDG_CACHE_HOME': str(account.root / '.cache'),
                        'MPLCONFIGDIR': str(account.root / '.cache' / 'matplotlib'),
                        'PYTHONSAFEPATH': '1', 'VMI_SHARED_CONFIG': ''}
-            for cmd in [job.cmd, *(stage.cmd for stage in job.stages or ())]:
-                shared.check_command(cmd)
+            commands = [stage.cmd for stage in job.stages] if job.stages is not None else [job.cmd]
+            for command in commands:
+                if command is not None:
+                    shared.check_command(command)
         access = job_access(job)
         if account:
             for path in access.reads:
@@ -122,6 +144,8 @@ class JobManager:
                 raise RuntimeError("The job manager is shutting down")
             if job.id in self._jobs:
                 raise ValueError("This job has already been submitted")
+            if job.on_admit is not None:
+                job.on_admit(job)
             job._access = access
             self._jobs[job.id] = job
             self._queue.append(job.id)
@@ -147,10 +171,10 @@ class JobManager:
                     if not account or self._jobs[job_id].owner == account.name]
 
     def has_active(self) -> bool:
-        """True while any job is running or waiting in the queue."""
+        """True while any job is running, queued, or waiting for a decision."""
         with self._lock:
             return bool(self._workers) or any(
-                job.status == "queued" for job in self._jobs.values())
+                job.status in ACTIVE for job in self._jobs.values())
 
     @staticmethod
     def _validate_limit(value):
@@ -206,6 +230,22 @@ class JobManager:
             self._cancel_locked(job)
             self._schedule_locked()
 
+    def resolve_checkpoint(self, job_id: str, checkpoint: Checkpoint, choice: int) -> None:
+        account = shared.current_account()
+        owner = account.name if account else None
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if (job is None or job.owner != owner or job.status != "waiting"
+                    or job.checkpoint is not checkpoint or self._stopping):
+                raise ValueError("This workflow decision is no longer pending.")
+            if type(choice) is not int or choice not in checkpoint.choices:
+                raise ValueError("Select an available option before continuing.")
+            checkpoint.apply(choice)
+            job.checkpoint = None
+            job.status = "queued"
+            self._queue.appendleft(job.id)
+            self._schedule_locked()
+
     def begin_shutdown(self) -> None:
         """Stop queue advancement and request cancellation without blocking the UI."""
         with self._lock:
@@ -220,23 +260,40 @@ class JobManager:
         self.begin_shutdown()
         with self._lock:
             workers = list(self._workers.values())
-        deadline = time.monotonic() + 15.0
+            managed = any(self._jobs[key].request_process_stop is not None for key in self._workers)
+        deadline = time.monotonic() + (_MANAGED_STOP_SECONDS + 2 if managed else 15)
         for worker in workers:
             worker.join(timeout=max(0, deadline - time.monotonic()))
             if worker.is_alive():
-                raise RuntimeError("Job process cleanup did not finish within 15 seconds")
+                raise RuntimeError("Job process cleanup did not finish before shutdown.")
 
     def _cancel_locked(self, job: Job) -> None:
         job._cancel_requested = True
-        if job.status == "queued":
-            job.status = "cancelled"
+        if job.status in ("queued", "waiting"):
+            if job.status == "queued":
+                self._queue.remove(job.id)
             job.finished = time.time()
-            self._queue.remove(job.id)
-            if job.stages:
-                for stage in job.stages:
+            job.checkpoint = None
+            job.wait_reason = ""
+            for stage in job.stages or ():
+                if stage.status not in TERMINAL and stage.status != "skipped":
                     stage.status = "cancelled"
+            self._record_terminal(job, "cancelled")
         elif job._proc is not None:
             self._terminate_locked(job)
+
+    @staticmethod
+    def _record_terminal(job: Job, status: str) -> None:
+        if job.on_terminal is not None:
+            try:
+                job.on_terminal(job, status)
+            except Exception as exc:
+                job.log.append(f"[gui] could not save the run record: {exc}")
+                if status == "done":
+                    status = "failed"
+                    job.returncode = -1
+                    job.progress = None
+        job.status = status
 
     def _terminate_locked(self, job: Job) -> None:
         if job._termination_thread is not None:
@@ -248,6 +305,10 @@ class JobManager:
 
     def _terminate_tree(self, job: Job, proc: subprocess.Popen) -> None:
         try:
+            if job.request_process_stop is not None:
+                job.request_process_stop()
+                proc.wait(timeout=_MANAGED_STOP_SECONDS)
+                return
             if sys.platform == "win32":
                 # CREATE_NEW_PROCESS_GROUP alone does not make terminate() kill
                 # descendants (notably the MATLAB process launched by a script).
@@ -285,7 +346,7 @@ class JobManager:
 
     def _check_active_access_locked(self, access):
         for job in self._jobs.values():
-            if job.status in ("running", "queued"):
+            if job.status in ACTIVE:
                 conflict = access.conflict(job._access)
                 if conflict:
                     raise ResourceBusyError(f"Files are reserved by {job.name}: {conflict}")
@@ -296,7 +357,7 @@ class JobManager:
     def _schedule_locked(self) -> None:
         if self._stopping:
             return
-        waiting = []
+        waiting = [job for job in self._jobs.values() if job.status == "waiting"]
         for job_id in list(self._queue):
             job = self._jobs[job_id]
             blockers = [self._jobs[key] for key in self._workers] + waiting
@@ -321,15 +382,16 @@ class JobManager:
             self._queue.remove(job_id)
             job.wait_reason = ""
             job.status = "running"
-            job.started = time.time()
+            job.started = job.started or time.time()
             worker = threading.Thread(target=self._run, args=(job,), daemon=True)
             self._workers[job_id] = worker
             worker.start()
 
     def _run(self, job: Job) -> None:
+        checkpoint = None
         try:
             if job.stages is not None:
-                self._run_pipeline(job)
+                checkpoint = self._run_pipeline(job)
             else:
                 rc = self._run_cmd(job, job.cmd, job.cwd)
                 job.returncode = rc
@@ -337,20 +399,33 @@ class JobManager:
             job.log.append(f"[gui] job runner error: {e}")
             job.returncode = -1
         with self._lock:
+            if checkpoint is not None and not job._cancel_requested:
+                job.checkpoint = checkpoint
+                job.wait_reason = checkpoint.summary["message"]
+                job.status = "waiting"
+                self._workers.pop(job.id)
+                self._schedule_locked()
+                return
             job.finished = time.time()
             if job._cancel_requested:
-                job.status = "cancelled"
+                status = "cancelled"
+                for stage in job.stages or ():
+                    if stage.status in ("queued", "waiting"):
+                        stage.status = "cancelled"
             elif job.returncode == 0:
-                job.status = "done"
+                status = "done"
                 job.progress = 1.0
             else:
-                job.status = "failed"
+                status = "failed"
+            self._record_terminal(job, status)
             self._workers.pop(job.id)
             self._schedule_locked()
 
-    def _run_pipeline(self, job: Job) -> None:
+    def _run_pipeline(self, job: Job) -> Checkpoint | None:
         n = len(job.stages)
         for i, stage in enumerate(job.stages):
+            if stage.status in ("done", "skipped"):
+                continue
             if job._cancel_requested:
                 for rest in job.stages[i:]:
                     rest.status = "cancelled"
@@ -367,11 +442,37 @@ class JobManager:
             job.log.append(f"\n[stage {i+1}/{n}] {stage.name}")
             job.extra["stage_index"] = i
             job.progress = None
-            rc = self._run_cmd(job, stage.cmd, stage.cwd,
-                               prefix=f"[{stage.name}] ")
+            try:
+                if stage.checkpoint is not None:
+                    checkpoint = stage.checkpoint()
+                    stage.checkpoint = None
+                    if checkpoint is not None:
+                        stage.status = "waiting"
+                        job.log.append(checkpoint.summary["message"])
+                        return checkpoint
+                if stage.result is None:
+                    rc = self._run_cmd(job, stage.cmd, stage.cwd, prefix=f"[{stage.name}] ")
+                else:
+                    rc = self._run_cmd(job, stage.cmd, stage.cwd, prefix=f"[{stage.name}] ",
+                                       stage_result=stage.result)
+            except (OSError, ValueError) as exc:
+                message = f"[{stage.name}] {exc}"
+                job.log.append(message)
+                if stage.result is not None:
+                    stage.result.log.append(message)
+                rc = -1
             stage.finished = time.time()
             stage.status = ("cancelled" if job._cancel_requested
                             else "done" if rc == 0 else "failed")
+            if stage.result is not None:
+                result = stage.result
+                result.owner = job.owner
+                result.created = result.started = stage.started
+                result.finished = stage.finished
+                result.progress = 1.0 if stage.status == "done" else None
+                result.returncode, result.status = rc, stage.status
+                with self._lock:
+                    self._jobs[result.id] = result
             if rc != 0 or job._cancel_requested:
                 outcome = "CANCELLED" if job._cancel_requested else "FAILED"
                 job.log.append(f"[stage {i+1}/{n}] {stage.name} {outcome} (rc={rc});"
@@ -383,7 +484,7 @@ class JobManager:
         job.returncode = 0
 
     def _run_cmd(self, job: Job, cmd: list[str], cwd: str | None,
-                 prefix: str = "") -> int:
+                 prefix: str = "", *, stage_result: Job | None = None) -> int:
         with self._lock:
             if job._cancel_requested:
                 return -1
@@ -395,15 +496,26 @@ class JobManager:
         # The pipe is decoded as UTF-8 below; without this the child (Windows
         # locale) writes GBK and tqdm bars / em-dashes arrive as U+FFFD.
         env["PYTHONIOENCODING"] = "utf-8"
-        job.log.append(f"[gui] $ {' '.join(str(c) for c in cmd)}")
+        command_line = f"[gui] $ {' '.join(str(c) for c in cmd)}"
+        job.log.append(command_line)
+        if stage_result is not None:
+            stage_result.log.append(command_line)
+        output_job = stage_result if stage_result is not None else job
         kwargs = {}
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
         else:
             kwargs["start_new_session"] = True
+        command = [str(c) for c in cmd]
+        launch_cwd = cwd
+        if job._shared_roots and not job._launches_isolated_worker:
+            command = panel_command(command, cwd, *job._shared_roots)
+            # Enter the requested working directory inside the namespace.
+            launch_cwd = None
+            kwargs["stdin"] = subprocess.DEVNULL
         proc = subprocess.Popen(
-            [str(c) for c in cmd],
-            cwd=cwd,
+            command,
+            cwd=launch_cwd,
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -427,12 +539,14 @@ class JobManager:
                     seg = seg.rstrip()
                     if not seg:
                         continue
-                    if job.consume_output is not None and job.consume_output(job, seg):
+                    if output_job.consume_output is not None and output_job.consume_output(output_job, seg):
                         continue
                     m = _PROGRESS_RE.search(seg)
                     if m:
                         job.progress = min(1.0, int(m.group(1)) / 100.0)
                     job.log.append(prefix + seg)
+                    if stage_result is not None:
+                        stage_result.log.append(seg)
             proc.wait()
         finally:
             with self._lock:

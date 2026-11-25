@@ -10,10 +10,11 @@ from vmi_analysis.ion_luna import LUNA_COMMAND_PREFIX, PROCESS_OPTIONS, process_
 from vmi_analysis.paths import validate_distinct_output
 from vmi_analysis.ion_acquisition import manifest_path, segment_files
 
-from ..shared import workspace_root
-from .. import theme
+from ..shared import checked_path, workspace_root
+from .. import shared, theme
+from ..agent_panels import PanelOperation, boolean, resolve_path
 from ..jobs import Job, JobManager
-from .common import (REPO_ROOT, JobView, action_bar, check_grid, field_grid, num_input,
+from .common import (REPO_ROOT, JobView, action_bar, adopt_agent_form, check_grid, field_grid, num_input,
                      open_folder_button, path_input, persist)
 from .hdf5_details import file_details
 
@@ -24,6 +25,123 @@ HDF5_TYPES = [".h5", ".hdf5"]
 OPTIONS = {option.flag: option for option in PROCESS_OPTIONS}
 PANEL_DEFAULTS = {"calculate-timewalk-statistics": True, "tof-tdc-reference": "TDC1Rising", "ctot-cut": 500}
 COMMAND_KEY = "luna_command"
+WSL_FIELDS = {"distribution": "WSL distribution", "executable": "Linux LUNA executable"}
+
+
+DUMP_OPTIONS = (
+    "layout", "raw-only", "disable-clustering", "tof-tdc-reference",
+    "clustering-algorithm", "eps-t", "eps-s", "kuttruff-buffer-size",
+    "calculate-timewalk-statistics", "ctot-cut",
+)
+
+
+def _dump_artifacts(job):
+    return ("collection",) if job.extra.get("collection") else ("output", "metadata")
+
+
+def planned_dump_input(job):
+    output = Path(job.extra["output"])
+    return manifest_path(output) if "metadata" in job.extra else output
+
+
+def completed_dump_input(job):
+    extra = job.extra
+    return extra.get("collection", extra["output"]), extra.get("collection", extra.get("metadata"))
+
+
+def agent_operations():
+    description = {
+        "panel": JOB_NAME,
+        "summary": "Decode TPX3 files with LUNA. Acquisition prefixes supply timestamps and GMD readings. "
+                   "Detected clock resets split independent streams. Output is an HDF5 file or a collection.",
+        "parameters": {
+            "input": {"type": "path", "description": "TPX3 file or directory"},
+            "output": {"type": "path", "description": "Workspace HDF5 file"},
+            "prefixed": {"type": "boolean", "default": True},
+            "timewalk": {"type": "path", "description": "Optional existing statistics HDF5 seed"},
+            "options": {"type": "object", "default": {
+                key: PANEL_DEFAULTS.get(key, OPTIONS[key].default) for key in DUMP_OPTIONS
+            }},
+        },
+        "option_choices": {key: list(OPTIONS[key].choices) for key in DUMP_OPTIONS if OPTIONS[key].choices},
+        "outputs": ["collection", "output", "metadata"],
+        "manual": JOB_NAME,
+    }
+    return (PanelOperation("tpx3_dump", description, _prepare_dump, (JOB_NAME,), artifacts=_dump_artifacts),)
+
+
+def _active_dump_options(value):
+    options = {flag: value(flag) for flag in ("layout", "raw-only", "disable-clustering")}
+    if not options["raw-only"]:
+        options["tof-tdc-reference"] = value("tof-tdc-reference")
+    if not (options["raw-only"] or options["disable-clustering"]):
+        options.update({flag: value(flag) for flag in ("clustering-algorithm", "eps-t", "eps-s")})
+        if options["clustering-algorithm"] == "Kuttruff2024":
+            options["kuttruff-buffer-size"] = value("kuttruff-buffer-size")
+        options["calculate-timewalk-statistics"] = value("calculate-timewalk-statistics")
+        if options["calculate-timewalk-statistics"]:
+            options["ctot-cut"] = value("ctot-cut")
+    return options
+
+
+def _prepare_dump(_jobs, params):
+    source = resolve_path(params["input"])
+    if not source.is_dir() and not (source.is_file() and source.suffix.lower() == ".tpx3"):
+        raise ValueError("Choose an existing TPX3 file or directory.")
+    target = resolve_path(params["output"], write=True)
+    if target.suffix.lower() not in HDF5_TYPES:
+        raise ValueError("Choose an .h5 or .hdf5 output path.")
+    prefixed = boolean(params.get("prefixed", True))
+    requested = params.get("options", {})
+    if not isinstance(requested, dict) or requested.keys() - set(DUMP_OPTIONS):
+        raise ValueError("Use the TPX3 Dump options listed by describe.")
+    values = {}
+    for key in DUMP_OPTIONS:
+        option = OPTIONS[key]
+        default = PANEL_DEFAULTS.get(key, option.default)
+        value = requested.get(key, default)
+        if type(value) is not type(default) or (option.choices and value not in option.choices):
+            raise ValueError(f"Choose a valid value for {option.label}.")
+        if type(value) is int and value < (1 if key == "kuttruff-buffer-size" else 0):
+            raise ValueError(f"{option.label} is below the permitted minimum.")
+        if isinstance(value, str) and (not value.strip() or value.startswith("-") or "\x00" in value):
+            raise ValueError(f"Choose a valid value for {option.label}.")
+        values[key] = value
+    values = _active_dump_options(values.__getitem__)
+    matrix = resolve_path(params["timewalk"]) if params.get("timewalk") else None
+    if matrix and (not values.get("calculate-timewalk-statistics") or not matrix.is_file()):
+        raise ValueError("A timewalk seed requires statistics calculation and an existing HDF5 file.")
+    wsl = wsl_settings()
+    job = dump_job(source, target, prefixed=prefixed, options=values, timewalk=matrix,
+                   wsl=wsl_arguments(wsl))
+    summary = {"TPX3 input": str(source), "Strip acquisition prefix": prefixed,
+               "Split detected acquisitions": prefixed, "Timewalk seed": str(matrix) if matrix else None}
+    if prefixed:
+        summary["Collection output"] = str(manifest_path(target))
+        summary["Segment folder"] = str(target.with_name(f"{target.stem}_segments"))
+    else:
+        summary["HDF5 output"] = str(target)
+    summary.update({OPTIONS[key].label: value for key, value in values.items()})
+    summary.update({WSL_FIELDS[key]: value.strip() for key, value in wsl.items()
+                    if isinstance(value, str) and value.strip()})
+    job.extra["panel_form"] = {
+        "input_mode": "Folder" if source.is_dir() else "File",
+        "input": str(source), "output": str(target), "acquisition_prefix": prefixed,
+        **values, "timewalk_file": str(matrix) if matrix else "",
+    }
+    return job, summary
+
+
+def wsl_settings():
+    if sys.platform != "win32" or shared.SERVER:
+        return {}
+    store = shared.settings_store()
+    return {key: store.get(f"ion_luna.{key}", "") for key in WSL_FIELDS}
+
+
+def wsl_arguments(settings):
+    return [f"--wsl-{key}={value.strip()}" for key, value in settings.items()
+            if isinstance(value, str) and value.strip()]
 
 
 def capture_command(job, line):
@@ -35,6 +153,28 @@ def capture_command(job, line):
         job.extra[COMMAND_KEY] = line
         return True
     return False
+
+
+def dump_job(source, output, *, prefixed=True, options=None, timewalk=None, wsl=()):
+    cwd = workspace_root(REPO_ROOT)
+    selected = checked_path(source, cwd=cwd)
+    matrix = checked_path(timewalk, cwd=cwd) if timewalk else None
+    target = validate_distinct_output(output, [("TPX3 input", selected), ("timewalk file", matrix)],
+                                      cwd=cwd, output_label="HDF5 output")
+    target = checked_path(target, write=True, cwd=cwd)
+    options = options or {}
+    cmd = [sys.executable, "-m", "vmi_analysis.ion_luna", "--input", str(selected),
+           "--output", str(target), *process_arguments(options)]
+    extra = {"output": str(target)}
+    if prefixed:
+        if options.get("layout", "single") != "single":
+            raise ValueError("The 32-byte acquisition format requires a single-chip layout.")
+        metadata = target.with_name(f"{target.stem}_metadata.h5")
+        cmd += ["--metadata-output", str(metadata), "--split-acquisitions"]
+        extra["metadata"] = str(metadata)
+    if matrix:
+        cmd += ["--timewalk-file", str(matrix)]
+    return Job(JOB_NAME, cmd=[*cmd, *wsl], cwd=str(cwd), extra=extra, consume_output=capture_command)
 
 
 def build(jobs: JobManager):
@@ -69,7 +209,25 @@ def build(jobs: JobManager):
                     ui.button("Inspect metadata", on_click=inspect_metadata).props("flat")
                 open_folder_button(path.parent, "Open output folder")
 
-    view = JobView(jobs, job_name=JOB_NAME, results_builder=results, command_key=COMMAND_KEY)
+    def restore_form(job):
+        """Show an Agent run's resolved inputs, as if the user had entered them."""
+        form = adopt_agent_form(job, "ion_luna")
+        if not form:
+            return
+        if not job.extra.get("corrected"):
+            stage.value = DUMP
+        for key, widget in (("input_mode", file_mode), ("input", source), ("output", output),
+                            ("acquisition_prefix", prefixed), ("timewalk_file", timewalk),
+                            ("correction_input", correction_input),
+                            ("corrected_output", corrected_output)):
+            if key in form:
+                widget.value = form[key]
+        for flag, value in form.items():
+            if flag in fields:
+                fields[flag].value = value
+
+    view = JobView(jobs, job_name=JOB_NAME, results_builder=results, command_key=COMMAND_KEY,
+                   attach_builder=restore_form)
     theme.panel_header(JOB_NAME, "Unpack and cluster Timepix3 data or apply a timewalk correction.", view=view)
     fields = {}
 
@@ -107,14 +265,10 @@ def build(jobs: JobManager):
             return int(value)
         return value
 
-    def submit(cmd, extra):
-        if sys.platform == "win32":
-            if distro.value.strip():
-                cmd += ["--wsl-distribution", distro.value.strip()]
-            if executable.value.strip():
-                cmd += ["--wsl-executable", executable.value.strip()]
-        view.attach(jobs.submit(Job(JOB_NAME, cmd=cmd, cwd=str(workspace_root(REPO_ROOT)), extra=extra,
-                                    consume_output=capture_command)))
+    def wsl_options():
+        if sys.platform == "win32" and not shared.SERVER:
+            return wsl_arguments({key: field.value for key, field in wsl_fields.items()})
+        return []
 
     def run():
         command = [sys.executable, "-m", "vmi_analysis.ion_luna"]
@@ -131,39 +285,21 @@ def build(jobs: JobManager):
                                                   cwd=workspace_root(REPO_ROOT), output_label="corrected HDF5 output")
                 cmd = [*command, "--apply-timewalk-correction", "--input", str(selected), "--output", str(target),
                        "--ctot-cut", str(option_value("ctot-cut"))]
-                submit(cmd, {"output": str(target), "corrected": True})
+                view.attach(jobs.submit(Job(JOB_NAME, cmd=[*cmd, *wsl_options()],
+                                            cwd=str(workspace_root(REPO_ROOT)),
+                                            extra={"output": str(target), "corrected": True},
+                                            consume_output=capture_command)))
                 return
             if not source.value.strip() or not output.value.strip():
                 raise ValueError("Choose a TPX3 input and an HDF5 output.")
-            selected = (workspace_root(REPO_ROOT) / Path(source.value.strip()).expanduser()).resolve()
-            stats = calculate_stats()
-            matrix = (workspace_root(REPO_ROOT) / Path(timewalk.value.strip()).expanduser()).resolve() if stats and timewalk.value.strip() else None
-            target = validate_distinct_output(output.value.strip(), [("TPX3 input", selected), ("timewalk file", matrix)],
-                                              cwd=workspace_root(REPO_ROOT), output_label="HDF5 output")
-            arguments = {flag: option_value(flag) for flag in ("layout", "raw-only", "disable-clustering")}
-            if not arguments["raw-only"]:
-                arguments["tof-tdc-reference"] = option_value("tof-tdc-reference")
-            if cluster_enabled():
-                arguments.update({flag: option_value(flag) for flag in ("clustering-algorithm", "eps-t", "eps-s")})
-                if arguments["clustering-algorithm"] == "Kuttruff2024":
-                    arguments["kuttruff-buffer-size"] = option_value("kuttruff-buffer-size")
-            if stats:
-                arguments.update({"calculate-timewalk-statistics": True, "ctot-cut": option_value("ctot-cut")})
-            cmd = [*command, "--input", str(selected), "--output", str(target), *process_arguments(arguments)]
-            extra = {"output": str(target)}
-            if prefixed.value:
-                if arguments["layout"] != "single":
-                    raise ValueError("The 32-byte acquisition format requires a single-chip layout.")
-                metadata = target.with_name(f"{target.stem}_metadata.h5")
-                cmd += ["--metadata-output", str(metadata)]
-                extra["metadata"] = str(metadata)
-                cmd.append("--split-acquisitions")
-            if matrix:
-                cmd += ["--timewalk-file", str(matrix)]
+            arguments = _active_dump_options(option_value)
+            job = dump_job(source.value.strip(), output.value.strip(), prefixed=prefixed.value,
+                           options=arguments, wsl=wsl_options(),
+                           timewalk=timewalk.value.strip() if arguments.get("calculate-timewalk-statistics") else None)
+            view.attach(jobs.submit(job))
         except (OSError, TypeError, ValueError) as exc:
             ui.notify(str(exc), type="warning")
             return
-        submit(cmd, extra)
 
     async def browse_input():
         from .picker import LocalFilePicker
@@ -239,11 +375,13 @@ def build(jobs: JobManager):
         for widget in (stage, fields["raw-only"], fields["disable-clustering"], stats_checkbox):
             widget.on_value_change(update_options)
         update_options()
-        if sys.platform == "win32":
+        if sys.platform == "win32" and not shared.SERVER:
             with ui.expansion("WSL2 settings", icon="settings").classes("w-full"):
                 with field_grid():
-                    distro = save(ui.input("WSL distribution (blank = default)").props("outlined dense"), "distribution")
-                    executable = save(ui.input("Linux LUNA executable (blank = PATH)").props("outlined dense"), "executable")
+                    wsl_fields = {
+                        key: save(ui.input(f"{label} (blank = {fallback})").props("outlined dense"), key)
+                        for (key, label), fallback in zip(WSL_FIELDS.items(), ("default", "PATH"), strict=True)
+                    }
         with action_bar(view, on_click=run):
             pass
     view.place_console()

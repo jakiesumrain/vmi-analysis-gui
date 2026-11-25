@@ -3,11 +3,14 @@ async page => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   const names = ['GMD Map', 'Movie', 'Dark Frame', 'Accumulate', 'Centroiding',
-                 'Binning', 'Trig Calibration', 'Circularize', 'PES', 'Pipeline', 'TPX3 Dump'];
+                 'Binning', 'Trig Calibration', 'Circularize', 'PES', 'TPX3 Dump', 'Ion TOF', 'Ion momenta', 'Ion Pipeline', 'Live TPX3',
+                 'TPX3 Dump (fallback)', 'Ion TOF (fallback)', 'Ion Pipeline (fallback)'];
   const titles = {'Movie': 'Frame Movie', 'Accumulate': 'Fast Accumulate',
                   'Centroiding': 'Picasso Centroiding', 'Binning': 'GMD Binning'};
-  const runLabels = {'Pipeline': 'Run pipeline', 'Trig Calibration': 'Load image & remap',
-                     'PES': 'Generate spectra'};
+  const runLabels = {'Trig Calibration': 'Load image & remap', 'PES': 'Generate spectra',
+                     'Ion TOF': 'Plot TOF', 'Ion momenta': 'Plot positions and TOF', 'Ion Pipeline': 'Run ion pipeline', 'Live TPX3': 'Start preview',
+                     'TPX3 Dump (fallback)': 'Dump TPX3', 'Ion TOF (fallback)': 'Plot TOF',
+                     'Ion Pipeline (fallback)': 'Run ion pipeline'};
   const show = async name => {
     await page.getByRole('tab', {name, exact: true}).click();
     await page.waitForFunction(title => {
@@ -19,9 +22,9 @@ async page => {
   await page.setViewportSize({width: 1440, height: 1000});
   await page.waitForFunction(() => typeof window.vmiZoomOpen === 'function');
   for (const group of await page.locator('.vmi-sidebar-disclosure').all()) {
-    if (!await group.evaluate(el => el.open)) await group.locator('summary').click();
+    if (!await group.evaluate(el => el.open)) await group.locator(':scope > summary').click();
   }
-  const tabNames = await page.getByRole('tab').allTextContents();
+  const tabNames = await page.locator('.vmi-sidebar-disclosure').getByRole('tab').allTextContents();
   if (tabNames.length !== names.length || !names.every((name, i) => tabNames[i].endsWith(name)))
     throw new Error('Incorrect workspace navigation');
   for (const name of names) {

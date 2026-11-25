@@ -4,7 +4,7 @@ Analyze velocity-map imaging data from HDF5 camera frames. Use the panels
 to locate electron spots, fit ring distortions, correct images, and calculate
 energy spectra.
 
-**Panel status.** Binning and Pipeline are immature and need restructuring.
+**Panel status.** Binning is immature and needs restructuring.
 
 ## Get started
 
@@ -34,7 +34,7 @@ server, the administrator sets the address with `VMI_TPX3_LIVE_ENDPOINT`.
 - [Shared server setup](docs/shared-server.md) for independent workspaces
   and SSH access from Linux and Windows.
 - [User manual (PDF)](docs/manual.pdf) for installation, data formats, panel
-  settings, the full pipeline, CLI commands, and troubleshooting.
+  settings, analysis workflows, CLI commands, and troubleshooting.
 - [Architecture](docs/architecture.md) and [contributing guide](CONTRIBUTING.md)
   for development.
 - [Windows installer](packaging/windows/README.md) for offline installation

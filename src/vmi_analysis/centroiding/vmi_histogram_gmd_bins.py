@@ -21,6 +21,7 @@ Usage:
 
 from __future__ import annotations
 import argparse
+from math import ceil
 import os
 import sys
 import tomllib
@@ -31,6 +32,12 @@ import matplotlib
 matplotlib.use(os.environ.get("MPLBACKEND", "TkAgg"))
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
+from tqdm import tqdm
+
+from vmi_analysis.centroiding.binning_options import (
+    DEFAULT_GMD_COLUMN, DEFAULT_GMD_FLOOR, DEFAULT_THRESHOLDS, DEFAULT_WEIGHT_MODE,
+    DEFAULT_WEIGHT_POWER, WEIGHT_MODES, histogram_filenames, parse_thresholds, weight_suffix,
+)
 
 pd.options.mode.chained_assignment = None
 
@@ -39,10 +46,9 @@ pd.options.mode.chained_assignment = None
 # ─────────────────────────────────────────────────────────────────────────────
 
 # GMD thresholds (3 values → 4 bins). Adjust to your needs.
-GMD_THRESHOLDS = [3.75e-8, 5.5e-8, 7.25e-8]
 
 # GMD column in the map file: 4 = gmd_val1 (method 1), 5 = gmd_val2 (method 2)
-GMD_COL = 4
+GMD_COL = DEFAULT_GMD_COLUMN
 
 # Weight each event by its frame's GMD when accumulating the histogram.
 #   "none"     : every event contributes 1        (default)
@@ -53,7 +59,7 @@ GMD_COL = 4
 # so it corrects the electron YIELD between bins, but it does NOT change the
 # spectral SHAPE within a bin. Measured effect on the radial profile shape is
 # <0.5% (see gmd_weight_test.py), so it will not make the four bins overlap.
-WEIGHT_MODE = "gmd_norm"
+WEIGHT_MODE = DEFAULT_WEIGHT_MODE
 
 # Exponent for "gmd_norm": weight = (mean_gmd / gmd) ** WEIGHT_POWER.
 #
@@ -63,10 +69,10 @@ WEIGHT_MODE = "gmd_norm"
 # 1.000/0.795/0.653/0.554) because the true scaling is strongly sub-linear.
 # Fitting log(yield)/log(GMD) on the four bins gives an effective exponent of
 # ~0.42, so 0.42 is the value that actually flattens the yield.
-WEIGHT_POWER = 1.0
+WEIGHT_POWER = DEFAULT_WEIGHT_POWER
 
 # Floor for non-positive GMD values (same value the V5 pipeline uses).
-GMD_FLOOR = 1e-12
+GMD_FLOOR = DEFAULT_GMD_FLOOR
 
 NO_SHOW = False  # skip the interactive plot window (for web/GUI use)
 
@@ -81,12 +87,12 @@ def parse_args():
     p.add_argument("--resolution-factor", type=int)
     p.add_argument("--gmd-weight-min", type=float)
     p.add_argument("--gmd-weight-max", type=float)
-    p.add_argument("--thresholds", default=",".join(f"{t:g}" for t in GMD_THRESHOLDS),
+    p.add_argument("--thresholds", default=DEFAULT_THRESHOLDS,
                    help="Comma-separated GMD thresholds (N values -> N+1 bins).")
     p.add_argument("--gmd-col", type=int, default=GMD_COL,
                    help="GMD column in the map file: 4 = method 1, 5 = method 2.")
     p.add_argument("--weight-mode", default=WEIGHT_MODE,
-                   choices=["none", "gmd", "gmd_norm"])
+                   choices=WEIGHT_MODES)
     p.add_argument("--weight-power", type=float, default=WEIGHT_POWER)
     p.add_argument("--gmd-floor", type=float, default=GMD_FLOOR)
     p.add_argument("--no-show", action="store_true", default=NO_SHOW)
@@ -113,11 +119,15 @@ def parse_args():
         p.error("Provide --checkpoint-path and --gmd-map-path (or --config with those inputs)")
     if args.resolution_factor < 1:
         p.error("--resolution-factor must be positive")
+    try:
+        args.thresholds = parse_thresholds(args.thresholds)
+    except ValueError as exc:
+        p.error(str(exc))
     return args
 
 
 CLI = parse_args()
-GMD_THRESHOLDS = [float(x) for x in CLI.thresholds.split(",")]
+GMD_THRESHOLDS = CLI.thresholds
 GMD_COL = CLI.gmd_col
 WEIGHT_MODE = CLI.weight_mode
 WEIGHT_POWER = CLI.weight_power
@@ -215,8 +225,11 @@ def main():
     n_no_gmd = 0  # events in frames without GMD data
 
     print(f"\n[Hist] Reading checkpoint in chunks...")
-    for chunk in pd.read_hdf(CHECKPOINT_PATH, "localizations",
-                             columns=["x", "y", "frame"], chunksize=500_000):
+    chunk_size = 500_000
+    with pd.HDFStore(CHECKPOINT_PATH, "r") as store:
+        chunk_count = ceil(store.get_storer("localizations").nrows / chunk_size)
+    chunks = pd.read_hdf(CHECKPOINT_PATH, "localizations", columns=["x", "y", "frame"], chunksize=chunk_size)
+    for chunk in tqdm(chunks, total=chunk_count, desc="Binning checkpoint"):
         x = chunk["x"].values * RES_FACTOR
         y = chunk["y"].values * RES_FACTOR
         frames = chunk["frame"].values.astype(int)
@@ -283,18 +296,10 @@ def main():
     # ── 5. Save histograms ───────────────────────────────────────────────
     # A suffix keeps weighted output from overwriting the default (unweighted)
     # bins that the downstream circularization/CPBASEX pipeline consumes.
-    if WEIGHT_MODE == "none":
-        suffix = ""
-    elif WEIGHT_MODE == "gmd_norm" and WEIGHT_POWER != 1.0:
-        suffix = f"_w-gmd_norm_p{WEIGHT_POWER}"
-    else:
-        suffix = f"_w-{WEIGHT_MODE}"
+    suffix = weight_suffix(WEIGHT_MODE, WEIGHT_POWER)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    for b in range(N_BINS):
-        lo = "minusinf" if b == 0 else f"{thresholds[b-1]:.2e}"
-        hi = "plusinf" if b == N_BINS - 1 else f"{thresholds[b]:.2e}"
-        fname = os.path.join(OUTPUT_DIR,
-                             f"vmi_2d_gmd_bin{b}_{lo}_{hi}{suffix}.npy")
+    for b, filename in enumerate(histogram_filenames(thresholds, suffix)):
+        fname = os.path.join(OUTPUT_DIR, filename)
         np.save(fname, hists[b])
         print(f"[Save] {fname}")
 
@@ -302,9 +307,17 @@ def main():
     np.save(fname_all, hist_all)
     print(f"[Save] {fname_all}")
 
-    # ── 6. Plot 2×3 grid (4 bins + overall + summary) ────────────────────
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12), facecolor="white", layout = 'constrained')
+    # ── 6. Plot the bins, overall histogram, and summary ─────────────────
+    rows = ceil((N_BINS + 2) / 3)
+    fig, axes = plt.subplots(rows, 3, figsize=(18, 6 * rows), facecolor="white", layout="constrained")
     axes = axes.ravel()
+    for ax in axes[N_BINS + 2:]:
+        ax.set_axis_off()
+
+    def image_norm(maximum):
+        if maximum > 0:
+            return LogNorm(vmin=1 if maximum > 1 else maximum / 100, vmax=maximum)
+        return None
 
     for b in range(N_BINS):
         ax = axes[b]
@@ -312,7 +325,7 @@ def main():
         hi = "+inf" if b == N_BINS - 1 else f"{thresholds[b]:.2e}"
         vmax = hists[b].max()
         im = ax.imshow(hists[b], origin="lower", cmap="hot",
-                       norm=LogNorm(vmin=1, vmax=vmax),
+                       norm=image_norm(vmax),
                        interpolation="nearest")
         ax.set_title(f"Bin {b}: GMD [{lo}, {hi})\n"
                      f"{counts_per_bin[b]:,} events", fontsize=11)
@@ -323,7 +336,7 @@ def main():
     ax = axes[N_BINS]
     vmax_all = hist_all.max()
     im = ax.imshow(hist_all, origin="lower", cmap="hot",
-                   norm=LogNorm(vmin=1, vmax=vmax_all),
+                   norm=image_norm(vmax_all),
                    interpolation="nearest")
     ax.set_title(f"Overall (sum of bins)\n{counts_all:,} events", fontsize=11)
     ax.set_xlabel("X"); ax.set_ylabel("Y")

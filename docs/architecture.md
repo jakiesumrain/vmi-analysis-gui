@@ -33,8 +33,7 @@ bar, and a collapsible labelled console dock in each panel; the rail becomes a
 horizontal scroller on narrow screens. The author signature is available from
 *Settings → About*.
 `gui/panels/` contains the forms and result views. Each panel starts with
-a title, an inline job status cluster, and a short summary. Binning and
-Pipeline are immature and need restructuring.
+a title, an inline job status cluster, and a short summary. Binning is immature and needs restructuring.
 
 - Trig Calibration remaps a NumPy detector image and fits selected rings in
   the web process. It can export a Gascooke-compatible calibration.
@@ -51,6 +50,11 @@ Pipeline are immature and need restructuring.
 - PES generates spectra in a subprocess from NumPy images or text matrices.
   It overlays the spectra in Plotly and fits peaks to the selected interval
   in the web process. It reserves each input and its generated spectrum bundle.
+- Agent provides an interactive pi RPC session from the sidebar footer above
+  **Settings**, separately from the Electron and Ion tool groups.
+  Each account supplies its own endpoint and temporary API key. Shared-server
+  sessions run in Docker or Podman with the account workspace writable and
+  shared datasets read-only. The conversation and diagnostics remain separate.
 
 The [design reference](DESIGN.md) describes the visual tokens.
 `gui/theme.py` loads the palette and `gui/assets/theme.css`.
@@ -67,7 +71,7 @@ Relative paths resolve from the subprocess working directory.
 - `gui/resources.py` declares the paths each job reads or writes. Jobs can
   share read access. A write waits if it conflicts with a read or another
   write. Unrelated jobs can use an available slot.
-- Pipeline reserves the resources of all four stages for the entire job.
+- A multi-stage job reserves the resources of all its stages for the entire job.
   Its stages run in order. The optional skip check tests whether the declared
   output files exist.
 - The MATLAB CPBASEX backend uses an exclusive reservation for its shared
@@ -76,8 +80,19 @@ Relative paths resolve from the subprocess working directory.
 - `JobView` displays job status in the panel header and logs in a
   collapsible console. One button starts, stops, or cancels
   the panel job. A browser reload can reattach to an active job by name.
+- An approved Agent operation records the resolved panel inputs in
+  `job.extra["panel_form"]`. When a panel adopts an Agent job, its
+  `attach_builder` fills the form from that record, so the run shows the same
+  inputs a user would have entered before clicking Run.
 - Cancel and shutdown stop subprocess trees. On Windows the manager uses
   `taskkill /T /F`. On POSIX it signals the process group.
+- `agent_backend.py` owns one interactive session per account rather than a
+  queued analysis job. It correlates RPC commands, reconstructs streamed text,
+  and stops containers or process trees during shutdown. The API key is passed
+  only through the child environment; `models.json` references that variable.
+  Stopping or losing the process deletes the temporary configuration and clears
+  the session's in-memory key copies. Agent connection fields are excluded from
+  saved settings and workflow files.
 
 **Keep running on disconnect** defaults to off. When enabled, it leaves the
 server available after all browsers disconnect. When it is off, the server
