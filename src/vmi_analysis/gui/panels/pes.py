@@ -500,7 +500,7 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
 
     def reset():
         state.update(spectra={}, angular={}, beta_orders=(), plot=None, spectrum_axes=(), selecting=False)
-        state.update(native_x_axis={}, native_x_range=None, redraw_beta=None)
+        state.update(native_x_axis=None, native_y_axis=None, native_x_range=None, redraw_beta=None)
         fit_card.set_visibility(False)
         fit_display.clear()
 
@@ -524,27 +524,25 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
     def refresh_plot(reset_axes=False):
         if state["plot"] is None:
             return
-        xmin, xmax, ymin, ymax = (field.value for field in state["spectrum_axes"])
-        try:
-            x_axis, y_axis = linear_axis_limits(xmin, xmax), linear_axis_limits(ymin, ymax)
-        except ValueError as exc:
-            ui.notify(str(exc), type="warning")
-            if state["native_x_axis"]:
-                return
-            xmin = xmax = None
-            x_axis = y_axis = {"autorange": True}
         if reset_axes:
-            state["revision"] += 1
-        if state["native_x_range"]:
-            if reset_axes:
+            xmin, xmax, ymin, ymax = (field.value for field in state["spectrum_axes"])
+            try:
+                x_axis, y_axis = linear_axis_limits(xmin, xmax), linear_axis_limits(ymin, ymax)
+            except ValueError as exc:
+                ui.notify(str(exc), type="warning")
+                if state["native_x_axis"] is not None:
+                    return
+                xmin = xmax = None
+                x_axis = y_axis = linear_axis_limits(None, None)
+            if state["native_x_range"]:
                 start, end = state["native_x_range"]
                 width = end - start
                 if xmin is None:
                     xmin = start if xmax is None or xmax > start else xmax - width
                 if xmax is None:
                     xmax = end if xmin < end else xmin + width
-                state["native_x_axis"] = linear_axis_limits(xmin, xmax)
-            x_axis = state["native_x_axis"]
+                x_axis = linear_axis_limits(xmin, xmax)
+            state.update(native_x_axis=x_axis, native_y_axis=y_axis, revision=state["revision"] + 1)
         selecting = state["selecting"]
         low, high = fit_low.value, fit_high.value
         fig = go.Figure()
@@ -558,8 +556,8 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
         fig.update_layout(uirevision=state["revision"], selectdirection="h",
                           selections=[], selectionrevision=f"{low}:{high}",
                           dragmode="select" if selecting else "zoom")
-        fig.update_xaxes(title_text=f"{state['x_label']} ({state['units']})", **x_axis)
-        fig.update_yaxes(title_text="Intensity (arb. units)", **y_axis)
+        fig.update_xaxes(title_text=f"{state['x_label']} ({state['units']})", **state["native_x_axis"])
+        fig.update_yaxes(title_text="Intensity (arb. units)", **state["native_y_axis"])
         state["plot"].update_figure(plot_options(fig))
         if reset_axes and state["redraw_beta"]:
             state["redraw_beta"]()

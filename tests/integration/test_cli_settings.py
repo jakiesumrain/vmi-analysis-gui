@@ -392,6 +392,15 @@ class GuiSubmissionTests(unittest.TestCase):
                             callbacks["Apply axes"]()
                             for call in plot_options.call_args_list[-2:]:
                                 self.assertEqual(call.args[0].layout.xaxis.range, (x[0], x[-1]))
+                            spectrum_min = fields["Spectrum X min (blank = auto)"]
+                            spectrum_min.value = x[-1]
+                            drag_mode = next(element for element in client.elements.values() if isinstance(element, ui.toggle))
+                            drag_mode.value = "Select fit range"
+                            spectrum_layout = plot_options.call_args.args[0].layout
+                            self.assertEqual(spectrum_layout.dragmode, "select")
+                            self.assertEqual(spectrum_layout.xaxis.range, (x[0], x[-1]))
+                            notify.assert_not_called()
+                            spectrum_min.value = x[0]
                             section = next(element for element in client.elements.values()
                                            if isinstance(element, ui.expansion) and element.text == "Uniform-grid spectra")
                             self.assertFalse(section.value)
