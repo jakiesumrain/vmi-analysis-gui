@@ -15,6 +15,7 @@ import numpy as np
 from nicegui import Client, ui
 
 from vmi_analysis.agent_backend import AgentRequest, AgentSession, ContainerLauncher, PANEL_REQUEST_TITLE
+from vmi_analysis.centroiding.plot_data import save_plot_data
 from vmi_analysis.gui import shared
 from vmi_analysis.gui.agent_completion import path_completions
 from vmi_analysis.gui.panel_operations import build_registry
@@ -110,6 +111,63 @@ class AgentPanelTests(unittest.TestCase):
         with patch.object(shared, "current_account", return_value=SimpleNamespace(name="other")):
             with self.assertRaisesRegex(ValueError, "in your workspace"):
                 self.registry.measure(self.jobs, spectrum.id, params)
+
+    def test_pes_measurement_reads_owned_uniform_bins_and_reports_coverage(self):
+        path = self.workspace / "pes.npz"
+        x = np.array([1., 4., 9.])
+        save_plot_data(path, {"alpha": 0.5, "beta_order": 4,
+                              "images": [{"path": "first.npy"}, {"path": "second.npy"}]},
+                       x_0=x, y_0=[2., 4., 9.], beta_x_0=x,
+                       moments_0=[[1., 2., 7.], [0., 0., 10.], [1., 1., np.nan]],
+                       x_1=x[1:], y_1=[8., 8.], beta_x_1=x[1:],
+                       moments_1=[[0., 0.], [1., 1.], [1., 1.]])
+        job = Job(pes.JOB_NAME, status="done", owner=self.account.name, extra={"pes_spectra": str(path)})
+        with self.jobs._lock:
+            self.jobs._jobs[job.id] = job
+        self.assertEqual(self.registry.measurement_context(job)["operation"], "pes")
+        self.assertIn("bin_width", self.registry.describe("pes")["measurements"])
+        params = {"coordinate": 4, "bin_width": 3, "unit": "eV"}
+        with self.assertRaisesRegex(ValueError, "2. second.npy"):
+            self.registry.measure(self.jobs, job.id, params)
+        params["spectrum"] = 1
+        measured = self.registry.measure(self.jobs, job.id, params)
+        self.assertEqual(measured["spectrum"], "1. first.npy")
+        self.assertEqual(measured["unit"], "eV")
+        self.assertEqual(measured["bin_edges"], [4., 7.])
+        self.assertEqual(measured["bin_center"], 5.5)
+        self.assertEqual(measured["integrated_yield"], 16.5)
+        self.assertEqual(measured["bin_average_intensity"], 5.5)
+        self.assertAlmostEqual(measured["beta"]["beta_2"], 6 / 7)
+        self.assertIsNone(measured["beta"]["beta_4"])
+
+        partial = self.registry.measure(self.jobs, job.id, params | {"coordinate": 10})
+        self.assertEqual(partial["bin_edges"], [7., 10.])
+        self.assertEqual(partial["measured_interval"], [7., 9.])
+        self.assertAlmostEqual(partial["bin_average_intensity"], 16 / 3)
+        uncovered = self.registry.measure(self.jobs, job.id, params | {"coordinate": 2, "spectrum": 2})
+        self.assertIsNone(uncovered["measured_interval"])
+        self.assertIsNone(uncovered["bin_average_intensity"])
+        second = self.registry.measure(self.jobs, job.id, params | {"spectrum": 2})
+        self.assertIsNone(second["beta"]["beta_2"])
+        for invalid in ({"coordinate": 11}, {"bin_width": 0}, {"bin_width": 0.0001}, {"unit": "pixel²"}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.registry.measure(self.jobs, job.id, params | invalid)
+        with patch.object(shared, "current_account", return_value=SimpleNamespace(name="other")):
+            with self.assertRaisesRegex(ValueError, "in your workspace"):
+                self.registry.measure(self.jobs, job.id, params)
+
+    def test_pes_measurement_defaults_to_the_panel_grid_and_uses_saved_units(self):
+        path = self.workspace / "uncalibrated.npz"
+        save_plot_data(path, {"alpha": None, "images": [{"path": "only.npy"}]}, x_0=[1., 9.], y_0=[2., 2.])
+        job = Job(pes.JOB_NAME, status="done", owner=self.account.name, extra={"pes_spectra": str(path)})
+        with self.jobs._lock:
+            self.jobs._jobs[job.id] = job
+        measured = self.registry.measure(self.jobs, job.id, {"coordinate": 1})
+        self.assertEqual(measured["unit"], "pixel²")
+        self.assertEqual(measured["bin_width"], 0.04)
+        self.assertEqual(measured["bin_edges"], [1., 1.04])
+        self.assertAlmostEqual(measured["bin_average_intensity"], 2.)
+        self.assertEqual(measured["beta"], {})
 
     def test_dark_frame_registration_validates_and_reserves_paths(self):
         raw = self.datasets / "dark"

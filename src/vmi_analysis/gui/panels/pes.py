@@ -17,7 +17,8 @@ from plotly.subplots import make_subplots
 from vmi_analysis.centroiding.plot_data import load_plot_data
 from vmi_analysis.pes import (ABEL_METHODS, BASELINE_PARAMETERS, BETA_ORDERS, QUADRANT_LABELS,
                               QUADRANT_ORDER, SYMMETRY_AXES, Geometry, PeakGuess, anisotropy_values,
-                              average_anisotropy, evaluate_fit_for_plot, fit_peaks, integrate_spectral_bins)
+                              average_anisotropy, default_uniform_bin_width, evaluate_fit_for_plot,
+                              fit_peaks, integrate_spectral_bins, uniform_bin_edges, uniform_grid_bounds)
 
 from ..agent_panels import PanelOperation, PanelView, number as finite_number, require_completed_job, resolve_path
 from ..shared import checked_path, generated_dir, workspace_root
@@ -32,10 +33,18 @@ from .picker import LocalFilePicker
 JOB_NAME = "PES"
 FIT_OPERATION = "pes_fit"
 PROFILES = ("Gaussian", "Voigt")
-MAX_RESAMPLED_BINS = 10_000
 PES_SAMPLE_MARKER = {"size": 4}
 BETA_AXIS_SPACING = 64
 _AXIS_SCRIPT = (files("vmi_analysis.gui.assets") / "pes_axes.js").read_text(encoding="utf-8")
+
+MEASUREMENT_PARAMETERS = {
+    "coordinate": {"type": "number", "description": "Required. Find the bin containing this coordinate in the saved run's units."},
+    "bin_width": {"type": "number", "description": "Width in the same units as coordinate. Optional, defaults to the initial uniform-grid plot width. "
+                  "Supply the width explicitly to match a plot with edited settings."},
+    "unit": {"type": "string", "choices": ["eV", "pixel²"], "description": "Optional check against the saved run's units. "
+             "Supply it when the user names a unit."},
+    "spectrum": {"type": "integer", "description": "One-based spectrum number from the PES results. Required when the run has multiple spectra."},
+}
 
 
 def _csv_download(rows, header, name):
@@ -233,10 +242,59 @@ def _prepare_spectra(jobs, params):
     }
 
 
+def _measure_uniform_bin(jobs, job, parameters):
+    if parameters.keys() - MEASUREMENT_PARAMETERS.keys():
+        raise ValueError("Use only parameters listed by describe for PES measurements.")
+    coordinate = finite_number(parameters.get("coordinate"))
+    path = checked_path(job.extra["pes_spectra"])
+    with jobs.preview_read_access([path]):
+        meta, arrays = load_plot_data(path)
+
+    unit = "eV" if meta.get("alpha") is not None else "pixel²"
+    if "unit" in parameters and parameters["unit"] != unit:
+        raise ValueError(f"This PES run uses {unit}. Supply the coordinate and bin width in those units.")
+    names = [f"{i}. {Path(image['path']).name}" for i, image in enumerate(meta["images"], 1)]
+    spectrum = parameters.get("spectrum", 1 if len(names) == 1 else None)
+    if type(spectrum) is not int or not 1 <= spectrum <= len(names):
+        raise ValueError("Choose a PES spectrum number. " + ", ".join(names))
+    grids = [arrays[f"x_{i}"] for i in range(len(names))]
+    low, high = uniform_grid_bounds(grids)
+    width = finite_number(parameters.get("bin_width", default_uniform_bin_width(low, high)))
+    edges = uniform_bin_edges(low, high, width)
+    if not edges[0] <= coordinate <= edges[-1]:
+        raise ValueError(f"The coordinate is outside this run's uniform grid ({edges[0]:g} to {edges[-1]:g} {unit}).")
+    index = min(int(np.searchsorted(edges, coordinate, side="right")) - 1, edges.size - 2)
+    bin_edges = edges[index:index + 2]
+    i = spectrum - 1
+    x = grids[i]
+    integrated = integrate_spectral_bins(x, arrays[f"y_{i}"], bin_edges)[0]
+    density = integrated / width
+    coverage = [max(bin_edges[0], x[0]), min(bin_edges[1], x[-1])] if x.size >= 2 else None
+    beta = {}
+    if orders := range(2, meta.get("beta_order", 0) + 1, 2):
+        moments = integrate_spectral_bins(arrays[f"beta_x_{i}"], arrays[f"moments_{i}"], bin_edges)
+        beta = {f"beta_{order}": float(value) if np.isfinite(value) else None
+                for order, value in zip(orders, anisotropy_values(moments)[:, 0])}
+    return {
+        "method": "Piecewise-linear integration on the PES uniform grid. β is the ratio of the integrated Legendre moments.",
+        "spectrum": names[i], "coordinate": coordinate, "unit": unit,
+        "grid_origin": float(low), "bin_width": width,
+        "bin_edges": bin_edges.tolist(), "bin_center": float(bin_edges[0] + width / 2),
+        "measured_interval": list(map(float, coverage)) if coverage and coverage[0] < coverage[1] else None,
+        "integrated_yield": float(integrated) if np.isfinite(integrated) else None,
+        "yield_unit": f"arbitrary units × {unit}",
+        "bin_average_intensity": float(density) if np.isfinite(density) else None,
+        "intensity_unit": "arbitrary units",
+        "beta": beta,
+    }
+
+
 def agent_operations():
     spectra = {
         "panel": JOB_NAME, "manual": JOB_NAME,
-        "summary": "Generate spectra and optional angular anisotropy from one or more VMI images.",
+        "summary": "Generate spectra and optional angular anisotropy from one or more VMI images. "
+                   "Measure intensity, yield, and β in a uniform-grid bin of a completed run.",
+        "measurements": MEASUREMENT_PARAMETERS,
         "parameters": {
             "images": {"type": "list of paths", "description": "VMI images (.npy or .txt)"},
             "source_job_id": {"type": "job ID", "description": "Optional completed Centroiding, Binning, or Circularize job"},
@@ -264,7 +322,8 @@ def agent_operations():
             "auto_profile": {"type": "string", "choices": list(PROFILES)},
         },
     }
-    return (PanelOperation("pes", spectra, _prepare_spectra, (JOB_NAME,), outputs=("pes_spectra",)),
+    return (PanelOperation("pes", spectra, _prepare_spectra, (JOB_NAME,), outputs=("pes_spectra",),
+                           measure_result=_measure_uniform_bin),
             PanelOperation(FIT_OPERATION, fit, None, ()))
 
 
@@ -655,15 +714,15 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
         spectra, angular = state["spectra"], state["angular"]
         units, x_label = state["units"], state["x_label"]
         orders = state["beta_orders"]
-        sampled = [x for _, x, _ in spectra.values() if x.size >= 2]
         with ui.expansion("Uniform-grid spectra", icon="show_chart", value=False).classes("w-full").props(
                 'header-class="vmi-section-toggle text-primary" hide-expand-icon') as section:
-            if not sampled:
-                ui.label("Resampling requires at least two spectrum samples.").classes("vmi-subtitle")
+            try:
+                low, high = uniform_grid_bounds(x for _, x, _ in spectra.values())
+                applied_width = default_uniform_bin_width(low, high)
+                applied_edges = uniform_bin_edges(low, high, applied_width)
+            except ValueError as exc:
+                ui.label(str(exc)).classes("vmi-subtitle")
                 return
-            low = min(x[0] for x in sampled)
-            span = max(x[-1] for x in sampled) - low
-            applied_width = float(f"{span / 200:.2g}")
             x_axis = linear_axis_limits(None, None)
             intensity_axis = linear_axis_limits(None, None)
             beta_limits = [(None, None)] * len(orders)
@@ -686,15 +745,10 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
         plotted_beta = None
 
         def apply_settings():
-            nonlocal applied_width, x_axis, intensity_axis, beta_limits
+            nonlocal applied_width, applied_edges, x_axis, intensity_axis, beta_limits
             step = width.value
-            if step is None or not np.isfinite(step) or not np.isfinite(low + step) or step <= 0:
-                ui.notify("Enter a positive, finite bin width.", type="warning")
-                return
-            if step < span / MAX_RESAMPLED_BINS or low + step == low:
-                ui.notify(f"Use a larger bin width for at most {MAX_RESAMPLED_BINS:,} bins.", type="warning")
-                return
             try:
+                new_edges = uniform_bin_edges(low, high, step)
                 new_x = linear_axis_limits(x_min.value, x_max.value)
                 new_intensity = linear_axis_limits(*read_range("Bin-average intensity Y limits", intensity_fields))
                 new_beta = [read_range(f"Resampled β{order} Y limits", pair)
@@ -702,7 +756,7 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             except ValueError as exc:
                 ui.notify(str(exc), type="warning")
                 return
-            applied_width = step
+            applied_width, applied_edges = step, new_edges
             x_axis, intensity_axis, beta_limits = new_x, new_intensity, new_beta
             redraw()
 
@@ -710,8 +764,7 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             nonlocal chart, plotted_beta
             selected_beta = beta_spectrum.value if beta_spectrum is not None else None
             step = applied_width
-            count = max(1, int(np.ceil(span / step)))
-            edges = low + np.arange(count + 1) * step
+            edges = applied_edges
             centers = edges[:-1] + step / 2
             rows = 2 if beta_spectrum else 1
             fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.04)

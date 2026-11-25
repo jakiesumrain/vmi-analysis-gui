@@ -26,6 +26,7 @@ ABEL_METHODS = {
     "daun": "Daun",
 }
 BETA_ORDERS = (0, 2, 4, 6, 8, 10)
+MAX_RESAMPLED_BINS = 10_000
 BASELINE_PARAMETERS = {"None": 0, "Constant": 1, "Linear": 2}
 QUADRANT_ORDER = ("ur", "ul", "ll", "lr")
 QUADRANT_LABELS = {"ur": "Upper right", "ul": "Upper left",
@@ -133,6 +134,32 @@ def anisotropy_values(moments):
     isotropic = moments[0]
     return np.divide(moments[1:], isotropic, out=np.full_like(moments[1:], np.nan),
                      where=np.isfinite(isotropic) & (isotropic > 0))
+
+
+def uniform_grid_bounds(grids):
+    """Use the span of all spectra that have data to integrate."""
+    grids = [x for x in grids if x.size >= 2]
+    if not grids:
+        raise ValueError("Resampling requires at least two spectrum samples.")
+    return min(x[0] for x in grids), max(x[-1] for x in grids)
+
+
+def default_uniform_bin_width(low, high):
+    return float(f"{(high - low) / 200:.2g}")
+
+
+def uniform_bin_edges(low, high, width):
+    """Build the equal-width PES grid, including the final partial bin."""
+    if width is None or not np.isfinite(width) or width <= 0 or not np.isfinite(low + width):
+        raise ValueError("Enter a positive, finite bin width.")
+    span = high - low
+    if width < span / MAX_RESAMPLED_BINS or low + width == low:
+        raise ValueError(f"Use a larger bin width for at most {MAX_RESAMPLED_BINS:,} bins.")
+    count = max(1, int(np.ceil(span / width)))
+    edges = low + np.arange(count + 1) * width
+    if not np.isfinite(edges).all() or np.any(np.diff(edges) <= 0):
+        raise ValueError("Bin edges must be finite and increasing.")
+    return edges
 
 
 def integrate_spectral_bins(x, values, edges):
