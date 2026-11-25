@@ -657,7 +657,7 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
         orders = state["beta_orders"]
         sampled = [x for _, x, _ in spectra.values() if x.size >= 2]
         with ui.expansion("Uniform-grid spectra", icon="show_chart", value=False).classes("w-full").props(
-                'header-class="vmi-section-toggle text-primary" expand-icon-class="text-primary"') as section:
+                'header-class="vmi-section-toggle text-primary" hide-expand-icon') as section:
             if not sampled:
                 ui.label("Resampling requires at least two spectrum samples.").classes("vmi-subtitle")
                 return
@@ -668,7 +668,7 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             intensity_axis = linear_axis_limits(None, None)
             beta_limits = [(None, None)] * len(orders)
             with ui.expansion("Plot settings", icon="tune", value=False).classes("w-full").props(
-                    'header-class="vmi-section-toggle text-primary" expand-icon-class="text-primary"'):
+                    'header-class="vmi-section-toggle text-primary" hide-expand-icon'):
                 with ui.column().classes("w-full"):
                     with ui.row().classes("items-center gap-2"):
                         width = num_input(f"Bin width ({units})", applied_width, step="any")
