@@ -213,6 +213,19 @@ def gmd_limits(readings, low, high):
     return low, high
 
 
+def gmd2_by_frame(readings, segment_offsets, shift):
+    """Align GMD2 row j to frame j + shift without crossing segments."""
+    aligned = np.full(len(readings), np.nan)
+    for start, stop in zip(segment_offsets[:-1], segment_offsets[1:]):
+        if abs(shift) >= stop - start:
+            continue
+        if shift >= 0:
+            aligned[start + shift:stop] = readings[start:stop - shift]
+        else:
+            aligned[start:stop + shift] = readings[start - shift:stop]
+    return aligned
+
+
 def _saved_blocks(path, reference, source, expected, boundaries):
     paths = segment_files(path)
     if len(paths) + 1 != len(boundaries):
@@ -241,20 +254,11 @@ def filtered_histogram(path, tof_result, metadata, reference, low, high, shift, 
         raise ValueError(gmd["gmd_alignment_issue"])
     readings = gmd["gmd2_na"]
     low, high = gmd_limits(readings, low, high)
-    selected = np.zeros(len(expected), dtype=bool)
+    aligned = gmd2_by_frame(readings, boundaries, shift)
+    selected = np.isfinite(aligned) & (aligned >= low) & (aligned <= high)
     weights = np.zeros(len(expected), dtype=float) if weight_by_gmd2 else None
-    for start, stop in zip(boundaries[:-1], boundaries[1:]):
-        values = readings[start:stop]
-        accepted = np.isfinite(values) & (values >= low) & (values <= high)
-        if weights is not None:
-            accepted &= values > 0
-        rows = np.flatnonzero(accepted)
-        frames = rows + shift
-        inside = (frames >= 0) & (frames < stop - start)
-        matched = start + frames[inside]
-        selected[matched] = True
-        if weights is not None:
-            weights[matched] = values[rows[inside]]
+    if weights is not None:
+        selected &= aligned > 0
     count = int(selected.sum())
     result = {"edges": edges, "selected_triggers": count, "triggers": len(expected),
               "trigger_times": expected, "selected_mask": selected, "segment_offsets": boundaries,
@@ -263,9 +267,9 @@ def filtered_histogram(path, tof_result, metadata, reference, low, high, shift, 
     if weights is not None:
         if not count:
             raise ValueError("The GMD2 gate contains no aligned triggers with positive GMD2.")
-        reference_na = float(weights[selected].mean())
+        reference_na = float(aligned[selected].mean())
         with np.errstate(over="ignore", divide="ignore"):
-            weights[selected] = reference_na / weights[selected]
+            weights[selected] = reference_na / aligned[selected]
         if not np.isfinite(weights).all():
             raise ValueError("GMD2 weights are not finite. Increase the GMD2 minimum.")
         result.update(frame_weights=weights, gmd2_reference_na=reference_na)

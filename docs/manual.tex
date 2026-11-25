@@ -2324,9 +2324,18 @@ output directory. Set the LUNA and trigger options, the number of parallel
 delay positions, and whether to keep intermediate HDF5 dumps. Check the
 GMD2 pairing shift in Ion TOF before applying the same shift to the scan.
 
+Enable \emph{Weight by GMD2} to use one reference for the scan. The reference
+is the mean GMD2 across all aligned, selected shots with finite positive
+GMD2, including shots with zero arrivals. Each arrival is weighted by the
+scan reference divided by the GMD2 of its shot. The results record the
+reference in nA. The weighted counting error is the square root of the sum
+of squared arrival weights divided by the number of selected shots.
+
 Enter separate fit intervals for the peaks. Choose gated or ungated TOF
-for the fits. The pipeline fits each peak separately, counts individual
-arrivals in its fitted window, and divides by the selected frame count.
+for the fits. The gated fit uses the weighted TOF when weighting is enabled.
+Both fit sources use the selected shots for the final count, summing arrival
+weights in each fitted window when enabled. Yield divides the result by the
+selected shot count at each delay.
 The output includes a yield CSV and plot. Use the result controls to
 choose two peaks, view their ratio, and switch between linear and log
 scales. Delay-line position is in mm, with a displayed conversion of

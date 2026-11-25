@@ -12,7 +12,7 @@ from vmi_analysis.ion_luna import (ACQUISITION_PREFIX, apply_timewalk, frame_ord
                                     luna_command, preprocess_acquisition, process_arguments, publish_result)
 from vmi_analysis.ion_pipeline import PositionData, delay_from_files
 from vmi_analysis.ion_acquisition import TDC_PERIOD_TICKS, acquisition_splits, read_timing
-from vmi_analysis.ion_tof import ARRIVALS, DEFAULT_REFERENCE, _table, _tof_blocks, _trigger_times
+from vmi_analysis.ion_tof import ARRIVALS, DEFAULT_REFERENCE, _table, _tof_blocks, _trigger_times, gmd2_by_frame
 
 
 NAME = "LUNA"
@@ -92,29 +92,31 @@ def decode(folder, delay, output, options):
                         np.concatenate(gmd), np.diff(boundaries).tolist())
 
 
+def gated_gmd2(data, options):
+    offsets = np.cumsum([0, *data.segment_lengths])
+    aligned = gmd2_by_frame(data.gmd2_na, offsets, options["gmd_shift"])
+    selected = (aligned >= options["gmd_min"]) & (aligned <= options["gmd_max"])
+    if options.get("weight_by_gmd2"):
+        selected &= aligned > 0
+    aligned[~selected] = np.nan
+    return aligned
+
+
 def select_frames(data, options):
-    selected = np.zeros(len(data.gmd2_na), dtype=bool)
-    shift = options["gmd_shift"]
-    start = 0
-    for count in data.segment_lengths:
-        stop = start + count
-        gmd = data.gmd2_na[start:stop]
-        matches = np.flatnonzero((gmd >= options["gmd_min"]) & (gmd <= options["gmd_max"])) + shift
-        selected[start + matches[(matches >= 0) & (matches < count)]] = True
-        start = stop
-    return selected
+    return np.isfinite(gated_gmd2(data, options))
 
 
-def fit_peak(values, low, high, center, bins):
+def fit_peak(values, low, high, center, bins, *, weights=None):
     from scipy.optimize import curve_fit
 
     def gaussian(x, height, mu, sigma):
         return height * np.exp(-0.5 * ((x - mu) / sigma)**2)
 
-    sample = values[(values >= low) & (values <= high)]
+    inside = (values >= low) & (values <= high)
+    sample = values[inside]
     if len(sample) < 200:
         return None
-    counts, edges = np.histogram(sample, bins=bins)
+    counts, edges = np.histogram(sample, bins=bins, weights=None if weights is None else weights[inside])
     centers = (edges[:-1] + edges[1:]) / 2
     try:
         params, _ = curve_fit(gaussian, centers, counts, p0=[counts.max(), center, 70.0], maxfev=40_000)
@@ -128,4 +130,6 @@ def fit_peak(values, low, high, center, bins):
 
 def y_label(options):
     noun = "Pixel hits" if options["source"] == "pixels" else "Clustered events"
+    if options.get("weight_by_gmd2"):
+        return f"GMD2-weighted {noun.lower()} per selected frame"
     return f"{noun} per selected frame"

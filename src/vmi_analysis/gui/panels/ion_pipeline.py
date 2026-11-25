@@ -11,7 +11,7 @@ from nicegui import ui
 import plotly.graph_objects as go
 
 from vmi_analysis.ion_pipeline import (
-    CSV_NAME, DEFAULT_PEAKS, FIGURE_NAME, RATIO_NAME, positions, validate_settings, yield_ratios,
+    CSV_NAME, DEFAULT_PEAKS, FIGURE_NAME, GMD2_REFERENCE, RATIO_NAME, positions, validate_settings, yield_ratios,
 )
 from vmi_analysis.tpx3_analysis import UNWRAP_MODE
 from vmi_analysis.ion_pipeline_backend import DEFAULT_SHIFT, NAME, SHIFT_HELP, y_label
@@ -32,7 +32,7 @@ Y_SCALES = {"linear": "Linear", "log": "Logarithmic"}
 
 
 RUN_DEFAULTS = {
-    "gate_gmd": True, "gmd_min": 2, "gmd_max": 6, "gmd_shift": DEFAULT_SHIFT,
+    "gate_gmd": True, "gmd_min": 2, "gmd_max": 6, "gmd_shift": DEFAULT_SHIFT, "weight_by_gmd2": False,
     "fit_tof": "gated", "fit_bins": 60, "window_sigma": 3, "keep_dumps": False, "workers": 1,
 }
 COUNT_SOURCES = {"pixels": "Raw pixel hits", "clusters": "Clustered events"}
@@ -51,6 +51,8 @@ def agent_operations():
         "gmd_min": {"type": "number or null", "unit": "nA"},
         "gmd_max": {"type": "number or null", "unit": "nA"},
         "gmd_shift": {"type": "integer", "unit": "frames", "description": SHIFT_HELP},
+        "weight_by_gmd2": {"type": "boolean", "description": "Use the scan-wide mean GMD2 of selected shots "
+                           "divided by each shot's GMD2. Requires the GMD2 gate."},
         "fit_tof": {"type": "string", "choices": list(FIT_SOURCES)},
         "fit_bins": {"type": "integer", "description": "Histogram bins per Gaussian fit"},
         "window_sigma": {"type": "number", "description": "Count-window half-width in fitted standard deviations"},
@@ -88,7 +90,7 @@ def _integer(value, label):
 def _pipeline_settings(values, *, fallback):
     options = {**RUN_DEFAULTS, "fit_tof": "ungated" if fallback else "gated"}
     options.update({key: values[key] for key in options.keys() & values.keys()})
-    for key in ("gate_gmd", "keep_dumps"):
+    for key in ("gate_gmd", "keep_dumps", "weight_by_gmd2"):
         options[key] = boolean(options[key])
     for key in ("gmd_min", "gmd_max"):
         if options[key] is not None:
@@ -136,7 +138,7 @@ def _pipeline_settings(values, *, fallback):
 
 
 def _capture_progress(job, line):
-    if match := re.fullmatch(r"Delay positions written: (\d+)/(\d+)", line):
+    if match := re.fullmatch(r"Delay positions (?:written|processed): (\d+)/(\d+)", line):
         completed, total = map(int, match.groups())
         job.progress = completed / total
     return False
@@ -189,6 +191,7 @@ def _prepare_pipeline(jobs, params):
         "Run folder": job.extra["output"],
         "Count source": COUNT_SOURCES[options["source"]],
         "GMD2 gate (nA, inclusive)": [options["gmd_min"], options["gmd_max"]] if options["gate_gmd"] else "Off",
+        "Weight by GMD2": "Scan-wide mean divided by each shot’s GMD2" if options["weight_by_gmd2"] else "No",
         "GMD2 alignment shift d (frames)": options["gmd_shift"],
         "Pairing": SHIFT_HELP,
         "TOF used to fit peak windows": FIT_SOURCES[options["fit_tof"]],
@@ -229,6 +232,7 @@ def delay_ticks(low, high):
 
 def yield_figure(rows, options, names, scales=("linear", "linear")):
     fig = go.Figure()
+    count_label = "weighted counts" if options.get("weight_by_gmd2") else "counts"
     for index, (name, scale) in enumerate(zip(names, scales)):
         points = sorted((row for row in rows if row["peak"] == name),
                         key=lambda row: float(row["delay_mm"]))
@@ -244,7 +248,8 @@ def yield_figure(rows, options, names, scales=("linear", "linear")):
                         error_y=dict(array=[float(row["poisson_error"]) if row["poisson_error"] else None
                                             for row in points]),
                         hovertemplate="%{customdata[0]}<br>%{x:.6g} mm · %{y:.5g} per frame"
-                                      "<br>%{customdata[1]} counts / %{customdata[2]} frames<extra>%{fullData.name}</extra>")
+                                      f"<br>%{{customdata[1]}} {count_label} / %{{customdata[2]}} frames"
+                                      "<extra>%{fullData.name}</extra>")
     # An empty trace makes the matched, labelled bottom axis available to Plotly.
     fig.add_scatter(x=[None], y=[None], xaxis="x2", showlegend=False, hoverinfo="skip")
     decoder = "Standalone decoder" if options.get("backend") == "fallback" else NAME
@@ -342,8 +347,11 @@ def show_results(job):
     with csv_file.open(encoding="utf-8", newline="") as file:
         rows = list(csv.DictReader(file))
     options = job.extra["settings"]
+    weighted = options.get("weight_by_gmd2", False)
     successful = [row for row in rows if row["status"] == "OK"]
     ui.label(f"{len(successful):,} of {len(rows):,} peak measurements complete").classes("vmi-caption")
+    if weighted and (reference := next((row[GMD2_REFERENCE] for row in rows if row.get(GMD2_REFERENCE)), None)):
+        ui.label(f"Scan-wide GMD2 reference: {float(reference):.6g} nA").classes("vmi-caption")
     with ui.row().classes("items-center gap-2"):
         files = [(csv_file, "Yield CSV"), (output / FIGURE_NAME, "Yield plot PNG")]
         if "ratio_csv" in job.extra:
@@ -377,7 +385,8 @@ def show_results(job):
                          "Zero ratios are omitted on logarithmic axes.").classes("vmi-subtitle")
                 replace_ratio = scaled_plot(ratio_figure(rows, numerator.value, denominator.value))
     with ui.expansion("Peak measurements", icon="table_chart").classes("w-full"):
-        columns = [("folder", "Folder"), ("peak", "Peak"), ("delay_mm", "Delay (mm)"), ("counts", "Counts"),
+        columns = [("folder", "Folder"), ("peak", "Peak"), ("delay_mm", "Delay (mm)"),
+                   ("counts", "Weighted counts" if weighted else "Counts"),
                    ("selected_frames", "Selected frames"), ("hits_per_frame", "Yield per frame"), ("status", "Status")]
         ui.table(columns=[dict(name=key, field=key, label=label) for key, label in columns],
                  rows=[dict(row, id=i) for i, row in enumerate(rows)], row_key="id",
@@ -452,6 +461,8 @@ def build(jobs, *, fallback=False):
             options = {key: field.value for key, field in widgets.items()
                        if key not in ("input", "output", "peaks", "gate")}
             options.update(peaks=peak_values(), gate_gmd=gate.value)
+            if not gate.value:
+                options["weight_by_gmd2"] = False
             job = pipeline_job(root.value.strip(), output.value.strip(), options, fallback=fallback)
             view.attach(jobs.submit(job))
         except (OSError, ValueError, OverflowError) as exc:
@@ -474,6 +485,11 @@ def build(jobs, *, fallback=False):
             shift = save(num_input("GMD2 alignment shift d (frames)", DEFAULT_SHIFT, step=1), "gmd_shift")
         for field in (gmd_min, gmd_max, shift):
             field.bind_enabled_from(gate, "value")
+        if not fallback:
+            save(ui.checkbox("Weight by GMD2", value=False), "weight_by_gmd2").bind_enabled_from(gate, "value")
+            ui.label("With weighting enabled, each arrival’s weight is the scan-wide mean GMD2 of the selected shots "
+                     "divided by the GMD2 of its shot. Only shots with finite, positive GMD2 are included."
+                     ).classes("vmi-caption")
         tof_panel = "Ion TOF (fallback)" if fallback else "Ion TOF"
         ui.label(SHIFT_HELP + " The pipeline uses this shift for every delay position. "
                  f"Use the {tof_panel} GMD diagnostic to check the shift for your data. "

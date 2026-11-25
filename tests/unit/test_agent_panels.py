@@ -579,7 +579,7 @@ class AgentPanelTests(unittest.TestCase):
         point.mkdir(parents=True)
         params = {
             "input": "/datasets/scan", "output": "/workspace/ion-results",
-            "source": "clusters", "fit_tof": "ungated", "gmd_shift": -2,
+            "source": "clusters", "fit_tof": "ungated", "gmd_shift": -2, "weight_by_gmd2": True,
             "peaks": [{"name": " A ", "low": 10150, "high": 11050, "center": 10545},
                       {"name": "B", "low": 8800, "high": 9600, "center": 9155}],
         }
@@ -593,6 +593,7 @@ class AgentPanelTests(unittest.TestCase):
         self.assertEqual(proposed.extra["settings"], manual.extra["settings"])
         self.assertEqual(proposed.extra["settings"]["wsl_executable"], "")
         self.assertEqual(proposed.extra["panel_form"]["gate"], True)
+        self.assertTrue(proposed.extra["panel_form"]["weight_by_gmd2"])
         self.assertEqual(summary["Ratio CSV peak pair"], ["A", "B"])
         self.assertEqual(proposed.reads, [str(point)])
         self.assertEqual(self.jobs.jobs(), [])
@@ -602,6 +603,7 @@ class AgentPanelTests(unittest.TestCase):
         for change, message in (
             ({"output": "/datasets/output"}, "read-only"),
             ({"fit_bins": True}, "finite numeric"),
+            ({"gate_gmd": False}, "enabled GMD2 gate"),
             ({"disable_clustering": True}, "Enable clustering"),
             ({"wsl_executable": "custom"}, "listed by describe"),
             ({"peaks": [params["peaks"][0]] * 2}, "distinct name"),
