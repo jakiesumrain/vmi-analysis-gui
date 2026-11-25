@@ -400,6 +400,11 @@ class GuiSubmissionTests(unittest.TestCase):
                                             if isinstance(element, ui.expansion) and element.text == "Plot settings")
                             self.assertFalse(settings.value)
                             self.assertEqual(len(plot_options.call_args.args[0].data), 3)
+                            render_count = plot_options.call_count
+                            chart = [element for element in client.elements.values() if isinstance(element, ui.plotly)][-1]
+                            section.close()
+                            section.open()
+                            self.assertEqual(plot_options.call_count, render_count)
                             settings.open()
                             fields = {element.label: element for element in client.elements.values()
                                       if isinstance(element, ui.number)}
@@ -416,6 +421,7 @@ class GuiSubmissionTests(unittest.TestCase):
                             fields["Resampled β4 Y max"].value = 5
                             apply_settings = callbacks["Apply plot settings"]
                             apply_settings()
+                            self.assertIs(client.elements.get(chart.id), chart)
                             fig = plot_options.call_args.args[0]
                             intensity, beta2, beta4 = fig.data
                             np.testing.assert_allclose(intensity.x, x[0] + width.value * np.array([0.5, 1.5, 2.5]))

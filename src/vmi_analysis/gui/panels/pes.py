@@ -682,6 +682,9 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
                                 if beta_spectrum else "")).classes("vmi-subtitle")
             plots = ui.column().classes("w-full gap-0")
 
+        chart = None
+        plotted_beta = None
+
         def apply_settings():
             nonlocal applied_width, x_axis, intensity_axis, beta_limits
             step = width.value
@@ -704,6 +707,8 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             redraw()
 
         def redraw():
+            nonlocal chart, plotted_beta
+            selected_beta = beta_spectrum.value if beta_spectrum is not None else None
             step = applied_width
             count = max(1, int(np.ceil(span / step)))
             edges = low + np.arange(count + 1) * step
@@ -716,19 +721,26 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
                                 row=1, col=1)
             fig.update_yaxes(title_text="Bin-average intensity", row=1, col=1, **intensity_axis)
             _style_comparison_plot(fig, 610 if beta_spectrum else 347, beta_orders=orders)
-            if beta_spectrum:
-                x, moments = angular[beta_spectrum.value]
+            if selected_beta is not None:
+                x, moments = angular[selected_beta]
                 beta = anisotropy_values(integrate_spectral_bins(x, moments, edges))
                 _add_beta_traces(fig, centers, orders, beta, subplot=2, y_limits=beta_limits)
             fig.update_xaxes(**x_axis)
             fig.update_xaxes(title_text=f"{x_label} ({units})", row=rows, col=1)
-            plots.clear()
-            with plots:
-                _scientific_plot().update_figure(plot_options(fig))
+            if chart is None:
+                with plots:
+                    chart = _scientific_plot()
+            chart.update_figure(plot_options(fig))
+            plotted_beta = selected_beta
 
-        section.on_value_change(lambda event: redraw() if event.value else None)
+        def refresh_if_needed(_event):
+            selected_beta = beta_spectrum.value if beta_spectrum is not None else None
+            if section.value and (chart is None or plotted_beta != selected_beta):
+                redraw()
+
+        section.on_value_change(refresh_if_needed)
         if beta_spectrum:
-            beta_spectrum.on_value_change(lambda _: redraw() if section.value else None)
+            beta_spectrum.on_value_change(refresh_if_needed)
 
     with theme.panel_card():
         theme.form_section("VMI images")
