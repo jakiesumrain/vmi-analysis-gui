@@ -342,7 +342,7 @@ class GuiSubmissionTests(unittest.TestCase):
         self.assertEqual(job.reads, [source])
         self.assertEqual(job.writes, [job.extra["pes_spectra"]])
 
-    def test_pes_uniform_grid_uses_the_completed_run_units_and_bin_width(self):
+    def test_pes_uniform_grid_uses_completed_run_units_for_width_and_x_limits(self):
         import numpy as np
         from nicegui import Client, app, ui
         from vmi_analysis.centroiding.plot_data import save_plot_data
@@ -365,17 +365,22 @@ class GuiSubmissionTests(unittest.TestCase):
                         with client, patch.object(app.storage, "_general", {MIGRATED_KEY: True}), \
                                 patch.object(ui.button, "on_click", lambda button, handler:
                                              callbacks.__setitem__(button.text, handler)), \
-                                patch.object(pes, "plot_options", wraps=pes.plot_options) as plot_options:
+                                patch.object(pes, "plot_options", wraps=pes.plot_options) as plot_options, \
+                                patch.object(ui, "notify") as notify:
                             pes.build(Mock(jobs=Mock(return_value=[job])))
                             callbacks["View latest spectra"]()
                             section = next(element for element in client.elements.values()
                                            if isinstance(element, ui.expansion) and element.text == "Uniform-grid spectra")
                             self.assertFalse(section.value)
                             section.open()
-                            width = next(element for element in client.elements.values()
-                                         if isinstance(element, ui.number) and element.label == f"Bin width ({units})")
+                            fields = {element.label: element for element in client.elements.values()
+                                      if isinstance(element, ui.number)}
+                            width = fields[f"Bin width ({units})"]
+                            x_min, x_max = fields[f"X min ({units})"], fields[f"X max ({units})"]
                             width.value = 3 * (alpha or 1)
-                            callbacks["Apply bin width"]()
+                            x_min.value, x_max.value = x[0], x[-1]
+                            apply_settings = callbacks["Apply plot settings"]
+                            apply_settings()
                             fig = plot_options.call_args.args[0]
                             intensity, beta = fig.data
                             np.testing.assert_allclose(intensity.x, x[0] + width.value * np.array([0.5, 1.5, 2.5]))
@@ -383,6 +388,24 @@ class GuiSubmissionTests(unittest.TestCase):
                             np.testing.assert_allclose(beta.x, intensity.x)
                             np.testing.assert_allclose(beta.y, [0.5, 0.5, 0.5])
                             self.assertIn(units, fig.layout.xaxis2.title.text)
+                            self.assertEqual(fig.layout.xaxis.range, (x[0], x[-1]))
+                            self.assertEqual(fig.layout.xaxis2.range, (x[0], x[-1]))
+
+                            x_min.value = x[-1]
+                            apply_settings()
+                            notify.assert_called_once_with("Axis minima must be below maxima.", type="warning")
+                            self.assertIs(plot_options.call_args.args[0], fig)
+
+                            x_min.value = None
+                            apply_settings()
+                            axis = plot_options.call_args.args[0].layout.xaxis2
+                            self.assertTrue(axis.autorange)
+                            self.assertEqual(axis.autorangeoptions.maxallowed, x[-1])
+                            x_max.value = None
+                            apply_settings()
+                            axis = plot_options.call_args.args[0].layout.xaxis2
+                            self.assertTrue(axis.autorange)
+                            self.assertIsNone(axis.autorangeoptions.maxallowed)
                     finally:
                         client.delete()
 

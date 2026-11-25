@@ -566,21 +566,29 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             low = min(x[0] for x in sampled)
             span = max(x[-1] for x in sampled) - low
             applied_width = float(f"{span / 200:.2g}")
+            x_axis = linear_axis_limits(None, None)
             with ui.row().classes("items-center gap-2"):
                 width = num_input(f"Bin width ({units})", applied_width, step="any")
-                ui.button("Apply bin width", on_click=lambda: apply_width()).props("flat")
+                x_min = num_input(f"X min ({units})", None, step="any").props('placeholder="Auto"')
+                x_max = num_input(f"X max ({units})", None, step="any").props('placeholder="Auto"')
+                ui.button("Apply plot settings", on_click=lambda: apply_settings()).props("flat")
             ui.label("Intensity is averaged over each bin. Edge bins include only the measured yield."
                      + (" β follows the β spectrum selected above." if beta_spectrum else "")).classes("vmi-subtitle")
             plots = ui.column().classes("w-full gap-0")
 
-        def apply_width():
-            nonlocal applied_width
+        def apply_settings():
+            nonlocal applied_width, x_axis
             step = width.value
             if step is None or not np.isfinite(step) or not np.isfinite(low + step) or step <= 0:
                 ui.notify("Enter a positive, finite bin width.", type="warning")
                 return
             if step < span / MAX_RESAMPLED_BINS or low + step == low:
                 ui.notify(f"Use a larger bin width for at most {MAX_RESAMPLED_BINS:,} bins.", type="warning")
+                return
+            try:
+                x_axis = linear_axis_limits(x_min.value, x_max.value)
+            except ValueError as exc:
+                ui.notify(str(exc), type="warning")
                 return
             applied_width = step
             redraw()
@@ -605,6 +613,7 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
                                     name=f"β{order}", showlegend=False, row=row, col=1)
                     fig.update_yaxes(title_text=f"β{order} (dimensionless)", row=row, col=1)
             _style_comparison_plot(fig, max(347, 210 * rows + 100))
+            fig.update_xaxes(**x_axis)
             fig.update_xaxes(title_text=f"{x_label} ({units})", row=rows, col=1)
             plots.clear()
             with plots:
