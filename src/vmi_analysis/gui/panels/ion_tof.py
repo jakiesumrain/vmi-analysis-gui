@@ -826,7 +826,8 @@ def _gmd_section(jobs, view, save, *, ask_agent=None):
         ui.label("GMD2 row j selects camera frame j + d. Drag to apply a range, or enter limits and "
                  "click Apply GMD2 range. Pairing stays within each acquisition. The limits are inclusive."
                  ).classes("vmi-subtitle")
-        ui.label("Weighting uses the mean GMD2 of the selected shots and includes only positive GMD2 values."
+        ui.label("With weighting enabled, each arrival’s weight is the mean GMD2 of the selected shots "
+                 "divided by the GMD2 of its shot. Only shots with finite, positive GMD2 are included."
                  ).classes("vmi-caption")
         filter_view.run_button("Apply GMD2 range", on_click=run_filter)
         filter_console = ui.column().classes("w-full")
