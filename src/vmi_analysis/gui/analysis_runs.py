@@ -228,6 +228,7 @@ def prepare(jobs, params):
     if account:
         job.cmd = [sys.executable, "-m", "vmi_analysis.analysis_container", str(folder),
                    str(workspace), str(shared.SERVER.datasets)]
+        job._launches_isolated_worker = True
         job.request_process_stop = lambda: (folder / ".cancel").touch()
         worker_inputs = {name: {**item, "path": _container_path(item["path"])} for name, item in inputs.items()}
     else:

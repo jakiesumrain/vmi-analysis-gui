@@ -23,6 +23,7 @@ from contextlib import contextmanager
 
 from .resources import Access, canonical_path, job_access
 from . import shared
+from .job_sandbox import panel_command
 
 TERMINAL = {"done", "failed", "cancelled"}
 ACTIVE = {"queued", "running", "waiting"}
@@ -78,6 +79,8 @@ class Job:
     on_terminal: Callable[[Job, str], None] | None = field(default=None, repr=False)
     request_process_stop: Callable[[], None] | None = field(default=None, repr=False)
     owner: str | None = None
+    _launches_isolated_worker: bool = field(default=False, repr=False)
+    _shared_roots: tuple[Path, Path, Path] | None = field(default=None, init=False, repr=False)
     checkpoint: Checkpoint | None = None
     _access: Access = field(default_factory=Access, repr=False)
     _proc: subprocess.Popen | None = field(default=None, repr=False)
@@ -112,6 +115,7 @@ class JobManager:
         account = shared.current_account()
         if account:
             job.owner = account.name
+            job._shared_roots = (account.root, shared.SERVER.datasets, shared.analysis_root(account))
             job.cwd = job.cwd or str(account.root)
             for stage in job.stages or ():
                 stage.cwd = stage.cwd or job.cwd
@@ -502,9 +506,16 @@ class JobManager:
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
         else:
             kwargs["start_new_session"] = True
+        command = [str(c) for c in cmd]
+        launch_cwd = cwd
+        if job._shared_roots and not job._launches_isolated_worker:
+            command = panel_command(command, cwd, *job._shared_roots)
+            # Enter the requested working directory inside the namespace.
+            launch_cwd = None
+            kwargs["stdin"] = subprocess.DEVNULL
         proc = subprocess.Popen(
-            [str(c) for c in cmd],
-            cwd=cwd,
+            command,
+            cwd=launch_cwd,
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

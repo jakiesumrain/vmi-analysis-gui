@@ -39,6 +39,10 @@ class AgentPanelTests(unittest.TestCase):
         server.datasets = self.datasets
         self.enterContext(patch.object(shared, "SERVER", server))
         self.enterContext(patch.object(shared, "current_account", return_value=self.account))
+        # These tests exercise panel workflows on Windows and Linux. The real
+        # Linux filesystem boundary is covered by test_shared_job_sandbox.
+        self.enterContext(patch("vmi_analysis.gui.jobs.panel_command",
+                                side_effect=lambda command, *_: command))
         self.jobs = JobManager()
         self.registry = build_registry()
 

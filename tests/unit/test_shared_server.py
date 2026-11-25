@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 import json
 from pathlib import Path
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -78,6 +79,26 @@ class SharedServerTests(unittest.TestCase):
                     manager.submit(Job("Write", ["python"], writes=[self.alice.root / "result.txt"]))
         self.assertFalse(alice_job.cancel_requested)
         self.assertIsNone(alice_job._access.conflict(bob_job._access))
+
+    def test_standard_job_launch_passes_owner_roots_to_sandbox(self):
+        manager = JobManager()
+        with self.account(self.alice), patch.object(manager, "_schedule_locked"):
+            job = manager.submit(Job("Ion TOF", [sys.executable, "-c", "print('sandboxed')"]))
+        with patch("vmi_analysis.gui.jobs.panel_command", return_value=job.cmd) as command:
+            self.assertEqual(manager._run_cmd(job, job.cmd, job.cwd), 0)
+        command.assert_called_once_with(job.cmd, str(self.alice.root), self.alice.root,
+                                        self.datasets, shared.analysis_root(self.alice))
+        self.assertIn("sandboxed", job.log)
+
+    def test_shared_job_does_not_start_if_sandbox_is_unavailable(self):
+        manager = JobManager()
+        with self.account(self.alice), patch.object(manager, "_schedule_locked"):
+            job = manager.submit(Job("Ion TOF", [sys.executable, "-c", "pass"]))
+        with patch("vmi_analysis.gui.jobs.panel_command", side_effect=OSError("sandbox unavailable")), \
+                patch("vmi_analysis.gui.jobs.subprocess.Popen") as launch:
+            with self.assertRaisesRegex(OSError, "sandbox unavailable"):
+                manager._run_cmd(job, job.cmd, job.cwd)
+        launch.assert_not_called()
 
     def test_symlink_cannot_expose_another_workspace_or_write_shared_data(self):
         other_file = self.bob.root / "secret.h5"

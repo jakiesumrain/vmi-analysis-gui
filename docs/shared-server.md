@@ -12,7 +12,14 @@ selects the person's workspace.
    Keep the shared data read-only at the filesystem level as well.
    Host only datasets from trusted sources. Keep the workspace directory
    private to the service account and the host administrator.
-2. From the checkout, run `uv sync`. Run the following command once per
+2. Install [Bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) and
+   verify that the service account can create unprivileged user namespaces.
+   Standard panel jobs require Bubblewrap and fail if the sandbox cannot start.
+   Keep the Python environment, application code, and host tools outside the
+   shared data and workspace roots. Put the Linux LUNA executable on the
+   service account's `PATH`.
+
+   From the checkout, run `uv sync`. Run the following command once per
    VMI account to generate a password hash:
 
    ```sh
@@ -182,6 +189,11 @@ server. The completed stages also appear in **TPX3 Dump** and **Ion TOF**.
 ## Security boundary
 
 This deployment separates application accounts for an approved lab team.
-Analysis jobs run under the service account. Use separate OS accounts or
-isolated services if you need to run untrusted datasets or give users shell
-access as the service account.
+Standard panel subprocesses run in a Linux mount namespace. They can write to
+the signed-in account's workspace and read shared datasets and that account's
+analysis records. They cannot open another account's files. The namespace is
+created when the job starts, after any wait in the queue. Approved Python
+analyses use the separate container described above.
+
+Use separate OS accounts or isolated services if you need to run untrusted
+datasets or give users shell access as the service account.
