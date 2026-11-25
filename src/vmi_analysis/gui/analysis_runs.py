@@ -36,7 +36,7 @@ def _inside_workspace(path):
 
 
 def available():
-    return not shared.SERVER or sys.platform == "linux"
+    return shared.agent_enabled() and (shared.SERVER is None or sys.platform == "linux")
 
 
 def _analysis_home():
@@ -158,6 +158,8 @@ def _fingerprint(path):
 
 
 def prepare(jobs, params):
+    if not shared.agent_enabled():
+        raise ValueError("Python analysis is disabled in manual-only shared mode.")
     if not available():
         raise ValueError("The shared analysis worker requires a Linux server.")
     account = shared.current_account()

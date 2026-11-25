@@ -6,11 +6,36 @@ from unittest.mock import AsyncMock, patch
 
 from nicegui import Client, app, ui
 
-from vmi_analysis.gui import app as gui, workflow
+from vmi_analysis.gui import app as gui, shared, workflow
 from vmi_analysis.gui.jobs import JobManager
 
 
 class WorkflowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_manual_only_page_omits_agent_and_handoff_buttons(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            datasets = root / "datasets"
+            datasets.mkdir()
+            server = shared.SharedServer({
+                "mode": "manual-only", "datasets": str(datasets), "workspaces": str(root / "users"),
+                "accounts": {"alice": {"password_hash": shared.password_hash("test-password")}},
+            })
+            account = server.accounts["alice"]
+            client = Client(ui.page("/_test_manual_only"))
+            try:
+                with (client, patch.object(shared, "SERVER", server),
+                      patch.object(shared, "current_account", return_value=account),
+                      patch.object(gui.agent, "build") as agent_panel,
+                      patch.object(gui.ion_live, "build", wraps=gui.ion_live.build) as live_panel):
+                    gui.index()
+                agent_panel.assert_not_called()
+                self.assertIsNone(live_panel.call_args.kwargs["ask_agent"])
+                names = {element._props.get("name") for element in client.elements.values()}
+                self.assertIn("Ion TOF", names)
+                self.assertNotIn("Agent", names)
+            finally:
+                client.delete()
+
     async def test_settings_round_trip_panel_forms_without_starting_jobs(self):
         manager = JobManager()
         self.addCleanup(manager.shutdown)

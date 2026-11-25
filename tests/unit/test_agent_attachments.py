@@ -48,6 +48,13 @@ class AgentAttachmentTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertFalse((self.alice.root / agent_attachments.ATTACHMENT_DIR).exists())
 
+    def test_manual_only_rejects_authenticated_attachment_uploads(self):
+        self.server.manual_only = True
+        self.sign_in(self.alice)
+        response = self.client.post("/agent-attachments", files={"files": ("note.txt", b"sample", "text/plain")})
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse((self.alice.root / agent_attachments.ATTACHMENT_DIR).exists())
+
     @unittest.skipUnless(sys.platform == "linux", "Shared attachment uploads run on Linux")
     def test_multiple_files_are_stored_in_the_current_accounts_workspace(self):
         self.sign_in(self.alice)

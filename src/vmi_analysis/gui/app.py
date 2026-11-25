@@ -157,6 +157,7 @@ SIDEBAR_JS = files("vmi_analysis.gui.assets") / "sidebar.js"
 def index() -> None:
     theme.apply_theme()
     account = shared.current_account()
+    agent_enabled = shared.agent_enabled()
     administrator = account is None or account.admin
     store = shared.settings_store()
     workflow_fields = workflow.result_fields(store)
@@ -357,9 +358,10 @@ def index() -> None:
                     with disclosure:
                         sidebar_group("Fallback", ((None, FALLBACK_TABS),)).classes("vmi-sidebar-fallback")
             with ui.column().classes("vmi-sidebar-foot"):
-                with ui.tabs().props('inline-label aria-label="Agent session"') as tabs:
-                    tab_groups.append(tabs)
-                    ui.tab("Agent", icon=TAB_ICONS["Agent"]).props('aria-label="Agent"').tooltip("Agent")
+                if agent_enabled:
+                    with ui.tabs().props('inline-label aria-label="Agent session"') as tabs:
+                        tab_groups.append(tabs)
+                        ui.tab("Agent", icon=TAB_ICONS["Agent"]).props('aria-label="Agent"').tooltip("Agent")
                 settings_button = ui.button("Settings", icon="settings", on_click=settings_dialog.open).props(
                     'flat no-caps aria-label="Settings"').classes("vmi-sidebar-settings")
                 settings_button.tooltip("Server controls and workflow files" if administrator
@@ -371,23 +373,27 @@ def index() -> None:
                 def export_calibration(extracted_path, image_path, manual_center, **settings):
                     return use_calibration(extracted_path, image_path, manual_center, **settings)
 
+                ask_agent = None
+                handoff_to_agent = (lambda view: ask_agent(view)) if agent_enabled else None
                 with workflow.collect_fields(workflow_fields):
                     for name, module in TABS:
+                        if module is agent and not agent_enabled:
+                            continue
                         with ui.tab_panel(name):
                             if module is circularize:
                                 use_calibration = module.build(MANAGER)
                             elif module is calibration:
                                 module.build(MANAGER, use_calibration=export_calibration,
-                                             ask_agent=lambda view: ask_agent(view))
+                                             ask_agent=handoff_to_agent)
                             elif module is pes:
-                                module.build(MANAGER, ask_agent=lambda view: ask_agent(view))
+                                module.build(MANAGER, ask_agent=handoff_to_agent)
                             elif name == ion_pipeline.FALLBACK_JOB_NAME:
                                 module.build(MANAGER, fallback=True)
                             elif module is agent:
                                 ask_agent = module.build(MANAGER, registry=PANEL_OPERATIONS,
                                                          navigate=lambda name: setattr(panels, "value", name))
                             elif module in (ion_tof, ion_live):
-                                module.build(MANAGER, ask_agent=ask_agent)
+                                module.build(MANAGER, ask_agent=handoff_to_agent)
                             else:
                                 module.build(MANAGER)
 

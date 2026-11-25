@@ -524,7 +524,7 @@ settings use their defaults for invalid or non-finite values.
 \subsection{Set up accounts for a shared server}
 \label{sec:shared-accounts}
 
-A VMI Analysis account gives each person a private workspace, saved form
+A VMI Analysis account gives each person a workspace, saved form
 values, and access to their own jobs. The person who manages the server
 creates accounts in a JSON file on the host. For a remote connection,
 the SSH account opens the tunnel and the VMI account opens the workspace.
@@ -545,8 +545,8 @@ workspace folders. Keep the JSON file outside both directories and limit
 access to the people or service account that manage the server.
 \begin{verbatim}
 {
-  "datasets": "C:/VMI/datasets",
-  "workspaces": "C:/VMI/workspaces",
+  "datasets": "/srv/vmi/datasets",
+  "workspaces": "/srv/vmi/workspaces",
   "max_concurrent_jobs": 2,
   "accounts": {
     "jeffrey": {
@@ -564,22 +564,17 @@ The keys under \code{accounts} are the sign-in names. Start each name with
 a lowercase letter. Use up to 32 lowercase letters, digits, underscores,
 or hyphens. Set \code{"admin": true} to let the account stop the server and
 change its job limit in \emph{Settings}. Omit \code{admin} for a regular user.
-On Linux, use Linux paths such as \code{/srv/vmi/datasets} and
-\code{/srv/vmi/workspaces}.
 
 \subsubsection{Start the shared server}
 
-Run \code{uv sync} from the repository checkout on the host.
-Give the server account read access to the datasets and write access to the workspaces.
+Run \code{uv sync} from the repository checkout on the Linux host.
+Give a dedicated, unprivileged Linux service account read-only access to
+the datasets and write access to the workspaces. In the default sandboxed
+mode, install Bubblewrap for standard panel jobs. Install Docker or Podman
+to use the Agent.
 Use a service manager if the server must stay available after the administrator signs out of SSH.
-From the repository checkout, set the path to the JSON file and start
-the app. In Windows PowerShell, use the following commands if you saved
-the file in your user folder.
-\begin{verbatim}
-$env:VMI_SHARED_CONFIG = "$env:USERPROFILE\vmi-shared.json"
-uv run vmi-analysis
-\end{verbatim}
-On Linux, replace the path in this example with the location of your file.
+From the repository checkout, replace the path below with the location of
+your JSON file and start the app.
 \begin{verbatim}
 VMI_SHARED_CONFIG=/etc/vmi/vmi-shared.json uv run vmi-analysis
 \end{verbatim}
@@ -588,6 +583,26 @@ Open \url{http://127.0.0.1:13517} and sign in. For remote access to a Linux
 host, open the SSH tunnel described in Section~\ref{sec:linux-mobaxterm}
 first. To test two accounts on one computer, use a regular browser window
 and a private window.
+
+\subsubsection{Manual-only shared mode}
+
+On a Linux host without Bubblewrap, Docker, or Podman, add
+\code{"mode": "manual-only"} at the top level of the shared-server JSON and
+restart the server. Users can sign in, run the standard panels, and download
+files from their workspaces. The Agent, its attachments, and its custom
+Python analyses and saved panels are disabled.
+
+\textbf{Use this mode only with trusted users and trusted datasets.}
+All panel jobs use the Linux service account's filesystem permissions.
+The app checks job paths at submission. A path change before a file is
+opened can let a job read or overwrite another account's workspace files.
+Use sandboxed mode for data that requires privacy between accounts.
+
+Run the server as a dedicated, unprivileged Linux account. Mount the
+datasets read-only or remove that account's write permission, and keep
+sensitive host files out of its reach. Keep the app, configuration, and host
+tools outside the data and workspace directories. To restore sandboxed
+mode, remove \code{mode} or set it to \code{"sandboxed"} and restart.
 
 \subsubsection{Enable Live TPX3 on the acquisition computer}
 \label{sec:live-tpx3-shared}
@@ -604,13 +619,7 @@ Replace \code{5556} if the publisher uses a different port.
 The server reads this setting at startup. Set it in the service environment
 if a service manager starts the app.
 
-In Windows PowerShell, use these commands if the JSON file is in your user folder.
-\begin{verbatim}
-$env:VMI_SHARED_CONFIG = "$env:USERPROFILE\vmi-shared.json"
-$env:VMI_TPX3_LIVE_ENDPOINT = "tcp://127.0.0.1:5556"
-uv run --extra live vmi-analysis
-\end{verbatim}
-On Linux, replace the JSON path with the location of your file.
+Replace the JSON path with the location of your file on the Linux host.
 \begin{verbatim}
 export VMI_SHARED_CONFIG=/etc/vmi/vmi-shared.json
 export VMI_TPX3_LIVE_ENDPOINT=tcp://127.0.0.1:5556
