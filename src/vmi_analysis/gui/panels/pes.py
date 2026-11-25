@@ -56,11 +56,12 @@ def _scientific_plot():
     return chart
 
 
-def _style_comparison_plot(fig, height):
+def _style_comparison_plot(fig, height, *, beta_orders=()):
     _style(fig, "")
+    left = 82 + BETA_AXIS_SPACING * max(0, len(beta_orders) - 1)
     fig.update_layout(
         height=height, showlegend=True,
-        margin={"l": 82, "r": 24, "t": 48, "b": 57, "autoexpand": False},
+        margin={"l": left, "r": 24, "t": 48, "b": 57, "autoexpand": False},
         legend={"orientation": "h", "x": 1, "xanchor": "right", "y": 1.01, "yanchor": "bottom"},
     )
     fig.update_xaxes(automargin=False)
@@ -84,7 +85,6 @@ def _add_beta_traces(fig, x, orders, beta_values, *, subplot=1, y_limits=None):
             axis.update(overlaying=base_y, anchor="free", side="left", position=0,
                         shift=-BETA_AXIS_SPACING * index, automargin=False)
         fig.update_layout({f"yaxis{axis_suffix}": axis})
-    fig.update_layout(margin_l=fig.layout.margin.l + BETA_AXIS_SPACING * (len(orders) - 1))
 
 
 def spectra_job(paths, geometry, overrides, *, alpha=None, abel_method="hansenlaw", beta_order=0,
@@ -402,10 +402,11 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
 
     def reset():
         state.update(spectra={}, angular={}, beta_orders=(), plot=None, spectrum_axes=(), selecting=False)
+        state.update(native_x_axis={}, native_x_range=None, redraw_beta=None)
         fit_card.set_visibility(False)
         fit_display.clear()
 
-    def axis_controls(title, label, prefix, apply_label, apply, *, selector=None, note=None):
+    def axis_controls(title, label, prefix, apply_label, apply, *, axes=("X", "Y"), selector=None, note=None):
         def toggle():
             panel.set_visibility(not panel.visible)
             button.props(f'aria-expanded="{str(panel.visible).lower()}"')
@@ -420,24 +421,34 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
                 ui.label(note).classes("vmi-subtitle")
             with field_grid():
                 fields = [number(f"{label} {axis} {bound} (blank = auto)", f"{prefix}{axis.lower()}{bound}")
-                          for axis in ("X", "Y") for bound in ("min", "max")]
+                          for axis in axes for bound in ("min", "max")]
             ui.button(apply_label, on_click=apply).props("flat")
         return fields, selected
-
-    def axis_bounds(fields):
-        xmin, xmax, ymin, ymax = (field.value for field in fields)
-        return linear_axis_limits(xmin, xmax), linear_axis_limits(ymin, ymax)
 
     def refresh_plot(reset_axes=False):
         if state["plot"] is None:
             return
+        xmin, xmax, ymin, ymax = (field.value for field in state["spectrum_axes"])
         try:
-            x_axis, y_axis = axis_bounds(state["spectrum_axes"])
+            x_axis, y_axis = linear_axis_limits(xmin, xmax), linear_axis_limits(ymin, ymax)
         except ValueError as exc:
             ui.notify(str(exc), type="warning")
+            if state["native_x_axis"]:
+                return
+            xmin = xmax = None
             x_axis = y_axis = {"autorange": True}
         if reset_axes:
             state["revision"] += 1
+        if state["native_x_range"]:
+            if reset_axes:
+                start, end = state["native_x_range"]
+                width = end - start
+                if xmin is None:
+                    xmin = start if xmax is None or xmax > start else xmax - width
+                if xmax is None:
+                    xmax = end if xmin < end else xmin + width
+                state["native_x_axis"] = linear_axis_limits(xmin, xmax)
+            x_axis = state["native_x_axis"]
         selecting = state["selecting"]
         low, high = fit_low.value, fit_high.value
         fig = go.Figure()
@@ -447,13 +458,15 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
         if low is not None and high is not None and low < high:
             fig.add_vrect(x0=low, x1=high, fillcolor="#1e40af",
                           opacity=0.14, line_width=0, layer="below")
-        _style_comparison_plot(fig, 402)
+        _style_comparison_plot(fig, 402, beta_orders=state["beta_orders"])
         fig.update_layout(uirevision=state["revision"], selectdirection="h",
                           selections=[], selectionrevision=f"{low}:{high}",
                           dragmode="select" if selecting else "zoom")
         fig.update_xaxes(title_text=f"{state['x_label']} ({state['units']})", **x_axis)
         fig.update_yaxes(title_text="Intensity (arb. units)", **y_axis)
         state["plot"].update_figure(plot_options(fig))
+        if reset_axes and state["redraw_beta"]:
+            state["redraw_beta"]()
 
     def select_range(event):
         if not state["selecting"] or not event.args:
@@ -497,11 +510,20 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             ui.toggle(["Zoom", "Select fit range"], value="Zoom", on_change=set_drag_mode)
             ui.button("Clear fit range", on_click=clear_fit_range).props("flat")
         with ui.column().classes("w-full gap-0"):
-            state["spectrum_axes"], _ = axis_controls("Photoelectron spectra", "Spectrum", "", "Apply axes",
-                                                      lambda: refresh_plot(reset_axes=True))
+            if state["angular"]:
+                grids = [x for _, x, _ in state["spectra"].values()] + [x for x, _ in state["angular"].values()]
+                start = min(x[0] for x in grids if x.size)
+                end = max(x[-1] for x in grids if x.size)
+                padding = (end - start) / 16 if end > start else max(abs(start) / 16, 0.5)
+                state["native_x_range"] = (start - padding, end + padding)
+            state["spectrum_axes"], _ = axis_controls(
+                "Photoelectron spectra", "Spectrum", "", "Apply axes", lambda: refresh_plot(reset_axes=True),
+                note="The spectrum and β plots share the X limits." if state["angular"] else None,
+            )
             state["plot"] = _scientific_plot()
             state["plot"].on("plotly_selected", select_range,
                                js_handler="event => emit(event?.range ?? null)")
+            refresh_plot(reset_axes=True)
             beta_spectrum = show_anisotropy() if state["angular"] else None
             show_resampled(beta_spectrum)
         with ui.row().classes("gap-2"):
@@ -512,7 +534,6 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
         fit_low.label = f"Fit X min ({state['units']})"
         fit_high.label = f"Fit X max ({state['units']})"
         fit_card.set_visibility(True)
-        refresh_plot(reset_axes=True)
 
     def download_spectra():
         _csv_download(((name, q, x, y) for name, arrays in state["spectra"].items()
@@ -532,6 +553,7 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
         names = list(state["angular"])
         fields, spectrum = axis_controls(
             "Angular anisotropy (β)", "β plot", "beta_", "Apply β axes", lambda: redraw(update_axes=True),
+            axes=("Y",),
             selector=lambda: ui.select(names, value=names[0], label="β spectrum").props("outlined dense").classes("max-w-full"),
             note="Each β order has its own vertical scale. "
                  "Leave the Y limits blank to auto-range each axis. Explicit Y limits apply to every β axis. "
@@ -539,13 +561,13 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
         )
         chart = _scientific_plot()
         revision = 0
-        x_axis = y_axis = {"autorange": True}
+        y_axis = {"autorange": True}
 
         def redraw(update_axes=False):
-            nonlocal x_axis, y_axis, revision
+            nonlocal y_axis, revision
             if update_axes:
                 try:
-                    x_axis, y_axis = axis_bounds(fields)
+                    y_axis = linear_axis_limits(*(field.value for field in fields))
                 except ValueError as exc:
                     ui.notify(str(exc), type="warning")
                 else:
@@ -554,13 +576,20 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             orders = state["beta_orders"]
             beta_values = anisotropy_values(moments)
             fig = go.Figure()
-            _style_comparison_plot(fig, 402)
+            _style_comparison_plot(fig, 402, beta_orders=orders)
             _add_beta_traces(fig, x, orders, beta_values, y_limits=y_axis)
             fig.update_layout(uirevision=f"{spectrum.value}:{revision}")
-            fig.update_xaxes(title_text=f"{state['x_label']} ({state['units']})", **x_axis)
+            fig.update_xaxes(title_text=f"{state['x_label']} ({state['units']})",
+                             uirevision=state["revision"], **state["native_x_axis"])
             chart.update_figure(plot_options(fig))
 
         spectrum.on_value_change(lambda _: redraw())
+        state["redraw_beta"] = redraw
+        native_plot = state["plot"]
+        for source, target in ((native_plot, chart), (chart, native_plot)):
+            source.on("plotly_relayout", js_handler=(
+                f"event => vmiSyncPesX(event, getElement({source.id}), getElement({target.id}))"
+            ))
         redraw(update_axes=True)
         return spectrum
 
@@ -616,7 +645,7 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
                 fig.add_scatter(x=centers, y=density, name=name, mode="lines+markers", marker=PES_SAMPLE_MARKER,
                                 row=1, col=1)
             fig.update_yaxes(title_text="Bin-average intensity", row=1, col=1)
-            _style_comparison_plot(fig, max(347, 210 * rows + 100))
+            _style_comparison_plot(fig, max(347, 210 * rows + 100), beta_orders=orders)
             if beta_spectrum:
                 x, moments = angular[beta_spectrum.value]
                 beta = anisotropy_values(integrate_spectral_bins(x, moments, edges))

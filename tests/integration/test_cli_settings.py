@@ -369,9 +369,19 @@ class GuiSubmissionTests(unittest.TestCase):
                                 patch.object(ui, "notify") as notify:
                             pes.build(Mock(jobs=Mock(return_value=[job])))
                             callbacks["View latest spectra"]()
-                            native_beta = plot_options.call_args_list[-2].args[0]
+                            native_spectrum, native_beta = [call.args[0] for call in plot_options.call_args_list[-2:]]
                             self.assertEqual(native_beta.layout.yaxis2.overlaying, "y")
                             self.assertEqual([trace.xaxis for trace in native_beta.data], ["x", "x"])
+                            self.assertEqual(native_spectrum.layout.xaxis.range, native_beta.layout.xaxis.range)
+                            self.assertEqual(native_spectrum.layout.margin.l, native_beta.layout.margin.l)
+                            self.assertEqual(native_spectrum.layout.margin.r, native_beta.layout.margin.r)
+                            fields = {element.label: element for element in client.elements.values()
+                                      if isinstance(element, ui.number)}
+                            fields["Spectrum X min (blank = auto)"].value = x[0]
+                            fields["Spectrum X max (blank = auto)"].value = x[-1]
+                            callbacks["Apply axes"]()
+                            for call in plot_options.call_args_list[-2:]:
+                                self.assertEqual(call.args[0].layout.xaxis.range, (x[0], x[-1]))
                             section = next(element for element in client.elements.values()
                                            if isinstance(element, ui.expansion) and element.text == "Uniform-grid spectra")
                             self.assertFalse(section.value)
