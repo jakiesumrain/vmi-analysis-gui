@@ -396,6 +396,11 @@ class GuiSubmissionTests(unittest.TestCase):
                                            if isinstance(element, ui.expansion) and element.text == "Uniform-grid spectra")
                             self.assertFalse(section.value)
                             section.open()
+                            settings = next(element for element in client.elements.values()
+                                            if isinstance(element, ui.expansion) and element.text == "Plot settings")
+                            self.assertFalse(settings.value)
+                            self.assertEqual(len(plot_options.call_args.args[0].data), 3)
+                            settings.open()
                             fields = {element.label: element for element in client.elements.values()
                                       if isinstance(element, ui.number)}
                             width = fields[f"Bin width ({units})"]

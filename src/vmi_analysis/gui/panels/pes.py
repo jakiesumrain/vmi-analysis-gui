@@ -667,16 +667,19 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             x_axis = linear_axis_limits(None, None)
             intensity_axis = linear_axis_limits(None, None)
             beta_limits = [(None, None)] * len(orders)
-            with ui.row().classes("items-center gap-2"):
-                width = num_input(f"Bin width ({units})", applied_width, step="any")
-                x_min = num_input(f"{x_label} min ({units})", None, step="any").props('placeholder="Auto"')
-                x_max = num_input(f"{x_label} max ({units})", None, step="any").props('placeholder="Auto"')
-            intensity_fields = range_fields("Bin-average intensity Y")
-            beta_fields = [range_fields(f"Resampled β{order} Y") for order in orders]
-            ui.button("Apply plot settings", on_click=lambda: apply_settings()).props("flat")
-            ui.label("Intensity is averaged over each bin. Edge bins include only the measured yield."
-                     + (" β follows the β spectrum selected above. β ranges can extend to align zero."
-                        if beta_spectrum else "")).classes("vmi-subtitle")
+            with ui.expansion("Plot settings", icon="tune", value=False).classes("w-full").props(
+                    'header-class="vmi-section-toggle text-primary" expand-icon-class="text-primary"'):
+                with ui.column().classes("w-full"):
+                    with ui.row().classes("items-center gap-2"):
+                        width = num_input(f"Bin width ({units})", applied_width, step="any")
+                        x_min = num_input(f"{x_label} min ({units})", None, step="any").props('placeholder="Auto"')
+                        x_max = num_input(f"{x_label} max ({units})", None, step="any").props('placeholder="Auto"')
+                    intensity_fields = range_fields("Bin-average intensity Y")
+                    beta_fields = [range_fields(f"Resampled β{order} Y") for order in orders]
+                    ui.button("Apply plot settings", on_click=lambda: apply_settings()).props("flat")
+                    ui.label("Intensity is averaged over each bin. Edge bins include only the measured yield."
+                             + (" β follows the β spectrum selected above. β ranges can extend to align zero."
+                                if beta_spectrum else "")).classes("vmi-subtitle")
             plots = ui.column().classes("w-full gap-0")
 
         def apply_settings():
@@ -712,7 +715,7 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
                 fig.add_scatter(x=centers, y=density, name=name, mode="lines+markers", marker=PES_SAMPLE_MARKER,
                                 row=1, col=1)
             fig.update_yaxes(title_text="Bin-average intensity", row=1, col=1, **intensity_axis)
-            _style_comparison_plot(fig, max(347, 210 * rows + 100), beta_orders=orders)
+            _style_comparison_plot(fig, 610 if beta_spectrum else 347, beta_orders=orders)
             if beta_spectrum:
                 x, moments = angular[beta_spectrum.value]
                 beta = anisotropy_values(integrate_spectral_bins(x, moments, edges))
