@@ -55,6 +55,7 @@
   --vmi-log-h: 260px;
   --vmi-agent-measure: 76rem;
   --vmi-agent-reading-measure: 56rem;
+  --vmi-agent-surface-radius: 1.5rem;
   /* small text sizes */
   --vmi-text-overline: 0.65rem;
   --vmi-text-xs: 0.72rem;
@@ -367,7 +368,6 @@ html:has(.vmi-agent-page) { overflow-anchor: none; }
   border-radius: var(--vmi-radius-lg);
 }
 .vmi-agent-notice,
-.vmi-agent-approval,
 .vmi-agent-workflow {
   max-width: var(--vmi-agent-measure);
   margin-inline: auto;
@@ -428,18 +428,38 @@ html:has(.vmi-agent-page) { overflow-anchor: none; }
   box-shadow: var(--vmi-shadow-2);
 }
 .vmi-agent-latest[hidden] { display: none !important; }
+.vmi-agent-approval,
+.vmi-agent-composer {
+  max-width: var(--vmi-agent-reading-measure);
+  margin-inline: auto;
+}
 .vmi-agent-approval { margin-bottom: var(--vmi-space-3); }
+.vmi-agent-approval-card.vmi-panel {
+  border-radius: var(--vmi-agent-surface-radius);
+}
+.vmi-agent-approval-card > .vmi-form-section { margin-top: 0; }
+.vmi-agent-review-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 3fr);
+  gap: var(--vmi-space-2) var(--vmi-space-4);
+  width: 100%;
+  margin: 0;
+  color: var(--vmi-body);
+  overflow-wrap: anywhere;
+}
+.vmi-agent-review-details dt { color: var(--vmi-muted); font-weight: 600; }
+.vmi-agent-review-details dd { min-width: 0; margin: 0; white-space: pre-wrap; }
+.vmi-agent-review-details ul { margin: 0; padding-inline-start: var(--vmi-space-4); list-style: disc; }
 .vmi-agent-composer {
   position: sticky;
   bottom: calc(var(--vmi-footer-h) + var(--vmi-space-1));
   z-index: 3;
-  max-width: var(--vmi-agent-reading-measure);
-  margin: var(--vmi-space-4) auto 0;
+  margin-top: var(--vmi-space-4);
   padding: var(--vmi-space-1) var(--vmi-space-3);
   gap: 0;
   background: var(--vmi-surface-elevated);
   border: 1px solid var(--vmi-hairline-strong);
-  border-radius: 1.5rem;
+  border-radius: var(--vmi-agent-surface-radius);
   box-shadow: var(--vmi-shadow-1);
 }
 .vmi-agent-composer-receiving { border-color: var(--vmi-primary); }
@@ -1022,6 +1042,9 @@ html:has(.vmi-agent-page) { overflow-anchor: none; }
   .vmi-agent-connection { padding: var(--vmi-space-3); }
   .vmi-agent-connection .vmi-field-grid { grid-template-columns: minmax(0, 1fr) !important; }
   .vmi-agent-user { max-width: 92%; }
+  .vmi-agent-review-details { grid-template-columns: minmax(0, 1fr); }
+  .vmi-agent-review-details .vmi-agent-review-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vmi-agent-review-details dt + dd { margin-bottom: var(--vmi-space-2); }
   .vmi-agent-composer { padding-inline: var(--vmi-space-2); }
 }
 @media (prefers-reduced-motion: reduce) {

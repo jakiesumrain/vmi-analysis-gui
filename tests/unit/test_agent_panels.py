@@ -858,6 +858,18 @@ class AgentPanelTests(unittest.TestCase):
         clock[0] = 301
         self.assertFalse(session.take_panel_request("test-id"))
 
+    def test_approval_details_render_paths_and_nested_settings_as_plain_text(self):
+        client = Client(ui.page("/_test_agent_approval_details"))
+        self.addCleanup(client.delete)
+        image = r"E:\data\scientist's <sample>.txt"
+        with client:
+            agent._render_review_details({"VMI images": [image, "second.txt"],
+                                          "Shared geometry": {"center": (476, 473), "rotation (degrees)": 90},
+                                          "Quadrants": ["ur", "ul", "ll", "lr"]})
+        labels = [element.text for element in client.elements.values() if isinstance(element, ui.label)]
+        self.assertEqual(labels, ["VMI images", image, "second.txt", "Shared geometry", "center",
+                                  "476, 473", "rotation (degrees)", "90", "Quadrants", "ur, ul, ll, lr"])
+
     def test_at_completion_matches_nested_paths_and_stays_within_the_workspace(self):
         folder = self.workspace / "Results"
         folder.mkdir()

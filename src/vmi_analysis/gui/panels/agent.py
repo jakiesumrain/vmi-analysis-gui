@@ -33,6 +33,32 @@ SLASH_BUILTINS = {
 AGENT_CHAT_JS = files("vmi_analysis.gui.assets") / "agent_chat.js"
 
 
+def _render_review_details(details):
+    with ui.element("dl").classes("vmi-agent-review-details"):
+        for label, value in details.items():
+            with ui.element("dt"):
+                ui.label(str(label))
+            with ui.element("dd"):
+                _render_review_value(value)
+
+
+def _render_review_value(value):
+    if isinstance(value, dict) and value:
+        _render_review_details(value)
+    elif isinstance(value, (list, tuple)) and value:
+        if all(isinstance(item, (int, float)) or (isinstance(item, str) and item.isalnum()) for item in value):
+            ui.label(", ".join(map(str, value)))
+        elif len(value) == 1:
+            _render_review_value(value[0])
+        else:
+            with ui.element("ul"):
+                for item in value:
+                    with ui.element("li"):
+                        _render_review_value(item)
+    else:
+        ui.label("None" if value is None or isinstance(value, (dict, list, tuple)) else str(value))
+
+
 class AgentStatus:
     def __init__(self):
         self.badge = None
@@ -571,11 +597,9 @@ def _build_page(jobs, *, registry, navigate):
                         navigate(view.panel)
                         return
                     approval = (session.id, key)
-                    with approval_view, theme.panel_card():
+                    with approval_view, theme.panel_card().classes("vmi-agent-approval-card"):
                         theme.form_section(f"Review {job.name} run")
-                        for label, value in inputs.items():
-                            if value is not None:
-                                ui.label(f"{label} · {value}").classes("w-full break-all")
+                        _render_review_details({label: value for label, value in inputs.items() if value is not None})
                         registry.render_review(job)
                         with ui.row().classes("items-center gap-2"):
                             ui.button("Approve and run", icon="play_arrow",
