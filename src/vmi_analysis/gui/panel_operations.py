@@ -4,7 +4,7 @@ from functools import partial
 
 from vmi_analysis.ion_tof import GMD_SHIFTS
 
-from .agent_panels import PanelOperation, PanelRegistry, number
+from .agent_panels import PanelOperation, PanelRegistry, boolean, number
 from .analysis_runs import operation as python_analysis_operation
 from .jobs import Job, Stage
 from .panels import accumulate, binning, calibration, centroid, circularize, dark, gmd_map, ion_live, ion_luna, ion_momenta, ion_pipeline, ion_tof, movie, pes
@@ -29,16 +29,17 @@ def _dump_to_tof(registry, jobs, params):
         gate_params = params["gate"]
         limits = {"gmd_min_na", "gmd_max_na"}
         if (not isinstance(gate_params, dict) or not limits <= gate_params.keys()
-                or gate_params.keys() - (limits | {"shift"})):
-            raise ValueError("Provide gmd_min_na and gmd_max_na for the gate, with an optional shift.")
+                or gate_params.keys() - (limits | {"shift", "weight_by_gmd2"})):
+            raise ValueError("Provide gmd_min_na and gmd_max_na for the gate, with optional shift and weight_by_gmd2.")
         if not (metadata := tof.extra.get("metadata")):
             raise ValueError("Enable the acquisition prefix in TPX3 Dump to use the GMD2 gate.")
         low, high = (number(gate_params[key]) for key in ("gmd_min_na", "gmd_max_na"))
         shift = gate_params.get("shift")
+        weighted = boolean(gate_params.get("weight_by_gmd2", False))
         if shift is not None and (type(shift) is not int or shift not in GMD_SHIFTS):
             raise ValueError("Use a listed integer GMD2 shift or omit it for the alignment diagnostic.")
         gate = ion_tof.filtered_job(tof, metadata, low, high, shift if shift is not None else 0,
-                                    pending_metadata=True)
+                                    pending_metadata=True, weight_by_gmd2=weighted)
         gate.extra["agent_panel"] = True
         stage = Stage(gate.name, gate.cmd, gate.cwd, result=gate)
         if shift is None:
@@ -48,6 +49,7 @@ def _dump_to_tof(registry, jobs, params):
         stages.append(stage)
         gate_summary = {"3. GMD2 gate (nA, inclusive)": [low, high],
                         "3. Alignment shift d": shift if shift is not None else "Diagnose and confirm if ambiguous",
+                        "3. Weight by GMD2": "Yes" if weighted else "No",
                         "3. Pairing": ion_tof.GMD_PAIRING}
     job = Job(DUMP_TO_TOF, cwd=dump.cwd, stages=stages)
     return job, {
@@ -71,7 +73,8 @@ def build_registry():
             "dump": {"type": "object", "description": "Parameters from tpx3_dump"},
             "tof": {"type": "object", "description": "Optional ion_tof parameters without input or dump_job_id"},
             "gate": {"type": "object", "description": "Optional GMD2 gate. Provide gmd_min_na and "
-                     "gmd_max_na. Omit shift to diagnose alignment or supply an approved integer shift.",
+                     "gmd_max_na. Omit shift to diagnose alignment or supply an approved integer shift. "
+                     "Set weight_by_gmd2 to true to weight filtered counts.",
                      "shift_choices": list(GMD_SHIFTS)},
         },
     }

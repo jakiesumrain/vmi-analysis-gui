@@ -108,6 +108,11 @@ class AgentPanelTests(unittest.TestCase):
         })
         self.assertEqual(result["selected_triggers"], 12)
         self.assertEqual(self.registry.measure(self.jobs, fit.id, params)["peaks"], [row])
+        np.savez(histogram, edges=np.array([10490, 10495, 10500, 10505, 10510]),
+                 pixels=np.array([0., .2, .75, .4]), selected_triggers=12, gmd2_reference_na=3.)
+        weighted = self.registry.measure(self.jobs, spectrum.id, params)
+        self.assertEqual(weighted["strongest_bin"]["counts"], .75)
+        self.assertEqual(weighted["gmd2_reference_na"], 3.)
         with patch.object(shared, "current_account", return_value=SimpleNamespace(name="other")):
             with self.assertRaisesRegex(ValueError, "in your workspace"):
                 self.registry.measure(self.jobs, spectrum.id, params)
@@ -687,6 +692,12 @@ class AgentPanelTests(unittest.TestCase):
         })
         self.assertEqual(options["Alignment shift d (frames)"], -1)
         self.assertEqual(gate.extra["metadata"], str(metadata))
+        self.assertNotIn("--weight-by-gmd2", gate.cmd)
+        weighted_gate, weighted_options = self.registry.prepare(self.jobs, "ion_tof_gate", {
+            "tof_job_id": spectrum.id, "gmd_min_na": 2, "gmd_max_na": 8, "shift": -1, "weight_by_gmd2": True,
+        })
+        self.assertIn("--weight-by-gmd2", weighted_gate.cmd)
+        self.assertEqual(weighted_options["Weight by GMD2"], "Yes")
         gate.status = "done"
         gate.owner = self.account.name
         self.jobs._jobs[gate.id] = gate
