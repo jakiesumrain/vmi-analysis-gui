@@ -2,8 +2,10 @@
 
 Use the [user manual](docs/manual.pdf) for installation, dataset formats,
 panel and CLI options, calibration, and troubleshooting. Its source is
-[docs/manual.tex](docs/manual.tex). See [architecture](docs/architecture.md)
-and [GUI design](docs/DESIGN.md) for implementation context.
+[docs/manual.tex](docs/manual.tex). Read the [Agent-native design](docs/agent-first-design.md)
+and [architecture](docs/architecture.md) for the product and implementation.
+Use the [panel playbook](docs/panel-development.md) and [GUI design](docs/DESIGN.md)
+when developing panels.
 
 ## Development
 
@@ -39,11 +41,18 @@ and [GUI design](docs/DESIGN.md) for implementation context.
   Reserve every stage of a multi-stage job for the full run. Only an independent
   standalone GMD Map may write beside standalone Centroiding. Use
   `delete_outputs` for clear actions.
+- Register supported operations in the owning panel and `gui/panel_operations.py`.
+  Return an unsubmitted job and review summary from preparation. Use the same
+  validated builder from the manual form. Keep the fallback ion panels manual.
 - Use the shared `image_zoom.js` overlay. Pan, zoom, and cropping affect the
   preview only. Reset restores the original image. Browser regression checks
   are in `tests/browser/`.
-- Agent sessions are per account and use the container launcher in shared mode.
-  Mount only the account workspace read-write and shared datasets read-only.
+- Agent sessions are per account and use the container launcher in sandboxed
+  shared mode. Keep workspace writes in the account's mount and give shared
+  datasets and analysis records read-only mounts. Keep standard panel jobs in
+  Bubblewrap and reviewed Python in a separate run container.
+  Manual-only shared mode disables Agent entry points and uses the shared
+  service account for panel jobs. See [deployment](docs/shared-server.md).
   Pass API keys only through the child environment; never save them in settings,
   workflows, model configuration, arguments, or logs. Clear key copies and remove
   temporary configuration on startup failure, process exit, stop, and shutdown.

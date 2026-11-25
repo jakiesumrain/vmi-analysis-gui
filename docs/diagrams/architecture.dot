@@ -1,0 +1,27 @@
+digraph {
+  graph [bgcolor="#f5f7fb", pad=0.26, nodesep=0.40, ranksep=0.46, fontname="Arial", fontcolor="#172b4d", fontsize=19, labelloc=t];
+  node [shape=box, style="rounded,filled", margin="0.17,0.11", fontname="Arial", fontsize=12, color="#91a5c6", fillcolor="#ffffff", fontcolor="#172b4d", penwidth=1.2];
+  edge [arrowsize=0.67, color="#52719c", penwidth=1.15, fontname="Arial", fontsize=10, fontcolor="#345274"];
+  label="VMI Analysis architecture";
+  browser [label="Browser workbench\nPanel forms, plots, Agent chat and approvals", fillcolor="#e5efff", color="#5479bc"];
+  app [label="One NiceGUI server\nNavigation, account context and settings"];
+  agent [label="AgentSession\nPi RPC and tool requests", fillcolor="#e5efff"];
+  registry [label="Panel registry\nOperations, inspections and measurements"];
+  panels [label="Panel and script builders\nValidation and prepared jobs"];
+  queue [label="JobManager\nOwnership, reservations, queue and cancellation", fillcolor="#e5efff"];
+  cli [label="Scientific subprocesses\nPython CLI and host tools"];
+  worker [label="Reviewed Python worker\nScript snapshot and declared inputs"];
+  output [label="Workspace and analysis records\nFiles, calibration, artifacts and saved forms", fillcolor="#fff2df", color="#bb8c4c"];
+  browser -> app;
+  app -> agent [label="Agent"];
+  app -> panels [label="manual"];
+  agent -> registry [label="vmi_panel"];
+  registry -> panels [label="panel-owned hooks"];
+  panels -> queue [label="submitted job"];
+  queue -> cli;
+  queue -> worker;
+  cli -> output;
+  worker -> output;
+  {rank=same; registry; panels;}
+  {rank=same; cli; worker;}
+}
