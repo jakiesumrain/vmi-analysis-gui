@@ -1,7 +1,6 @@
 """Review, run, and inspect user-directed Python analyses."""
 
 from collections import deque
-from contextlib import ExitStack
 from hashlib import sha256
 from importlib.metadata import PackageNotFoundError, version
 import json
@@ -9,7 +8,6 @@ import os
 from pathlib import Path
 import platform
 import re
-import stat
 import sys
 from tempfile import NamedTemporaryFile
 
@@ -19,6 +17,7 @@ from . import analysis_definition, shared
 from .agent_panels import PanelOperation, _container_path, resolve_path
 from .jobs import ACTIVE, Job
 from .panels.common import file_url, num_input, path_input
+from .workspace_io import open_regular_file
 
 JOB_NAME = "Python analysis"
 SCHEMA = "vmi.analysis-run/v1"
@@ -98,21 +97,8 @@ def _source(path):
 
 
 def _workspace_source(path, root):
-    # Each component is opened relative to a directory handle. The Agent
-    # can edit the workspace but cannot redirect a host read with a symlink.
-    names = path.relative_to(root).parts
-    with ExitStack() as stack:
-        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        directory = os.open(root, flags)
-        stack.callback(os.close, directory)
-        for name in names[:-1]:
-            directory = os.open(name, flags, dir_fd=directory)
-            stack.callback(os.close, directory)
-        fd = os.open(names[-1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory)
-        with os.fdopen(fd, "rb") as handle:
-            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-                raise ValueError("Choose a regular Python file.")
-            return _decode_source(handle.read(MAX_SCRIPT_BYTES + 1))
+    with open_regular_file(root, path) as handle:
+        return _decode_source(handle.read(MAX_SCRIPT_BYTES + 1))
 
 
 def _decode_source(raw):

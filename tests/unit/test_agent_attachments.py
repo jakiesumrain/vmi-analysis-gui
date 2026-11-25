@@ -1,11 +1,15 @@
 import asyncio
+from io import BytesIO
 from pathlib import Path
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
+from PIL import Image
+from starlette.datastructures import UploadFile
 
 from vmi_analysis.gui import agent_attachments, shared
 
@@ -44,6 +48,7 @@ class AgentAttachmentTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertFalse((self.alice.root / agent_attachments.ATTACHMENT_DIR).exists())
 
+    @unittest.skipUnless(sys.platform == "linux", "Shared attachment uploads run on Linux")
     def test_multiple_files_are_stored_in_the_current_accounts_workspace(self):
         self.sign_in(self.alice)
         response = self.client.post("/agent-attachments", files=[
@@ -66,6 +71,7 @@ class AgentAttachmentTests(unittest.TestCase):
         self.assertTrue(path.is_relative_to(self.bob.root / agent_attachments.ATTACHMENT_DIR))
         self.assertEqual(path.read_bytes(), b"bob only")
 
+    @unittest.skipUnless(sys.platform == "linux", "Shared attachment uploads run on Linux")
     def test_unsafe_names_are_sanitized_and_collisions_are_deduplicated(self):
         self.sign_in(self.alice)
         response = self.client.post("/agent-attachments", files=[
@@ -83,6 +89,13 @@ class AgentAttachmentTests(unittest.TestCase):
                                  ("LPT².dat", "_LPT².dat"), ("CONOUT$", "_CONOUT$")):
             with self.subTest(source=source):
                 self.assertEqual(agent_attachments.attachment_name(source), expected)
+
+    def test_local_upload_batch_supports_duplicate_names(self):
+        root = self.root / "local"
+        uploads = [UploadFile(BytesIO(content), filename="a.txt") for content in (b"one", b"two")]
+        paths = agent_attachments._store_uploads(root, None, uploads)
+        self.assertEqual([path.name for path in paths], ["a.txt", "a-2.txt"])
+        self.assertEqual([path.read_bytes() for path in paths], [b"one", b"two"])
 
     def test_streamed_request_stops_before_parsing_a_batch_over_the_limit(self):
         parts = iter((
@@ -110,6 +123,7 @@ class AgentAttachmentTests(unittest.TestCase):
         self.assertEqual(len(received), 2)
         self.assertFalse((self.alice.root / agent_attachments.ATTACHMENT_DIR).exists())
 
+    @unittest.skipUnless(sys.platform == "linux", "Shared attachment uploads run on Linux")
     def test_rejected_batches_do_not_leave_partial_files(self):
         self.sign_in(self.alice)
         with patch.object(agent_attachments, "MAX_ATTACHMENT_FILES", 1):
@@ -131,6 +145,28 @@ class AgentAttachmentTests(unittest.TestCase):
         self.assertEqual(response.status_code, 413)
         root = self.alice.root / agent_attachments.ATTACHMENT_DIR
         self.assertFalse(root.exists() and any(root.iterdir()))
+
+    @unittest.skipUnless(sys.platform == "linux", "Shared attachment uploads run on Linux")
+    def test_shared_upload_requires_real_attachment_directories(self):
+        self.sign_in(self.alice)
+        other = self.bob.root / "attachments"
+        other.mkdir()
+        prefix = self.alice.root / ".agent"
+        prefix.mkdir()
+        (prefix / "attachments").symlink_to(other, target_is_directory=True)
+        response = self.client.post("/agent-attachments",
+                                    files={"files": ("notes.txt", b"sample", "text/plain")})
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(any(other.iterdir()))
+
+    @unittest.skipUnless(sys.platform == "linux", "Shared attachment reads run on Linux")
+    def test_prompt_image_is_read_from_the_authorized_workspace(self):
+        image = self.alice.root / "plot.png"
+        Image.new("RGB", (8, 8)).save(image)
+        self.assertEqual(agent_attachments.prompt_image(image, roots=(self.alice.root,))["mimeType"],
+                         "image/png")
+        with self.assertRaisesRegex(ValueError, "Choose an image"):
+            agent_attachments.prompt_image(image, roots=(self.bob.root,))
 
 
 if __name__ == "__main__":

@@ -852,7 +852,11 @@ def _build_page(jobs, *, registry, navigate):
                                   + json.dumps(registry.measurement_context(run)))
             prompt_options = {}
             if image_paths:
-                prompt_options["images"] = await asyncio.to_thread(lambda: tuple(map(prompt_image, image_paths)))
+                account = shared.current_account()
+                roots = (account.root, shared.SERVER.datasets, shared.analysis_root(account)) if account else ()
+                prompt_options["images"] = await asyncio.to_thread(
+                    lambda: tuple(prompt_image(path, roots=roots) for path in image_paths)
+                )
             if run:
                 prompt_options["linked_run"] = f"Linked run · {run.name} · {run.id}"
             await asyncio.to_thread(session.prompt, message, model_context=model_context, attachments=references,

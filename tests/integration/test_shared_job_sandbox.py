@@ -25,6 +25,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import vmi_analysis
+
 workspace, datasets, analysis, sibling = map(Path, sys.argv[1:])
 assert Path.cwd() == workspace
 for directory in (workspace, datasets, analysis):

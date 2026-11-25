@@ -17,17 +17,19 @@ import os
 from pathlib import Path
 import re
 import secrets
+import sys
 from tempfile import NamedTemporaryFile
 from time import monotonic
 from urllib.parse import parse_qs
 
 from fastapi import HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from nicegui import app, ui
 from nicegui.client import Client
 from starlette.datastructures import Headers
 
 from vmi_analysis.paths import WORKSPACE_ROOT, GENERATED_DIR
+from .workspace_io import WorkspaceFileResponse
 
 COOKIE = 'vmi_session'
 MAX_SESSION_AGE = 12 * 3600
@@ -303,6 +305,8 @@ class AccountMiddleware:
 
 def install(config_path):
     global SERVER
+    if sys.platform != 'linux':
+        raise RuntimeError('Shared-server mode requires a Linux host.')
     SERVER = SharedServer(json.loads(Path(config_path).read_text(encoding='utf-8')))
     app.add_middleware(AccountMiddleware)
     assets = files('vmi_analysis.gui.assets')
@@ -374,11 +378,11 @@ def install(config_path):
         root = {'private': account.root, 'datasets': SERVER.datasets, 'analysis': analysis_root(account)}[area]
         try:
             path = SERVER.path(account, root / relative)
-            if not path.is_relative_to(root) or not path.is_file():
+            if not path.is_relative_to(root):
                 raise HTTPException(404)
         except (WorkspaceDenied, OSError, RuntimeError):
             raise HTTPException(404) from None
-        return FileResponse(path, filename=path.name if download else None, headers={
+        return WorkspaceFileResponse(root, path, filename=path.name if download else None, headers={
             'Cache-Control': 'private, no-store',
             'Content-Security-Policy': "sandbox; default-src 'none'",
             'X-Content-Type-Options': 'nosniff',

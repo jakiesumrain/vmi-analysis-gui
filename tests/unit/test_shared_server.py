@@ -121,6 +121,7 @@ class SharedServerTests(unittest.TestCase):
             with self.assertRaises(shared.WorkspaceDenied):
                 shared.checked_path(link, write=True)
 
+    @unittest.skipUnless(sys.platform == "linux", "Shared servers run on Linux")
     def test_http_authentication_downloads_and_logout(self):
         config = self.root / "shared.json"
         config.write_text(json.dumps(self.config), encoding="utf-8")
@@ -148,7 +149,12 @@ class SharedServerTests(unittest.TestCase):
         self.assertEqual(bob.get(private).status_code, 404)
         result = alice.get(download)
         self.assertEqual(result.text, "alice")
+        self.assertTrue(result.headers["content-type"].startswith("text/plain"))
         self.assertEqual(result.headers["content-disposition"], 'attachment; filename="preview.txt"')
+        partial = alice.get(download, headers={"Range": "bytes=1-3"})
+        self.assertEqual(partial.status_code, 206)
+        self.assertEqual(partial.content, b"lic")
+        self.assertEqual(partial.headers["content-range"], "bytes 1-3/5")
         self.assertEqual(bob.get(download).status_code, 404)
         analysis = "/workspace-file/analysis/run.log?download=true"
         self.assertEqual(alice.get(analysis).text, "alice analysis")

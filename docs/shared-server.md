@@ -195,5 +195,10 @@ analysis records. They cannot open another account's files. The namespace is
 created when the job starts, after any wait in the queue. Approved Python
 analyses use the separate container described above.
 
+Downloads and Agent image attachments open files from the signed-in account's
+authorized directories. Agent uploads create new files inside that account's
+workspace. The server uses open file and directory handles for these operations
+so a path change during the request cannot redirect them to another account.
+
 Use separate OS accounts or isolated services if you need to run untrusted
 datasets or give users shell access as the service account.

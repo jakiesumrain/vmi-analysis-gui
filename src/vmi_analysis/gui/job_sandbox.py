@@ -48,11 +48,13 @@ def panel_command(command, cwd, workspace, datasets, analysis):
     for path in map(Path, SYSTEM_RUNTIME):
         if path.exists():
             mount_runtime(path)
-    for path in dict.fromkeys((Path(sys.base_prefix), Path(sys.prefix), PACKAGE)):
+    # uv can point a virtualenv at a version alias as well as the resolved
+    # installation. The interpreter and pyvenv.cfg need the alias at its
+    # original location inside the namespace.
+    interpreter_home = Path(sys._base_executable).parent.parent
+    for path in dict.fromkeys((Path(sys.base_prefix), interpreter_home, Path(sys.prefix), PACKAGE)):
         if not path.is_relative_to("/usr"):
             mount_runtime(path)
-    # A uv virtualenv interpreter can point to a managed Python outside the
-    # virtualenv. The base prefix above makes the target available.
     if binary := which("tpx3dump"):
         mount_runtime(binary, "/run/vmi-tools/tpx3dump")
     args.extend(("--setenv", "PATH", "/run/vmi-tools:/usr/local/bin:/usr/bin:/bin"))
