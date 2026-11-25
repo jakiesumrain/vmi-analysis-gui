@@ -1,0 +1,22 @@
+digraph {
+  graph [bgcolor="#f5f7fb", pad=0.26, nodesep=0.40, ranksep=0.46, fontname="Arial", fontcolor="#172b4d", fontsize=19, labelloc=t];
+  node [shape=box, style="rounded,filled", margin="0.17,0.11", fontname="Arial", fontsize=12, color="#91a5c6", fillcolor="#ffffff", fontcolor="#172b4d", penwidth=1.2];
+  edge [arrowsize=0.67, color="#52719c", penwidth=1.15, fontname="Arial", fontsize=10, fontcolor="#345274"];
+  label="Manual and Agent entry points for a registered batch operation";
+  manual [label="User fills the panel form", fillcolor="#e5efff"];
+  agent [label="User asks the Agent", fillcolor="#e5efff"];
+  submit [label="User clicks Run"];
+  request [label="Agent proposes named parameters"];
+  builder [label="Shared panel builder\nValidate inputs · resolve settings · prepare a job", fillcolor="#fff2df", color="#bb8c4c"];
+  approval [label="User reviews and approves\nDecline leaves the job unsubmitted"];
+  queue [label="Shared scheduler\nOwner checks · file reservations · run and cancel", fillcolor="#e5efff"];
+  results [label="Shared results\nPanel restores submitted settings for approved Agent runs"];
+  {rank=same; manual; agent;}
+  {rank=same; submit; request;}
+  manual -> submit -> builder;
+  agent -> request -> builder;
+  builder -> approval [label="Agent proposal"];
+  builder -> queue [label="manual submission", minlen=2];
+  approval -> queue [label="approved submission"];
+  queue -> results;
+}

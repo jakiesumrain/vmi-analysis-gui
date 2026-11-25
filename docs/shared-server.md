@@ -5,6 +5,16 @@ Each person needs an authorized SSH account or key and a VMI Analysis
 account. The SSH tunnel connects the browser to the server. The VMI sign-in
 selects the person's workspace.
 
+## Choose a mode
+
+![Deployment diagram showing local execution, a trusted service account, and separate worker sandboxes](assets/deployment.svg)
+
+| Mode | Configuration | Host tools and trust |
+| --- | --- | --- |
+| Local single user | Leave `VMI_SHARED_CONFIG` unset | Panel jobs use your OS account. Local Agent use needs Pi and a model endpoint. See [local startup](../README.md#run-locally). |
+| Manual-only shared | Set `VMI_SHARED_CONFIG` and use `"mode": "manual-only"` | Panel jobs use the Linux service account. Use only with trusted users and data. |
+| Sandboxed shared | Set `VMI_SHARED_CONFIG` and omit `mode` or use `"sandboxed"` | Bubblewrap protects panel subprocesses. Docker or Podman is required for Agent sessions and reviewed Python runs. |
+
 ## Set up the Linux host
 
 1. Run the app under a dedicated Linux service account. Give that account
@@ -199,12 +209,11 @@ start collapsed. Assistant replies render as Markdown. In the instruction box,
 **Enter** sends the instruction and **Shift+Enter** inserts a new line.
 
 The container's `python` can import `vmi_analysis`, `h5py`, and the other
-locked Python dependencies for scripts. For standard panel work, ask the
-Agent to explain or prepare a run. It supports **TPX3 Dump**, **Ion TOF**,
-**GMD2 gating**, and **Gaussian TOF peak fitting**. Review the resolved
-inputs, parameters, and output paths in the approval card, then choose
-**Approve and run** or **Decline**. Approved jobs run through the regular
-VMI job queue and use the host's configured analysis tools, including LUNA.
+locked Python dependencies for scripts. For standard panel work, use an
+operation from the [capability matrix](agent-first-design.md#agent-capabilities).
+Review the resolved inputs, parameters, and output paths in the approval
+card, then choose **Approve and run** or **Decline**. Approved jobs use the
+regular VMI queue and the host's configured scientific tools, including LUNA.
 
 For example, ask the Agent to prepare a dump of a specific shared folder,
 then use that dump to plot raw pixel hits with a specified TOF bin width.

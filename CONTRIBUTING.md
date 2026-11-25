@@ -1,7 +1,8 @@
 # Contributing to vmi-analysis-gui
 
-This repository provides analysis tools for VMI photoelectron data and a
-NiceGUI web interface.
+This repository provides an Agent-native workbench for electron and ion VMI.
+The panel owns each scientific capability and exposes supported operations to
+the embedded Agent.
 
 **The owner reviews and approves changes before merge.** Agents follow the
 owner authorization in [AGENTS.md](AGENTS.md). Use a pull request and a squash
@@ -9,7 +10,9 @@ merge for every change to `main`.
 
 ## Before you start
 
-- Read [AGENTS.md](AGENTS.md) and [Architecture](docs/architecture.md).
+- Read [AGENTS.md](AGENTS.md), the [architecture](docs/architecture.md), and
+  the [panel playbook](docs/panel-development.md) before changing a panel or
+  adding an Agent operation.
 - Open an issue or draft pull request to discuss substantial changes before
   implementation.
 - Keep datasets, analysis outputs, `.nicegui/`, `.cache/`, and
@@ -19,11 +22,12 @@ merge for every change to `main`.
 
 ```bash
 uv sync                 # creates .venv and installs everything (editable)
-uv run vmi-analysis     # → http://localhost:3157
+uv run vmi-analysis     # opens http://localhost:13517
 ```
 
 Install Python 3.12 or newer and [uv](https://docs.astral.sh/uv/).
 Install ffmpeg for MP4 output. Install MATLAB if you use the CPBASEX backend.
+Linux shared deployments have separate [setup instructions](docs/shared-server.md).
 
 ## Branch and commits
 
@@ -56,6 +60,17 @@ uv run python -m unittest discover -s tests -v
   in `tests/browser/`. Each check describes its setup in its opening comments.
 - For numerical changes, describe the inputs. State whether the input was
   synthetic or user-supplied.
+- When manual and Agent runs share an operation, test the same settings
+  through both entry points and compare the saved results.
+- If you edit the manual, rebuild `docs/manual.pdf` using the instructions
+  at the top of [manual.tex](docs/manual.tex). Edit diagram sources in
+  [docs/diagrams](docs/diagrams) and regenerate the SVG files with Graphviz.
+
+For example, rebuild the execution diagram from the checkout.
+
+```sh
+dot -Tsvg docs/diagrams/execution.dot -o docs/assets/execution.svg
+```
 
 ## Pull requests
 
@@ -69,13 +84,12 @@ uv run python -m unittest discover -s tests -v
 
 ## Review and merge
 
-The owner reviews and approves the pull request. After approval, squash-merge
-the pull request and fast-forward local `main`. If the owner asks you to merge,
-use these commands.
+The owner reviews and approves the pull request. If the owner explicitly asks
+you to merge it, use a squash merge. See [AGENTS.md](AGENTS.md) for the branch
+and local checkout rules.
 
 ```bash
 gh pr merge --squash
-git switch main && git fetch origin && git merge --ff-only origin/main
 ```
 
 ## House rules
@@ -89,6 +103,9 @@ The highlights that review most often catches (full detail in `AGENTS.md`):
   machine-specific paths.
 - Use one `JobView.run_button` for each job panel. Update `gui/resources.py`
   when the CLI changes the paths it reads or writes.
+- Register Agent operations through the panel module and
+  `gui/panel_operations.py`. Keep scientific defaults, validation, and output
+  references in the panel or its shared options.
 - Run jobs as subprocesses. Trig Calibration runs its interactive tools in
   the web process.
 - Preserve legacy data roots and saved `.nicegui` keys. Resolve relative

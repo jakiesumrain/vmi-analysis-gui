@@ -1,0 +1,26 @@
+digraph {
+  graph [bgcolor="#f5f7fb", pad=0.26, nodesep=0.40, ranksep=0.46, fontname="Arial", fontcolor="#172b4d", fontsize=19, labelloc=t];
+  node [shape=box, style="rounded,filled", margin="0.17,0.11", fontname="Arial", fontsize=12, color="#91a5c6", fillcolor="#ffffff", fontcolor="#172b4d", penwidth=1.2];
+  edge [arrowsize=0.67, color="#52719c", penwidth=1.15, fontname="Arial", fontsize=10, fontcolor="#345274"];
+  rankdir=LR;
+  label="Execution boundaries in the three deployment modes";
+  entry [label="VMI Analysis web server"];
+  local [label="Local single user\nRun under the current OS user", fillcolor="#e5efff"];
+  manual [label="Manual-only shared\nRun under the common service account", fillcolor="#fff2df", color="#bb8c4c"];
+  full [label="Sandboxed shared\nChoose isolation at launch", fillcolor="#e5efff"];
+  host [label="Host panel subprocesses\nLocal Pi and reviewed Python"];
+  trusted [label="Host panel subprocesses\nAgent and reviewed Python disabled\nWorkspace privacy depends on trust"];
+  panel [label="Bubblewrap per panel subprocess\nOwn workspace writable\nShared inputs read-only"];
+  agent [label="Container per Agent session\nOwn workspace writable\nShared inputs read-only"];
+  python [label="Container per reviewed Python run\nInputs read-only\nOnly run output writable"];
+  entry -> local;
+  entry -> manual;
+  entry -> full;
+  local -> host;
+  manual -> trusted;
+  full -> panel;
+  full -> agent;
+  full -> python;
+  {rank=same; local; manual; full;}
+  {rank=same; host; trusted; panel; agent; python;}
+}

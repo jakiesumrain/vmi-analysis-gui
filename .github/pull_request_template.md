@@ -30,5 +30,6 @@ uv run python -m unittest discover -s tests -v
 - [ ] No datasets, analysis outputs, `.nicegui/`, `.cache/`, or unrelated edits staged
 - [ ] No machine-specific paths added; scripts remain standalone-runnable
 - [ ] GUI rules respected (single Run/Stop per panel, `gui/resources.py` in sync)
+- [ ] Shared manual and Agent operations use the same validated builder and result paths
 - [ ] Docs updated if behavior or workflow changed
 - [ ] Owner review requested; PR not merged by the contributor

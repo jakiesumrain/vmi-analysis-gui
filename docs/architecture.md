@@ -1,123 +1,64 @@
-# Architecture
+# Application architecture
 
-VMI Analysis GUI is a NiceGUI application for velocity-map imaging data.
-It can run locally or in [shared server mode](shared-server.md).
-The [user manual](manual.pdf) describes panel controls, input formats, and outputs.
+VMI Analysis is one NiceGUI server with a panel registry, a shared job scheduler, and an embedded Agent. `gui/app.py` composes navigation, authentication integration, settings, panels, and shutdown. `gui/panel_operations.py` explicitly assembles the Agent registry from panel-owned declarations.
 
-## Source and workspace
+![Architecture map showing the browser, server components, execution workers, and result stores](assets/architecture.svg)
 
-The source package is `src/vmi_analysis/`. Run `uv sync` from the checkout
-to install it in editable mode. Start the app with `uv run vmi-analysis`.
+All source paths below are relative to [`src/vmi_analysis`](../src/vmi_analysis/).
 
-`vmi_analysis.paths` resolves the workspace independently of the installed
-package. A checkout uses the repository root. An installed copy uses the startup
-directory. Set `VMI_WORKSPACE_DIR` to choose another workspace.
+| Area | Code | Responsibility |
+| --- | --- | --- |
+| Workbench and views | `gui/app.py`, `gui/panels/`, `gui/theme.py`, `gui/assets/` | Forms, plots, panel navigation, approvals, and rendering. |
+| Panel contract | `gui/agent_panels.py`, `gui/panel_operations.py` | Operation discovery, request validation, artifact discovery, and approved-run measurements. |
+| Interactive Agent | `agent_backend.py`, `gui/panels/agent.py`, `gui/assets/agent_panels.js` | Pi RPC session, tool requests, streamed messages, proposal review, and cleanup. |
+| Job execution | `gui/jobs.py`, `gui/resources.py`, `gui/job_sandbox.py` | Queue, owner checks, resource reservations, process launch, cancellation, and terminal state. |
+| Shared deployment | `gui/shared.py`, `gui/workspace_io.py` | Accounts, request policy, per-user settings, and protected file access. |
+| Reviewed Python | `gui/analysis_runs.py`, `gui/analysis_definition.py`, `analysis_worker.py`, `analysis_container.py` | Approved script snapshots, run records, artifact handling, and saved analysis forms. |
+| Scientific implementation | `centroiding/`, `circularization/`, `gmd/`, `imaging/`, and top-level ion and PES modules | Scientific algorithms and standalone command-line entry points. |
 
-Shared mode binds to loopback and authenticates browser and Socket.IO
-requests. Each account has a private settings file and a private
-workspace. All jobs use one scheduler with an owner on each submission.
-The server checks file paths at the picker, analysis and download
-boundaries. Shared dataset paths allow reads. Only paths in the signed-in
-account's workspace allow writes.
+## Follow a panel request
 
-The workspace contains `centroiding/` and `circularization/` for working data.
-The GUI stores preview artifacts in `.cache/vmi-analysis/`. NiceGUI stores form
-values in `.nicegui/` unless `NICEGUI_STORAGE_PATH` specifies another path.
-Keep experiment files and generated outputs outside version control.
+![Manual and Agent entry points converge at the panel builder, then share the scheduler and results](assets/execution.svg)
 
-## Panels and previews
+1. A manual form invokes the panel's job builder. An Agent request uses `vmi_panel` and `PanelRegistry.prepare` to call the same builder with named parameters. The builder validates input and creates an unsubmitted `Job` with its CLI arguments, working directory, resolved form snapshot, and output references.
+2. The Agent's proposal presents the resolved run for review. Its submission happens after the user approves. A `PanelView` can bind permitted edits and rebuild against the original plot or run. Trig Calibration and PES also support reviewed interactive fitting in the web process.
+3. `JobManager.submit` records ownership and checks paths in shared mode. It queues the job and reserves input, output, and exclusive resources. Reads can overlap with reads. Conflicting writes wait. A workflow reserves all of its stages for the run.
+4. The runner starts the scientific subprocess and collects logs, progress, and terminal status. Cancellation stops the process tree. A workflow stage can provide a `Stage.result` for the ordinary panel to open. A `Checkpoint` can release the worker while waiting for a user decision.
+5. `JobView` renders the run. The panel reads outputs from the job snapshot so later edits to the form cannot redirect results. `attach_builder` and `adopt_agent_form` restore Agent-approved settings when the view attaches and preserve subsequent manual edits.
 
-`gui/app.py` defines the workspace-rail groups, startup, and global settings.
-The workbench keeps a persistent left rail, a compact footer job/server status
-bar, and a collapsible labelled console dock in each panel; the rail becomes a
-horizontal scroller on narrow screens. The author signature is available from
-*Settings → About*.
-`gui/panels/` contains the forms and result views. Each panel starts with
-a title, an inline job status cluster, and a short summary. Binning is immature and needs restructuring.
+## Agent requests and evidence
 
-- Trig Calibration remaps a NumPy detector image and fits selected rings in
-  the web process. It can export a Gascooke-compatible calibration.
-- Circularize applies a calibration in a subprocess. The corrected image
-  retains the input grid and the selected correction center.
-- `gui/panels/polar_preview.py` shares display controls between the two panels.
-  Each polar preview has separate percentile limits. Trig Calibration has
-  crosshair guides. Circularize has a vertical radius guide.
-- Circularize displays the polar comparison below **Run**. Its results below
-  the console display the corrected Cartesian image in Plotly and the current
-  reassignment map when applicable.
-- Centroiding and Accumulate also use Plotly. Static image inspection uses
-  `gui/assets/image_zoom.js`.
-- PES generates spectra in a subprocess from NumPy images or text matrices.
-  It overlays the spectra in Plotly and fits peaks to the selected interval
-  in the web process. It reserves each input and its generated spectrum bundle.
-- Agent provides an interactive pi RPC session from the sidebar footer above
-  **Settings**, separately from the Electron and Ion tool groups.
-  Each account supplies its own endpoint and temporary API key. Shared-server
-  sessions run in Docker or Podman with the account workspace writable and
-  shared datasets read-only. The conversation and diagnostics remain separate.
+The browser Agent panel talks to the Pi RPC process through `AgentSession`. `vmi_panel` exposes `describe`, `propose`, `status`, `wait`, `inspect`, and `measure`. Inspection uses a `PanelInspection` tied to one browser tab. Exact measurements require a supported completed run visible to the current account. See the [capability matrix](agent-first-design.md#agent-capabilities).
 
-The [design reference](DESIGN.md) describes the visual tokens.
-`gui/theme.py` loads the palette and `gui/assets/theme.css`.
-The browser loads the packaged assets directly.
+The Agent's ordinary shell and file tools run inside its own session. A reviewed Python analysis takes a separate route through the queue and runs a saved script snapshot. The run record stores the script digest, input references and file metadata, parameters, runtime, logs, and outputs. A saved analysis form describes fields and result views for the approved script. The app renders those declarations with its own controls.
 
-## Jobs and resources
+## State and recovery
 
-Job panels start analysis programs with `sys.executable -m`. A job stores
-its command arguments, working directory, and result paths when submitted.
-Relative paths resolve from the subprocess working directory.
+| State | Owner | Lifetime |
+| --- | --- | --- |
+| Active view, plot selection, contextual Agent request | Browser tab and its server-side view | Current view session |
+| Agent session, transcript, pending proposals | `AgentManager` / `AgentSession` | Current server process, with bounded history |
+| Queue, job ownership, status, reservations, checkpoints | `JobManager` | Current server process |
+| Saved form settings | NiceGUI storage in local mode, account `settings.json` in shared mode | Disk |
+| Scientific output, calibration, workflow export, approved Python record | Workspace and account analysis storage | Disk |
+| Model API key | Agent session and child environment | Session lifetime |
 
-- `gui/jobs.py` schedules jobs and captures their logs. It starts up to two
-  jobs by default. The user can change that limit in **Settings**.
-- `gui/resources.py` declares the paths each job reads or writes. Jobs can
-  share read access. A write waits if it conflicts with a read or another
-  write. Unrelated jobs can use an available slot.
-- A multi-stage job reserves the resources of all its stages for the entire job.
-  Its stages run in order. The optional skip check tests whether the declared
-  output files exist.
-- The MATLAB CPBASEX backend uses an exclusive reservation for its shared
-  working data. The backend uses `CPBASEX_DIR` when set. Otherwise it uses
-  an existing legacy checkout or the bundled code. Supply the basis data separately.
-- `JobView` displays job status in the panel header and logs in a
-  collapsible console. One button starts, stops, or cancels
-  the panel job. A browser reload can reattach to an active job by name.
-- An approved Agent operation records the resolved panel inputs in
-  `job.extra["panel_form"]`. When a panel adopts an Agent job, its
-  `attach_builder` fills the form from that record, so the run shows the same
-  inputs a user would have entered before clicking Run.
-- Cancel and shutdown stop subprocess trees. On Windows the manager uses
-  `taskkill /T /F`. On POSIX it signals the process group.
-- `agent_backend.py` owns one interactive session per account rather than a
-  queued analysis job. It correlates RPC commands, reconstructs streamed text,
-  and stops containers or process trees during shutdown. The API key is passed
-  only through the child environment; `models.json` references that variable.
-  Stopping or losing the process deletes the temporary configuration and clears
-  the session's in-memory key copies. Agent connection fields are excluded from
-  saved settings and workflow files.
+A reconnect can reattach to live jobs or an Agent session in the same process. After a restart, reopen saved results and records from disk. A portable workflow restores form values. Save a Trig Calibration session separately to preserve rings, masks, and fits.
 
-**Keep running on disconnect** defaults to off. When enabled, it leaves the
-server available after all browsers disconnect. When it is off, the server
-waits two seconds by default after the last browser disconnects and checks
-for a reconnect before shutting down. **Stop server** in Settings shuts down
-the server and cancels jobs for all browsers.
+`vmi_analysis.paths` resolves the workspace. A checkout defaults to the repository root and an installed copy uses its startup directory. `VMI_WORKSPACE_DIR` overrides the default. Local generated previews live under `.cache/vmi-analysis/` by default. In shared mode the account supplies the workspace and cache roots. `centroiding/options.py` owns its option defaults and CLI serialization. `gui/settings.py` owns GUI persistence and read-only migration from older settings.
 
-## Settings
+## Execution and trust
 
-`centroiding/options.py` defines Centroiding defaults and CLI serialization.
-`gui/settings.py` imports supported legacy TOML values once. It reads the
-legacy file without changing it. GUI jobs pass explicit CLI arguments.
+| Mode | Standard panel jobs | Agent session | Reviewed Python runs |
+| --- | --- | --- | --- |
+| Local single user | Host process under the local OS user | Local Pi process by default | Host Python with the local user's permissions |
+| Manual-only shared | Host process under the shared Linux service account | Disabled | Disabled |
+| Sandboxed shared | Bubblewrap per subprocess, including workflow stages | Docker or Podman per active account session | A fresh Docker or Podman worker per run |
 
-`gui/workflow.py` exports and restores panel settings in one JSON file.
-A workflow stores paths and settings. Save a Trig Calibration session
-separately to preserve the applied processing, selected band, masks, and fits.
+A shared server authenticates HTTP and Socket.IO requests, scopes the queue to the account, and binds to loopback. Shared panel jobs in Bubblewrap see the account's writable workspace, read-only shared datasets and analysis records, and the required runtime files. The Agent container has a writable workspace and read-only input mounts. The reviewed Python container has read-only inputs and a writable run-output folder, with networking disabled. Browser file downloads use protected file handles. See the [deployment guide](shared-server.md#security-boundary).
 
-## Verification
+Manual-only shared mode keeps application-level path checks and ownership. All panel jobs inherit the service account's permissions, so cross-account reads and writes remain possible. Linux permissions still govern access to host files and shared datasets. The [manual-only setup](shared-server.md#manual-only-shared-mode) explains the required trust and service-account setup.
 
-Run the Python suite from the checkout.
+## Development
 
-```sh
-uv run python -m unittest discover -s tests -v
-```
-
-The suite covers unit and integration tests. Browser checks and fixtures
-are in `tests/browser/`. See the comments at the top of each check for
-the fixture and execution instructions.
+Use the [panel playbook](panel-development.md) to choose a job, inspection, or interactive view contract. Follow the [GUI design guide](DESIGN.md) for panel composition and the [contributor checks](../CONTRIBUTING.md#local-tests) before review.

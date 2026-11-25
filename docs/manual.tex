@@ -47,7 +47,7 @@
   urlcolor=vmcoral,
   pdftitle={VMI Analysis GUI — User Manual},
   pdfauthor={vmi-analysis-gui contributors},
-  pdfsubject={Velocity-map imaging photoelectron analysis pipeline and web interface}
+  pdfsubject={Agent-native velocity-map imaging workbench for electrons and ions}
 }
 
 \titleformat{\section}{\Large\bfseries\color{vmdark}}{\thesection}{0.8em}{}
@@ -120,18 +120,18 @@
 \section{Introduction}
 \label{sec:intro}
 
-The application analyzes camera frames from velocity-map imaging (VMI)
-experiments. It can produce detector images, calibrated energy spectra, and
-angular anisotropy parameters ($\beta$). The repository provides:
+VMI Analysis is an Agent-native workbench for velocity-map imaging (VMI).
+The Electron panels turn camera frames into detector images, calibrated
+photoelectron spectra, and angular anisotropy parameters ($\beta$).
+The Ion panels unpack Timepix3 data, plot time of flight and detector
+positions, reconstruct momenta, and compare peak yields across a delay scan.
+Live TPX3 displays an acquisition stream as it arrives.
 
-\begin{itemize}
-  \item a set of standalone Python command-line programs that perform the
-        numerical analysis, and
-  \item a NiceGUI web interface with individual analysis panels.
-\end{itemize}
-
-Supply your experiment data through the interface or on the command line.
-The Binning section describes the current implementation.
+Set up a panel directly or ask the embedded Agent to prepare a supported
+operation. Review its inputs before approval. Registered batch operations
+share the panel's job builder, queue, console, and results. Scientific
+command-line entry points remain available. The three deployment modes are
+local single user, manual-only shared, and sandboxed shared.
 
 \subsection{The analysis chain}
 \label{sec:chain}
@@ -176,8 +176,8 @@ Section~\ref{sec:shared} describes behaviour shared by every panel: the
 window layout, the Run/Stop control, the job queue, the log console, the file
 picker, the image-inspection overlay, and saved settings. Then
 Section~\ref{sec:data} describes the files the user must supply.
-Section~\ref{sec:panels} is the reference: one subsection per panel, with
-every field and button. Sections~\ref{sec:outputs} and~\ref{sec:calibration}
+Section~\ref{sec:panels} describes the Electron and Ion workflows, including
+the main controls and outputs. Sections~\ref{sec:outputs} and~\ref{sec:calibration}
 explain the files produced and the energy calibration procedure, and
 Sections~\ref{sec:cli}--\ref{sec:trouble} cover command-line use and
 troubleshooting. The appendices hold a glossary and the main formulas.
@@ -298,15 +298,18 @@ In \emph{Electron}, \emph{Acquire} groups \emph{GMD Map}, \emph{Movie},
 \emph{Dark Frame}, and \emph{Accumulate}. \emph{Analyze} groups
 \emph{Centroiding}, \emph{Binning}, \emph{Trig Calibration},
 \emph{Circularize}, and \emph{PES}.
-\emph{Ion} contains \emph{TPX3 Dump}, \emph{Ion TOF}, and \emph{Ion Pipeline}.
+\emph{Ion} contains \emph{TPX3 Dump}, \emph{Ion TOF}, \emph{Ion momenta},
+\emph{Ion Pipeline}, and \emph{Live TPX3}. The folded \emph{Fallback} group
+contains three manual comparison tools. \emph{Agent} appears above
+\emph{Settings} when the deployment enables it.
 
 The footer shows running and queued jobs, the job limit, and the server's
 disconnect mode. Open \emph{Settings} to change the limit or disconnect mode,
 save or load workflow files, or stop the server. Author details are under
 \emph{Settings} $\rightarrow$ \emph{About}.
 
-Every panel is built when the page loads and keeps its own run state,
-progress, log, and results. Switching tabs does not stop or restart work.
+The panels display jobs, logs, and results owned by the server. Switching
+tabs leaves a queued or running job active.
 
 \subsection{The Run/Stop control}
 \label{sec:runstop}
@@ -445,6 +448,26 @@ settings, including the polar percentile limits.
 Choose \emph{Load workflow} to restore those values.
 Save a separate Trig Calibration session for applied processing, the
 selected band, masks, and fitted rings.
+
+\subsection{Run a panel with the Agent}
+
+Open \emph{Agent} and expand \emph{Connection}. Enter the model endpoint,
+model ID, API format, and API key. Choose \emph{Start session}.
+Use an endpoint you trust with the prompts and data you send. The server
+keeps the key only for the session. Local mode uses Pi on the host by
+default. Sandboxed shared mode uses the configured Docker or Podman image.
+
+Ask the Agent to prepare a supported operation, giving the input path and
+scientific parameters. Review the resolved settings and output paths.
+Choose \emph{Approve and run} to queue the job or \emph{Decline} to dismiss
+it. Return to the ordinary panel to check its form, console, and results.
+For a fit tied to a plot, use the panel's \emph{Ask Agent} control and
+review the selection in that panel.
+
+For example, ask for a dark frame using the median of a named HDF5 folder.
+For ion work, ask for a TPX3 dump followed by an Ion TOF plot from that
+output. Add a GMD2 gate when the matching metadata is available. An
+ambiguous alignment can pause the workflow for a shift decision.
 
 \subsection{Analyze a screenshot with the Agent}
 
@@ -703,7 +726,7 @@ in \code{tmux} or as a Linux service.
 
 The repository contains \textbf{no experiment data}. Analysis paths are
 always supplied by the user through the interface or on the command line.
-This section describes the files the pipeline expects.
+This section describes the files used by the analysis panels.
 
 \subsection{Camera files (\code{RAW-\allowbreak{}*.\allowbreak{}h5})}
 \label{sec:rawdata}
@@ -733,7 +756,7 @@ laser both run at about 25\,Hz. Some frames carry zeroed metadata
 (\code{col3 = col4 = 0}); their timestamps are meaningless and should be
 ignored when judging GMD matching quality.
 
-The number of frames per file is typically about 126, but the pipeline
+The number of frames per file is typically about 126, but the analysis
 reads \code{N} from the file, so other counts also work. Individual tools
 differ slightly in which files they scan (for example \code{RAW-\allowbreak{}*.\allowbreak{}h5}
 versus all \code{*.\allowbreak{}h5}); the panel reference notes this where it matters.
@@ -2236,6 +2259,74 @@ Correction then uses each segment's own HDF5 file.
 Keep the master calibration unchanged and exclude these target outputs from
 the master accumulation sequence. A separate output path preserves the seed file.
 
+\subsection{Ion TOF}
+
+Open a LUNA HDF5 dump or a segmented acquisition collection
+(\code{.segments.json}). Choose an uncorrected or timewalk-corrected output,
+or use \emph{Use latest dump from TPX3 Dump}. Select raw pixel hits,
+clustered events, or both. Choose the trigger reference, histogram bin
+size, and display interval in nanoseconds, then choose \emph{Plot TOF}.
+The analysis measures each arrival from the preceding selected trigger
+within its acquisition segment. LUNA timestamps use $10^{-4}$ ns per tick.
+
+To filter by pulse energy, open \emph{GMD diagnostics} and load the matching
+acquisition metadata. Compare the correlation by shift and the plots of
+counts against GMD2. At shift $d$, metadata row $j$ selects camera frame
+$j+d$ within the same acquisition. Select an inclusive GMD2 interval by
+dragging on the histogram or entering its limits. A blank limit uses the
+corresponding data extreme.
+
+Select a fit interval on the gated or unfiltered spectrum and fit Gaussian
+peaks. The fitted windows can use either spectrum. Counting uses individual
+arrivals in the GMD2-selected frames, and normalization divides by the number
+of selected frames. Overlapping peak windows can count the same arrival.
+Use \emph{Capture plot for Agent} to attach an image and link a supported run
+for measurement.
+
+\subsection{Ion momenta}
+
+Open a LUNA dump or acquisition collection, choose the event source and
+trigger reference, and plot detector positions and TOF. Drag on the
+position or TOF plot, or type bounds, to link the two views. Fit Gaussian
+TOF peaks and assign their identity, charge, TOF window, and zero-momentum
+reference. Save or load species assignments as JSON.
+
+Enter the detector center, detector scale, and species parameters before
+plotting momenta. Choose the reconstruction model that matches your
+calibration. The Agent can prepare the initial histograms. Set gates,
+assign species, and reconstruct in the panel.
+
+\subsection{Ion Pipeline}
+
+Select a dataset root with one subfolder per delay position and a writable
+output directory. Set the LUNA and trigger options, the number of parallel
+delay positions, and whether to keep intermediate HDF5 dumps. Check the
+GMD2 pairing shift in Ion TOF before applying the same shift to the scan.
+
+Enter separate fit intervals for the peaks. Choose gated or ungated TOF
+for the fits. The pipeline fits each peak separately, counts individual
+arrivals in its fitted window, and divides by the selected frame count.
+The output includes a yield CSV and plot. Use the result controls to
+choose two peaks, view their ratio, and switch between linear and log
+scales. Delay-line position is in mm, with a displayed conversion of
+0.15 mm per ps.
+
+\subsection{Live TPX3 and fallback tools}
+
+Install the optional receiver with \code{uv sync --extra live}. In local
+mode, enter the acquisition publisher address. On a shared server the
+administrator sets \code{VMI\_TPX3\_LIVE\_ENDPOINT}. Set the TOF and
+GMD histogram limits and bin widths, then start the preview. The receiver
+accumulates the detector map, TOF histogram, and GMD histograms. The GMD
+time plot follows a rolling window. Frames with ambiguous trigger data
+remain visible in the receiver's diagnostic counts. The Agent can inspect
+the current tab's live snapshot after you start it.
+
+The \emph{Ion} $\rightarrow$ \emph{Fallback} group contains TPX3 Dump,
+Ion TOF, and Ion Pipeline variants for comparison with the standalone
+decoder. Use those panels manually and keep their outputs separate from
+LUNA results.
+
 \section{Output files}
 \label{sec:outputs}
 
@@ -2267,10 +2358,9 @@ Binning & \code{vmi\_\allowbreak{}2d\_\allowbreak{}gmd\_\allowbreak{}bin<b>\_\al
 & One 2D histogram per GMD bin, the sum of the bins, and an overview
 figure. The suffix encodes the weighting. \\
 \addlinespace
-PES & \code{<name>\_\allowbreak{}GMD\_\allowbreak{}<label>.\allowbreak{}txt}, three overview PNGs,
-\code{gmd\_\allowbreak{}bins\_\allowbreak{}results.npz}
-& Per-bin energy, intensity, beta and cleaned-image text files; overview
-spectra and beta figures; one archive with all arrays. \\
+PES & \code{pes-spectra-<job>.npz}, spectra, beta, and peak-table CSV downloads
+& Generated spectra and anisotropy arrays. Export the CSV files from the
+panel when needed. \\
 \addlinespace
 Dark Frame & \code{dark\_\allowbreak{}mean.\allowbreak{}npy} or \code{dark\_\allowbreak{}median.\allowbreak{}npy},
 \code{dark\_\allowbreak{}\{method\}\_\allowbreak{}info.txt} & Reusable dark frame and its statistics. \\
@@ -2285,6 +2375,22 @@ figure when a reassignment file is used. \\
 Movie & \code{<dataset>.\allowbreak{}mp4} or \code{.\allowbreak{}gif}, dumped frame PNGs &
 The movie file goes to the selected folder; dumped frames are disposable
 and live under \code{.\allowbreak{}cache/\allowbreak{}vmi-\allowbreak{}analysis/\allowbreak{}movie\_\allowbreak{}frames/\allowbreak{}}. \\
+\addlinespace
+TPX3 Dump & LUNA HDF5, optional \code{<stem>\_metadata.h5}, and
+\code{<stem>.segments.json} for a segmented acquisition & For segmented
+output, keep the collection and the HDF5 files it references together. \\
+\addlinespace
+Ion TOF and Ion momenta & Generated \code{ion-tof-<job>.npz} and
+\code{ion-momenta-<job>.npz} bundles & Ion TOF also generates gated and fit
+bundles. Ion momenta can export species assignments as JSON. \\
+\addlinespace
+Ion Pipeline & \code{ion-yields.csv}, \code{ion-yields.png},
+\code{ion-yield-ratio.csv} & Yields and counts by delay position, with a ratio
+for the first two configured peaks when available. \\
+\addlinespace
+Analysis runs & \code{script.py}, \code{run.json}, \code{run.log}, and output files
+& Reviewed script, run settings and provenance, console log, and artifacts
+available from the Agent's \emph{Analysis runs} view. \\
 \end{longtable}
 \end{center}
 
@@ -2405,24 +2511,34 @@ Picasso localisation and histogram; \code{-\allowbreak{}-\allowbreak{}h5-\allowb
 of one image; \code{-\allowbreak{}-\allowbreak{}input}, \code{-\allowbreak{}-\allowbreak{}output}, \code{-\allowbreak{}-\allowbreak{}shape}, \code{-\allowbreak{}-\allowbreak{}center},
 \code{-\allowbreak{}-\allowbreak{}extracted}, \code{-\allowbreak{}-\allowbreak{}reassign-\allowbreak{}file}, \code{-\allowbreak{}-\allowbreak{}no-\allowbreak{}jacobian}. \\
 \addlinespace
-\code{vmi\_\allowbreak{}analysis.circularization.process\_\allowbreak{}gmd\_\allowbreak{}bins} & PES chain and Abel
+\code{vmi\_\allowbreak{}analysis.circularization.process\_\allowbreak{}gmd\_\allowbreak{}bins} & Standalone GMD-bin batch
 inversion; \code{-\allowbreak{}-\allowbreak{}weight-\allowbreak{}suffix}, \code{-\allowbreak{}-\allowbreak{}bin-\allowbreak{}dir}, \code{-\allowbreak{}-\allowbreak{}output-\allowbreak{}dir},
 \code{-\allowbreak{}-\allowbreak{}inversion-\allowbreak{}backend}, \code{-\allowbreak{}-\allowbreak{}pyabel-\allowbreak{}method}, \code{-\allowbreak{}-\allowbreak{}use-\allowbreak{}cache},
 \code{-\allowbreak{}-\allowbreak{}no-\allowbreak{}show}. \\
 \end{longtable}
 \end{center}
 
+The current PES and Ion panels use the following command-line modules.
+Run each command with \code{--help} for its arguments and defaults.
+\begin{verbatim}
+uv run python -m vmi_analysis.pes --help
+uv run python -m vmi_analysis.ion_luna --help
+uv run python -m vmi_analysis.ion_tof --help
+uv run python -m vmi_analysis.ion_momenta --help
+uv run python -m vmi_analysis.ion_pipeline --help
+\end{verbatim}
+
 \subsection{Conventions shared by all programs}
 
 \begin{itemize}
   \item Path options marked required have no defaults: point them at your own
         data. Relative paths resolve from the program's working directory.
-  \item \code{-\allowbreak{}-\allowbreak{}config PATH} is optional and never loaded implicitly; explicit
-        command-line values override the file. The interface never uses it.
-  \item \code{-\allowbreak{}-\allowbreak{}no-\allowbreak{}show} suppresses interactive Matplotlib windows, which is
-        how GUI jobs run. Set \code{MPLBACKEND=Agg} for headless batch use.
-  \item All programs print progress and a summary to the console; redirect it
-        to a file for long runs.
+  \item Programs that accept \code{--config PATH} load that file only when
+        you select it explicitly. Explicit command-line values override it.
+        The GUI passes resolved options as command-line arguments.
+  \item For scripts that open Matplotlib windows, use \code{--no-show}
+        where supported or set \code{MPLBACKEND=Agg} for headless batch use.
+  \item Redirect console output to a log file for long runs.
 \end{itemize}
 
 \subsection{Environment variables}
@@ -2435,6 +2551,8 @@ Variable & Default & Effect \\
 \midrule
 \code{VMI\_\allowbreak{}GUI\_\allowbreak{}PORT} & 13517 & Port for the web interface. \\
 \code{VMI\_\allowbreak{}GUI\_\allowbreak{}NO\_\allowbreak{}SHOW} & unset & Set to 1 to suppress the browser window. \\
+\code{VMI\_\allowbreak{}SHARED\_\allowbreak{}CONFIG} & unset & Selects the shared-server JSON on a Linux host. \\
+\code{VMI\_\allowbreak{}TPX3\_\allowbreak{}LIVE\_\allowbreak{}ENDPOINT} & unset & Sets the acquisition publisher address for a shared server. \\
 \code{VMI\_\allowbreak{}WORKSPACE\_\allowbreak{}DIR} & checkout root & Workspace used for saved
 settings and relative default paths, important for installed copies. \\
 \code{NICEGUI\_\allowbreak{}STORAGE\_\allowbreak{}PATH} & \code{.\allowbreak{}nicegui} & Overrides where saved
@@ -2530,7 +2648,7 @@ backend, for example \code{Agg}. \\
     default paths; the repository root in a checkout.
 \end{description}
 
-\section{Formulas used by the pipeline}
+\section{Electron analysis formulas}
 \label{sec:formulas}
 
 \paragraph{Energy calibration.} $E = \alpha r^2$, with $r$ in histogram
@@ -2546,13 +2664,13 @@ symmetry, the photoelectron angular distribution is
                  + \beta_4 P_4(\cos\theta),
 \end{equation}
 where $P_\ell$ are Legendre polynomials and $\theta$ is measured from the
-light polarisation axis. The pipeline reports $\beta_2$ to $\beta_{10}$; for
+light polarisation axis. PES can report $\beta_2$ to $\beta_{10}$; for
 the usual experimental geometry the odd terms vanish.
 
 \paragraph{Abel inversion and the spectrum.} The 2D image is the line-of-sight
 integral of the 3D distribution. Abel inversion reconstructs the central
 slice, and the radial integral of that slice is the speed distribution,
-converted to an energy spectrum with the calibration above. The pipeline
+converted to an energy spectrum with the calibration above. The analysis
 centres the image, applies the distortion correction and an edge taper before
 inversion so that the reconstruction is not dominated by the detector hole or
 the image boundary.

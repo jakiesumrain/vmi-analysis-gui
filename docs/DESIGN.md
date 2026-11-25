@@ -1,4 +1,4 @@
-# VMI Analysis GUI — Design Principles
+# VMI Analysis workbench design
 
 Act as a product designer and design engineer for a **scientific instrument
 workbench**. The VMI Analysis GUI is a desktop-class web application
@@ -114,10 +114,14 @@ panel, not a SaaS landing page.
 
 ## Shell composition
 
+The [Agent-native design guide](agent-first-design.md) defines which operations
+the Agent can prepare or inspect. Use the same workbench controls for manual
+and Agent-approved work.
+
 The shell is a persistent workbench with four regions, and only four:
 
-- **Header** — application name, with *Settings* at the right.
-  No navigation lives here; navigation is the rail's job.
+- **Header** — application name and shared-account identity when applicable.
+  Navigation and Settings live in the rail.
 - **Left rail** — the tool index, with independently collapsible *Electron*
   and *Ion* groups. *Acquire* and *Analyze* are section captions
   inside *Electron*. Each tool has an icon and a short name. The active tool
@@ -126,7 +130,8 @@ The shell is a persistent workbench with four regions, and only four:
   names for every tool. Its bottom action is Settings, with a stronger blue
   treatment than the tool entries. Keep Settings available on narrow screens.
   The Ion group includes a nested Fallback disclosure. It starts closed and
-  contains the standalone TPX3 tools.
+  contains the three manual comparison tools. The Agent tab appears above
+  Settings in local and sandboxed shared mode.
 - **Workspace** — exactly one active panel. Panels switch; they do not
   stack, scroll into each other, or open side by side.
 - **Status footer** — one compact line of global state: active jobs, queued
@@ -186,6 +191,20 @@ A panel that invents its own layout vocabulary is a defect.
 - **Failures are actionable.** Error notifications say what failed and
   where to look; destructive confirmations list the exact files they will
   touch.
+
+### Agent conversation and approval
+
+- Use the workspace for the conversation and keep one page scroll surface.
+  Keep the composer at the bottom of the viewport and **Connection** next
+  to the Agent title. Connection contains diagnostics and model setup.
+- Place ongoing activity in the conversation. Keep the composer controls
+  for input, attachments, model selection, and Send or Stop.
+- Show resolved inputs, parameters, and outputs beside **Approve and run**
+  and **Decline**. For interactive review, return to the source panel and
+  keep the original run and selection visible while the user adjusts it.
+- Use the ordinary panel header, console, and results for approved jobs.
+  Present a live receiver or Agent session as an interactive view with its
+  own lifecycle.
 
 ## Data, imagery, and plots
 

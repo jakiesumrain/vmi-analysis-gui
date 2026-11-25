@@ -1,90 +1,53 @@
-# Agent-first design for VMI Analysis
+# Agent-native design
 
-The embedded Agent is part of the scientific workbench. A user can describe a
-task in natural language, inspect and adjust the Agent's proposal in the
-relevant panel, and follow the run from either the panel or the conversation.
-The user can take over at any point. Build this experience inside the app
-first. Defer external-agent integrations until the embedded workflows mature.
+VMI Analysis is a scientific workbench for electron and ion velocity-map imaging. A user can configure a panel directly or ask the embedded Agent to prepare an analysis. Both entry points use the same scientific implementation for the operations they share. Manual operation stays available in every deployment.
 
-## Give supported panels a shared set of operations
+## Design rules
 
-Enable Agent control and monitoring for the standard analysis panels. The
-standalone ion fallback panels are GUI-only. Each supported panel declares
-its operations and describes their inputs, units,
-defaults, validation, and outputs. The GUI and the Agent use the same
-application operations, scientific code, job scheduler, and workspace
-permissions.
+1. **The panel owns its scientific capability.** Keep input validation, resolved settings, units, command construction, and artifact declarations with the panel. An Agent operation describes and adapts that capability. Extend the panel when the science changes.
+2. **Prepare before executing.** Show the resolved inputs, settings, and outputs for a registered Agent proposal. The user can decline or approve. When an operation depends on a plot, keep its source run and selection tied to the originating view and apply edits through the panel's validation.
+3. **Share the job and the result.** Registered batch operations use the common queue, file reservations, cancellation, and result views. An adopted Agent run fills the originating panel from its submitted settings. Later manual edits retain priority.
+4. **Choose evidence for the question.** A screenshot supports visual interpretation. A registered measurement reads the completed run's data for exact numbers. A live inspection reads a snapshot from the originating tab. Describe the evidence and its limits.
+5. **Review new analysis as code.** A user can review and run a Python script, inspect its records and artifacts, and save a declarative form for reuse in the workspace. A permanent built-in panel goes through ordinary repository review.
+6. **Make authority explicit.** Account ownership, approved operations, and process isolation address different parts of the design. The Agent's shell and file tools run with the authority of its session. Standard panel jobs and reviewed Python runs have their own execution policies. The deployment guide defines the three modes and their trust assumptions.
 
-- **Batch analysis.** Prepare, validate, submit, monitor, and cancel jobs.
-- **Interactive analysis.** Read selections and stage proposed changes on
-  the plot and in the form. Let the user adjust them before running the analysis.
-- **Live previews.** Inspect the state of the preview, use its available
-  controls, and monitor summaries or user-defined conditions such as gaps
-  in the frame stream.
-- **Results.** Open a specific run, read warnings and measurements, and
-  compare its outputs with another run.
+## Agent capabilities
 
-Use the context of the view that invoked the Agent. Keep the active run,
-selected trace, visible range, and unsaved form values distinct. Attach a
-proposal to the specific run and inputs it was prepared for, so navigating
-to another result cannot silently change what it applies to.
+The table describes the registered actions in the current application. The Agent can discover their inputs through `vmi_panel describe`. A registration covers the listed action. Each panel may have additional manual controls.
 
-## Keep execution and progress visible
+| Panel | Operation ID | Agent capability |
+| --- | --- | --- |
+| GMD Map | `gmd_map` | Prepare the timestamp-based GMD map. |
+| Movie | `movie` | Prepare a frame preview or export. |
+| Dark Frame | `dark_frame` | Prepare a mean or median dark frame. |
+| Accumulate | `accumulate` | Prepare image accumulation. |
+| Centroiding | `centroiding` | Prepare localization and spectrum processing with the panel's settings. |
+| Binning | `binning` | Prepare GMD-weighted binning. |
+| Trig Calibration | `trig_calibration_fit` | Review and fit a selected ring from the panel's **Ask Agent** control. |
+| Circularize | `circularize` | Prepare image correction with a calibration file. |
+| PES | `pes`, `pes_fit` | Prepare spectra and anisotropy. Review a peak fit from the panel's **Ask Agent** control. |
+| TPX3 Dump | `tpx3_dump` | Prepare the LUNA dump. Apply timewalk correction manually in the panel. |
+| Ion TOF | `ion_tof`, `ion_tof_gate`, `ion_tof_fit` | Prepare spectra, GMD2 gating, and Gaussian fits. Inspect linked completed spectra and saved fits through registered measurements. |
+| Ion momenta | `ion_momenta` | Prepare the initial linked detector-position and TOF histograms. Set gates, assign species, and reconstruct in the panel. |
+| Ion Pipeline | `ion_pipeline` | Prepare the delay-scan yield analysis. |
+| Live TPX3 | `live_tpx3` | Inspect the running preview in the originating tab. Start and stop the receiver in the panel. |
 
-Show resolved settings, inputs, outputs, and decisions that require the
-user's judgment before submission. Let users review and approve a complete
-sequence of steps together. If a scientific decision remains unresolved,
-pause the workflow and open the relevant diagnostic so the user can decide
-and resume.
+The **TPX3 Dump → Ion TOF** workflow (`ion_dump_to_tof`) passes the exact planned output to the TOF stage and can pause for a GMD2 alignment decision. **Analysis runs** (`analysis_python`) supports reviewed scripts and saved analysis forms. The **Ion → Fallback** tools remain manual. Access by external agents through MCP or a general Agent CLI is deferred. Scientific CLI modules remain available.
 
-Keep run state in the app so the panel and the conversation show the same
-progress, warnings, and results. An approved run should remain inspectable
-after a browser reload. Record the input and output references, resolved
-parameters, and app or analysis version so the user can reproduce the result.
+## Review and inspect a run
 
-## Let the Agent inspect data and images
+The Agent presents an Ion TOF proposal. The user can check the input, trigger, bin width, and output before submitting.
 
-Expose panel state and structured plot data directly. Include trace labels,
-axis units and scales, visible bounds, and the current selection. Link the
-displayed trace to its source result when it has been binned or downsampled.
+![Agent proposal for a raw-pixel Ion TOF run, showing resolved settings and approval controls](assets/agent-approval.jpg)
 
-Support screenshots that users capture and attach to the conversation.
-A vision-capable model can interpret visible features, annotations, and
-warnings. When a screenshot is linked to a run, use its data and settings to
-verify quantitative claims. Panel captures can also help diagnose rendering
-issues such as clipped labels or overlapping traces.
+After approval, Ion TOF shows the submitted settings and spectrum. These screenshots use synthetic data, shortened display paths, and omit the local console command.
 
-## Support analyses beyond the existing panels
+![Ion TOF workbench showing the approved settings and the resulting two-peak spectrum](assets/ion-tof-workbench.jpg)
 
-Let the Agent write and run analysis scripts in the user's workspace. Use the
-app's locked Python dependencies for the Agent execution environment. Retain
-the script and its version, inputs, resolved parameters, and outputs alongside
-the run. Make plots and tables available in the workbench for inspection.
+## Related references
 
-When an analysis becomes repeatable, let the Agent propose a temporary panel
-in the current workspace. The proposal defines the form fields, units,
-defaults, validation, and result views, and references the analysis script.
-Render it with the app's existing components. Execute the script in the user's
-analysis environment through the job system. Use the same interface for
-inputs, execution, progress, and results as built-in panels, so the Agent can
-operate on either kind.
-
-The user can discard the draft, save it as a versioned reusable workspace
-panel, or propose it for inclusion as a built-in panel through the project's
-normal review and release process.
-
-## Verify the full workflow on Ion TOF
-
-Build on the existing TPX3 Dump and Ion TOF integration. Use equivalent
-inputs to verify that a GUI run and an Agent run produce the same scientific
-result. Then take an Ion TOF result through the complete path.
-
-1. Select a peak on the spectrum and ask the Agent to fit it. Adjust its
-   proposed window on the plot, approve the fit, and inspect the result.
-2. Attach a screenshot of the result and, when linked to the run, verify
-   the interpretation against the underlying data.
-3. Ask the Agent to write a peak-drift analysis across several runs.
-4. Turn the script into a temporary panel and run it on a second dataset.
-   Verify that the user can review, rerun, and save the panel for reuse.
-
-Apply the same principles as additional panels gain Agent support.
+- [Architecture and state ownership](architecture.md)
+- [Contributor playbook](panel-development.md)
+- [Workbench design](DESIGN.md)
+- [Deployment and isolation](shared-server.md)
+- [Delivery record and remaining work](agent-first-overhaul-plan.md)
