@@ -355,9 +355,9 @@ class GuiSubmissionTests(unittest.TestCase):
                 with self.subTest(alpha=alpha):
                     q = np.array([1, 4, 9])
                     x = q * (alpha or 1)
-                    save_plot_data(path, {"alpha": alpha, "beta_order": 2, "images": [{"path": "image.npy"}]},
+                    save_plot_data(path, {"alpha": alpha, "beta_order": 4, "images": [{"path": "image.npy"}]},
                                    r2_0=q, x_0=x, y_0=[2, 2, 2], beta_x_0=x,
-                                   moments_0=[[2., 2., 2.], [1., 1., 1.]])
+                                   moments_0=[[2., 2., 2.], [1., 1., 1.], [-2., -2., -2.]])
                     job = Job("PES", status="done", extra={"pes_spectra": str(path)})
                     client = Client(ui.page("/_test_pes_uniform_grid"))
                     callbacks = {}
@@ -369,6 +369,9 @@ class GuiSubmissionTests(unittest.TestCase):
                                 patch.object(ui, "notify") as notify:
                             pes.build(Mock(jobs=Mock(return_value=[job])))
                             callbacks["View latest spectra"]()
+                            native_beta = plot_options.call_args_list[-2].args[0]
+                            self.assertEqual(native_beta.layout.yaxis2.overlaying, "y")
+                            self.assertEqual([trace.xaxis for trace in native_beta.data], ["x", "x"])
                             section = next(element for element in client.elements.values()
                                            if isinstance(element, ui.expansion) and element.text == "Uniform-grid spectra")
                             self.assertFalse(section.value)
@@ -382,11 +385,17 @@ class GuiSubmissionTests(unittest.TestCase):
                             apply_settings = callbacks["Apply plot settings"]
                             apply_settings()
                             fig = plot_options.call_args.args[0]
-                            intensity, beta = fig.data
+                            intensity, beta2, beta4 = fig.data
                             np.testing.assert_allclose(intensity.x, x[0] + width.value * np.array([0.5, 1.5, 2.5]))
                             np.testing.assert_allclose(intensity.y, [2, 2, 4 / 3])
-                            np.testing.assert_allclose(beta.x, intensity.x)
-                            np.testing.assert_allclose(beta.y, [0.5, 0.5, 0.5])
+                            np.testing.assert_allclose(beta2.x, intensity.x)
+                            np.testing.assert_allclose(beta2.y, [0.5, 0.5, 0.5])
+                            np.testing.assert_allclose(beta4.y, [-1, -1, -1])
+                            self.assertEqual([beta2.xaxis, beta4.xaxis], ["x2", "x2"])
+                            self.assertEqual([beta2.yaxis, beta4.yaxis], ["y2", "y3"])
+                            self.assertEqual(fig.layout.yaxis3.overlaying, "y2")
+                            self.assertLess(fig.layout.yaxis3.shift, 0)
+                            self.assertEqual(beta4.line.color, fig.layout.yaxis3.tickfont.color)
                             self.assertIn(units, fig.layout.xaxis2.title.text)
                             self.assertEqual(fig.layout.xaxis.range, (x[0], x[-1]))
                             self.assertEqual(fig.layout.xaxis2.range, (x[0], x[-1]))

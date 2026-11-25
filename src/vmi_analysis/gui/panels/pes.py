@@ -22,7 +22,7 @@ from vmi_analysis.pes import (ABEL_METHODS, BASELINE_PARAMETERS, BETA_ORDERS, QU
 from ..agent_panels import PanelOperation, PanelView, number as finite_number, require_completed_job, resolve_path
 from ..shared import checked_path, generated_dir, workspace_root
 from .. import theme
-from ..centroid_plots import _style, linear_axis_limits, plot_options
+from ..centroid_plots import SERIES_COLORS, _style, linear_axis_limits, plot_options
 from ..jobs import Job, JobManager
 from ..resources import canonical_path
 from .common import (GENERATED, REPO_ROOT, JobView, action_bar, adopt_agent_form, check_grid,
@@ -33,6 +33,8 @@ JOB_NAME = "PES"
 FIT_OPERATION = "pes_fit"
 PROFILES = ("Gaussian", "Voigt")
 MAX_RESAMPLED_BINS = 10_000
+PES_SAMPLE_MARKER = {"size": 4}
+BETA_AXIS_SPACING = 64
 _AXIS_SCRIPT = (files("vmi_analysis.gui.assets") / "pes_axes.js").read_text(encoding="utf-8")
 
 
@@ -63,6 +65,26 @@ def _style_comparison_plot(fig, height):
     )
     fig.update_xaxes(automargin=False)
     fig.update_yaxes(automargin=False)
+
+
+def _add_beta_traces(fig, x, orders, beta_values, *, subplot=1, y_limits=None):
+    """Overlay each order on its own left axis within the β subplot."""
+    suffix = str(subplot) if subplot > 1 else ""
+    base_y = f"y{suffix}"
+    for index, (order, values) in enumerate(zip(orders, beta_values)):
+        axis_suffix = str(subplot + index) if index else suffix
+        color = SERIES_COLORS[index + 1]
+        label = f"β{order}"
+        fig.add_scatter(x=x, y=values, xaxis=f"x{suffix}", yaxis=f"y{axis_suffix}",
+                        name=label, mode="lines+markers", marker=PES_SAMPLE_MARKER, line_color=color)
+        axis = dict(title_text=f"{label} (dimensionless)", title_font_color=color,
+                    tickfont_color=color, linecolor=color, showline=True,
+                    showgrid=index == 0, zeroline=index == 0, **(y_limits or {}))
+        if index:
+            axis.update(overlaying=base_y, anchor="free", side="left", position=0,
+                        shift=-BETA_AXIS_SPACING * index, automargin=False)
+        fig.update_layout({f"yaxis{axis_suffix}": axis})
+    fig.update_layout(margin_l=fig.layout.margin.l + BETA_AXIS_SPACING * (len(orders) - 1))
 
 
 def spectra_job(paths, geometry, overrides, *, alpha=None, abel_method="hansenlaw", beta_order=0,
@@ -420,8 +442,8 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
         low, high = fit_low.value, fit_high.value
         fig = go.Figure()
         for name, (_, x, y) in state["spectra"].items():
-            fig.add_scatter(x=x, y=y, name=name, mode="lines+markers" if selecting else "lines",
-                            marker={"opacity": 0}, hovertemplate="%{x:.6g}, %{y:.6g}<extra>%{fullData.name}</extra>")
+            fig.add_scatter(x=x, y=y, name=name, mode="lines+markers", marker=PES_SAMPLE_MARKER,
+                            hovertemplate="%{x:.6g}, %{y:.6g}<extra>%{fullData.name}</extra>")
         if low is not None and high is not None and low < high:
             fig.add_vrect(x0=low, x1=high, fillcolor="#1e40af",
                           opacity=0.14, line_width=0, layer="below")
@@ -511,8 +533,8 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
         fields, spectrum = axis_controls(
             "Angular anisotropy (β)", "β plot", "beta_", "Apply β axes", lambda: redraw(update_axes=True),
             selector=lambda: ui.select(names, value=names[0], label="β spectrum").props("outlined dense").classes("max-w-full"),
-            note="Each β order is shown in its own panel with an independent vertical scale. "
-                 "Leave the Y limits blank to auto-range each panel; explicit Y limits apply to every panel. "
+            note="Each β order has its own vertical scale. "
+                 "Leave the Y limits blank to auto-range each axis. Explicit Y limits apply to every β axis. "
                  "β can be unreliable where the signal is weak; bins with nonpositive isotropic intensity are omitted.",
         )
         chart = _scientific_plot()
@@ -531,22 +553,11 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             x, moments = state["angular"][spectrum.value]
             orders = state["beta_orders"]
             beta_values = anisotropy_values(moments)
-            rows = max(1, len(orders))
-            fig = make_subplots(rows=rows, cols=1, shared_xaxes=True,
-                                vertical_spacing=0.04 if rows > 1 else 0.0)
-            for row, (order, values) in enumerate(zip(orders, beta_values), start=1):
-                fig.add_scatter(x=x, y=values, mode="lines", name=f"β{order}",
-                                row=row, col=1)
-                fig.update_yaxes(title_text=f"β{order} (dimensionless)",
-                                 row=row, col=1, **y_axis)
-            _style_comparison_plot(fig, max(347, 210 * rows + 100))
-            fig.update_layout(uirevision=f"{spectrum.value}:{revision}", showlegend=False)
-            for row in range(1, rows + 1):
-                fig.update_xaxes(**x_axis, row=row, col=1)
-                if row < rows:
-                    fig.update_xaxes(showticklabels=False, title_text="", row=row, col=1)
-            fig.update_xaxes(title_text=f"{state['x_label']} ({state['units']})",
-                             row=rows, col=1)
+            fig = go.Figure()
+            _style_comparison_plot(fig, 402)
+            _add_beta_traces(fig, x, orders, beta_values, y_limits=y_axis)
+            fig.update_layout(uirevision=f"{spectrum.value}:{revision}")
+            fig.update_xaxes(title_text=f"{state['x_label']} ({state['units']})", **x_axis)
             chart.update_figure(plot_options(fig))
 
         spectrum.on_value_change(lambda _: redraw())
@@ -598,21 +609,18 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             count = max(1, int(np.ceil(span / step)))
             edges = low + np.arange(count + 1) * step
             centers = edges[:-1] + step / 2
-            rows = 1 + len(orders)
+            rows = 2 if beta_spectrum else 1
             fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.04)
             for name, (_, x, y) in spectra.items():
                 density = integrate_spectral_bins(x, y, edges) / step
-                fig.add_scatter(x=centers, y=density, name=name, mode="lines+markers", marker={"size": 4},
+                fig.add_scatter(x=centers, y=density, name=name, mode="lines+markers", marker=PES_SAMPLE_MARKER,
                                 row=1, col=1)
             fig.update_yaxes(title_text="Bin-average intensity", row=1, col=1)
+            _style_comparison_plot(fig, max(347, 210 * rows + 100))
             if beta_spectrum:
                 x, moments = angular[beta_spectrum.value]
                 beta = anisotropy_values(integrate_spectral_bins(x, moments, edges))
-                for row, (order, values) in enumerate(zip(orders, beta), start=2):
-                    fig.add_scatter(x=centers, y=values, mode="lines+markers", marker={"size": 4},
-                                    name=f"β{order}", showlegend=False, row=row, col=1)
-                    fig.update_yaxes(title_text=f"β{order} (dimensionless)", row=row, col=1)
-            _style_comparison_plot(fig, max(347, 210 * rows + 100))
+                _add_beta_traces(fig, centers, orders, beta, subplot=2)
             fig.update_xaxes(**x_axis)
             fig.update_xaxes(title_text=f"{x_label} ({units})", row=rows, col=1)
             plots.clear()

@@ -38,13 +38,16 @@ window.vmiUpdatePesAxes = (component) => {
 
     if (exponent !== 0) {
       const suffix = name.slice(5);
-      const xref = horizontal ? `x${suffix}` : axis.anchor;
+      const free = axis.anchor === "free";
+      const baseAxis = free ? full[`yaxis${axis.overlaying?.slice(1) ?? ""}`] : axis;
+      const xref = horizontal ? `x${suffix}` : baseAxis?.anchor;
       const yref = horizontal ? axis.anchor : `y${suffix}`;
       annotations.push({
         xref: `${xref} domain`, yref: `${yref} domain`,
         x: horizontal ? 1 : 0, y: horizontal ? 0 : 1,
         xanchor: horizontal ? "right" : "left",
         yanchor: horizontal ? "top" : "bottom",
+        xshift: free ? axis.shift : 0,
         yshift: horizontal ? -24 : 3,
         text: `×10<sup>${String(exponent).replace("-", "−")}</sup>`,
         font: {color: axis.tickfont.color, size: axis.tickfont.size},
