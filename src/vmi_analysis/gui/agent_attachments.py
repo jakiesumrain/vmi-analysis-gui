@@ -162,6 +162,8 @@ async def _bounded_stream(stream, limit: int):
 
 @app.post("/agent-attachments")
 async def upload_agent_attachments(request: Request):
+    if not shared.agent_enabled():
+        raise HTTPException(404)
     origin = request.headers.get("origin")
     if origin and origin != f"{request.url.scheme}://{request.headers.get('host', '')}":
         raise HTTPException(403, "Cross-origin uploads are not allowed.")

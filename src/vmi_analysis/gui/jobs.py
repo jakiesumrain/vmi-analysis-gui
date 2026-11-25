@@ -114,8 +114,12 @@ class JobManager:
     def submit(self, job: Job) -> Job:
         account = shared.current_account()
         if account:
+            manual_only = shared.SERVER.manual_only
+            if manual_only and (job._launches_isolated_worker or job.extra.get("agent_panel")):
+                raise shared.WorkspaceDenied("Agent jobs are disabled in manual-only shared mode.")
+            if not manual_only:
+                job._shared_roots = (account.root, shared.SERVER.datasets, shared.analysis_root(account))
             job.owner = account.name
-            job._shared_roots = (account.root, shared.SERVER.datasets, shared.analysis_root(account))
             job.cwd = job.cwd or str(account.root)
             for stage in job.stages or ():
                 stage.cwd = stage.cwd or job.cwd
@@ -124,6 +128,8 @@ class JobManager:
                        'XDG_CACHE_HOME': str(account.root / '.cache'),
                        'MPLCONFIGDIR': str(account.root / '.cache' / 'matplotlib'),
                        'PYTHONSAFEPATH': '1', 'VMI_SHARED_CONFIG': ''}
+            if manual_only:
+                job.env.update(HOME=str(account.root), TMPDIR=str(account.root / '.cache'), PYTHONNOUSERSITE='1')
             commands = [stage.cmd for stage in job.stages] if job.stages is not None else [job.cmd]
             for command in commands:
                 if command is not None:

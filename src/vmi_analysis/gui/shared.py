@@ -107,7 +107,13 @@ def password_hash(password, salt=None):
 
 
 class SharedServer:
+    manual_only = False
+
     def __init__(self, config):
+        mode = config.get('mode', 'sandboxed')
+        if mode not in ('sandboxed', 'manual-only'):
+            raise ValueError('Shared-server mode must be sandboxed or manual-only.')
+        self.manual_only = mode == 'manual-only'
         self.datasets = Path(config['datasets']).expanduser().resolve(strict=True)
         root = Path(config['workspaces']).expanduser().resolve()
         if not self.datasets.is_dir() or root.is_relative_to(self.datasets) or self.datasets.is_relative_to(root):
@@ -169,6 +175,10 @@ class SharedServer:
 
 SERVER: SharedServer | None = None
 SESSION_TOKEN = ContextVar('vmi_session', default=None)
+
+
+def agent_enabled():
+    return SERVER is None or not SERVER.manual_only
 
 
 def request_account(scope):

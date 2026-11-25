@@ -14,7 +14,8 @@ selects the person's workspace.
    private to the service account and the host administrator.
 2. Install [Bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) and
    verify that the service account can create unprivileged user namespaces.
-   Standard panel jobs require Bubblewrap and fail if the sandbox cannot start.
+   In the default sandboxed mode, panel jobs fail if the sandbox cannot start.
+   On a host that cannot use Bubblewrap, see [Manual-only shared mode](#manual-only-shared-mode).
    Keep the Python environment, application code, and host tools outside the
    shared data and workspace roots. Put the Linux LUNA executable on the
    service account's `PATH`.
@@ -140,6 +141,40 @@ administrators can change the running server's limit or stop it from Settings.
 Set the startup limit in the JSON file. Restart the server to add or remove
 accounts or change a password hash.
 
+## Manual-only shared mode
+
+On a Linux host without Bubblewrap, Docker, or Podman, add
+`"mode": "manual-only"` at the top level of your shared-server JSON and restart
+the server. Keep the existing `datasets`, `workspaces`, and `accounts` entries.
+This mode uses the host's uv environment and any tools required by the
+panels you run, such as LUNA. Users still sign in on the same port and get
+separate form settings, job controls, output folders, and workspace downloads.
+The server disables the Agent, its attachment uploads, and its custom Python
+analyses and saved panels.
+
+**Use this mode only for a team that trusts its members and its input files.**
+All panel jobs inherit the filesystem permissions of the same Linux service
+account. The app checks workspace and dataset paths at
+submission and limits what the browser can browse or download. During a job,
+the OS permissions of that service account determine which files it can open.
+A path change after validation can expose another account's files to a job.
+Jobs may also be able to overwrite another account's outputs. Treat all
+workspace files as accessible to the team and use sandboxed mode for data that
+requires confidentiality or protection from another user.
+
+Use a dedicated, unprivileged service account. Remove its write permission on
+the shared datasets at the OS or mount level. Keep sensitive host files
+inaccessible to that account, and limit its writable application storage to
+the workspace directory. Keep the configuration, app, and tools outside the
+workspaces. Keep unrelated credentials out of the service environment. Use a
+service account without sudo or membership in a privileged container-runtime
+group. Admit only trusted users and trusted input data. Restrict direct
+workspace access to the service account and host administrators.
+
+To restore sandboxed mode, remove `mode` or set it to `"sandboxed"`, install
+the required tools, and restart. Switching modes preserves existing workspace
+files and form settings.
+
 ## Use the Agent panel
 
 Every signed-in account can open **Agent** in the sidebar footer above
@@ -188,7 +223,7 @@ server. The completed stages also appear in **TPX3 Dump** and **Ion TOF**.
 
 ## Security boundary
 
-This deployment separates application accounts for an approved lab team.
+In sandboxed mode, the deployment separates application accounts for an approved lab team.
 Standard panel subprocesses run in a Linux mount namespace. They can write to
 the signed-in account's workspace and read shared datasets and that account's
 analysis records. They cannot open another account's files. The namespace is

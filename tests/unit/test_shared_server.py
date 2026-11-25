@@ -90,6 +90,36 @@ class SharedServerTests(unittest.TestCase):
                                         self.datasets, shared.analysis_root(self.alice))
         self.assertIn("sandboxed", job.log)
 
+    def test_manual_only_jobs_use_host_tools_and_keep_account_checks(self):
+        self.server.manual_only = True
+        manager = JobManager()
+        output = self.alice.root / "result.txt"
+        source = self.datasets / "input.txt"
+        source.write_text("shared input", encoding="utf-8")
+        script = "from pathlib import Path; import sys; Path(sys.argv[2]).write_bytes(Path(sys.argv[1]).read_bytes())"
+        with self.account(self.alice), patch.object(manager, "_schedule_locked"):
+            job = manager.submit(Job("Ion TOF", [sys.executable, "-c", script, str(source), str(output)],
+                                     reads=[source], writes=[output]))
+            with self.assertRaises(shared.WorkspaceDenied):
+                manager.submit(Job("Write", [sys.executable], writes=[source]))
+            with self.assertRaisesRegex(shared.WorkspaceDenied, "Agent jobs are disabled"):
+                manager.submit(Job("Python analysis", [sys.executable], _launches_isolated_worker=True))
+            with self.assertRaisesRegex(shared.WorkspaceDenied, "Agent jobs are disabled"):
+                manager.submit(Job("Ion TOF", [sys.executable], extra={"agent_panel": True}))
+        with self.account(self.bob):
+            self.assertIsNone(manager.get(job.id))
+        with patch("vmi_analysis.gui.jobs.panel_command") as sandbox:
+            self.assertEqual(manager._run_cmd(job, job.cmd, job.cwd), 0, "\n".join(job.log))
+        sandbox.assert_not_called()
+        self.assertEqual(output.read_text(encoding="utf-8"), "shared input")
+
+    def test_manual_only_mode_requires_explicit_configuration(self):
+        self.assertTrue(shared.agent_enabled())
+        with patch.object(shared, "SERVER", shared.SharedServer({**self.config, "mode": "manual-only"})):
+            self.assertFalse(shared.agent_enabled())
+        with self.assertRaisesRegex(ValueError, "sandboxed or manual-only"):
+            shared.SharedServer({**self.config, "mode": "manual"})
+
     def test_shared_job_does_not_start_if_sandbox_is_unavailable(self):
         manager = JobManager()
         with self.account(self.alice), patch.object(manager, "_schedule_locked"):
