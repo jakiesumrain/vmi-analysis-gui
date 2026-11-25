@@ -6,17 +6,13 @@ async page => {
   await page.setViewportSize({width: 1440, height: 1000});
   await page.getByRole('tab', {name: 'Agent', exact: true}).click();
   const panel = page.getByRole('tabpanel');
-  await panel.locator('.vmi-title').filter({hasText: /^Agent$/}).waitFor();
+  await panel.getByRole('heading', {name: 'New chat', exact: true}).waitFor();
   await page.waitForFunction(() => !document.querySelector('[class*="enter-active"], [class*="leave-active"]'));
 
-  const header = panel.locator('.vmi-panel-head').filter({hasText: /^Agent/});
-  const title = header.locator('.vmi-title');
-  const connectionButton = header.getByRole('button', {name: 'Connection', exact: true});
-  const titleBox = await title.boundingBox();
-  const connectionBox = await connectionButton.boundingBox();
-  const headerBox = await header.boundingBox();
-  check(connectionBox.x > titleBox.x + titleBox.width, 'Connection is not to the right of the title');
-  check(connectionBox.x - headerBox.x < headerBox.width / 2, 'Connection is too far from the title');
+  const actions = page.locator('.vmi-sidebar-agent-actions');
+  const connectionButton = actions.getByRole('button', {name: 'Connection', exact: true});
+  await actions.getByRole('button', {name: 'Analysis runs', exact: true}).waitFor();
+  check(!await panel.getByText('idle', {exact: true}).count(), 'Chat still shows an idle badge');
 
   const drawer = panel.locator('.vmi-agent-connection');
   const baseUrl = drawer.getByRole('textbox', {name: 'Base URL', exact: true});

@@ -4,6 +4,7 @@ async page => {
   page.on('pageerror', error => errors.push(error.message));
   const group = name => page.locator(`[data-workspace-group="${name}"]`);
   const electron = group('Electron');
+  const workbench = group('Workbench');
   const ion = group('Ion');
   const ionSummary = ion.locator(':scope > summary');
   const fallback = ion.locator('[data-workspace-group="Fallback"]');
@@ -13,6 +14,7 @@ async page => {
 
   await page.evaluate(() => {
     localStorage.removeItem('vmi-workspace.Electron.open');
+    localStorage.removeItem('vmi-workspace.Workbench.open');
     localStorage.removeItem('vmi-workspace.Ion.open');
     localStorage.removeItem('vmi-workspace.Fallback.open');
     localStorage.removeItem('vmi-workspace.sidebar.collapsed');
@@ -20,7 +22,12 @@ async page => {
   await page.reload();
   await electron.locator('summary').waitFor();
   await page.locator('[data-sidebar-ready]').waitFor();
-  if (await isOpen(electron) || await isOpen(ion)) throw new Error('Both groups should start collapsed');
+  if (!await isOpen(workbench) || await isOpen(electron) || await isOpen(ion)) {
+    throw new Error('Workbench should start open with Electron and Ion folded');
+  }
+  if (await workbench.locator(':scope > [data-workspace-group]').count() !== 2) {
+    throw new Error('Electron and Ion should both be inside Workbench');
+  }
   await electron.locator('summary').press('Enter');
   await ionSummary.press('Enter');
 
@@ -55,12 +62,18 @@ async page => {
 
   const sidebar = page.locator('.vmi-sidebar');
   const settings = sidebar.getByRole('button', {name: 'Settings', exact: true});
-  const agent = sidebar.locator('.vmi-sidebar-foot').getByRole('tab', {name: 'Agent', exact: true});
-  if (await electron.getByRole('tab', {name: 'Agent', exact: true}).count()) {
-    throw new Error('Agent is still grouped with Electron tools');
+  const agent = sidebar.locator(':scope > .vmi-sidebar-agent').getByRole('tab', {name: 'Agent', exact: true});
+  const collapse = sidebar.getByRole('button', {name: 'Collapse sidebar', exact: true});
+  if ((await agent.boundingBox()).y >= (await workbench.boundingBox()).y ||
+      await workbench.getByRole('tab', {name: 'Agent', exact: true}).count()) {
+    throw new Error('Agent should be a top-level item above Workbench');
+  }
+  const [agentBox, collapseBox] = await Promise.all([agent.boundingBox(), collapse.boundingBox()]);
+  if (Math.abs(agentBox.y + agentBox.height / 2 - collapseBox.y - collapseBox.height / 2) > 1) {
+    throw new Error('The collapse button should stay beside Agent on desktop');
   }
   await agent.click();
-  await panel('Agent').waitFor();
+  await panel('New chat').waitFor();
   await page.getByRole('tab', {name: 'Agent', exact: true, selected: true}).waitFor();
   const connection = page.locator('.vmi-agent-connection');
   const connectionButton = page.getByRole('button', {name: 'Connection', exact: true});
@@ -76,7 +89,7 @@ async page => {
   if (await sidebar.getByText(/Local workspace|Private workspace|13 tools/).count()) {
     throw new Error('The old sidebar footer is still shown');
   }
-  await sidebar.getByRole('button', {name: 'Collapse sidebar', exact: true}).press('Enter');
+  await collapse.press('Enter');
   await page.waitForFunction(() => document.querySelector('.vmi-sidebar--collapsed'));
   const width = (await sidebar.boundingBox()).width;
   if (width > 80) throw new Error('Icon rail is not narrow');
@@ -85,7 +98,7 @@ async page => {
   }
   for (const name of ['Circularize', 'TPX3 Dump', 'Ion Pipeline', 'Agent']) {
     await tab(name).click();
-    await panel(name).waitFor();
+    await panel(name === 'Agent' ? 'New chat' : name).waitFor();
   }
   if (!await settings.isVisible()) throw new Error('Settings is hidden in the icon rail');
   await settings.click();

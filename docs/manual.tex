@@ -286,10 +286,10 @@ one Run/Stop control. See Section~\ref{sec:panels} for the panel-specific fields
 \subsection{Window layout and tabs}
 \label{sec:tabs}
 
-Use the left sidebar to select a panel. Expand or collapse \emph{Electron}
-and \emph{Ion} independently. Both start collapsed. The browser remembers
-which groups you open.
-On desktop, use the arrow beside \emph{Workspace} to collapse the sidebar
+Open \emph{Workbench} in the left sidebar to select a panel. Expand or
+collapse \emph{Electron} and \emph{Ion} independently. Both start collapsed.
+The browser remembers which groups you open.
+On desktop, use the arrow at the top of the sidebar to collapse it
 to icons. Hover over an icon to see its tool name. Use the arrow again to
 expand the sidebar. The browser remembers the sidebar width.
 Open \emph{Settings} at the bottom of the sidebar for workspace and server controls.
@@ -301,7 +301,8 @@ In \emph{Electron}, \emph{Acquire} groups \emph{GMD Map}, \emph{Movie},
 \emph{Ion} contains \emph{TPX3 Dump}, \emph{Ion TOF}, \emph{Ion momenta},
 \emph{Ion Pipeline}, and \emph{Live TPX3}. The folded \emph{Fallback} group
 contains three manual comparison tools. \emph{Agent} appears above
-\emph{Settings} when the deployment enables it.
+\emph{Workbench} when enabled, with \emph{Connection} and \emph{Analysis runs}
+available under it.
 
 The footer shows running and queued jobs, the job limit, and the server's
 disconnect mode. Open \emph{Settings} to change the limit or disconnect mode,
@@ -495,7 +496,7 @@ Read the script, inputs, and parameters in the review before choosing
 and account running VMI Analysis. A shared Linux server uses the bundled
 Agent image in a separate container with networking disabled.
 
-Open \emph{Analysis runs} in the Agent header to follow the log, cancel a
+Open \emph{Analysis runs} under \emph{Agent} in the sidebar to follow the log, cancel a
 run, or download the approved script, run record, log, and output files.
 The script receives the run record path as its first argument. The record
 contains named input paths and JSON parameters. Write result files directly

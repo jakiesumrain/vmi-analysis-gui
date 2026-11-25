@@ -14,7 +14,7 @@ from vmi_analysis.paths import WORKSPACE_ROOT
 
 from vmi_analysis.agent_backend import AGENTS
 
-from . import shared, theme, workflow
+from . import analysis_runs, shared, theme, workflow
 from .jobs import MANAGER, ResourceBusyError
 from .panel_operations import build_registry
 from .startup import startup_port
@@ -347,21 +347,36 @@ def index() -> None:
 
     with ui.row().classes("vmi-workbench w-full no-wrap"):
         with ui.column().classes("vmi-sidebar"):
-            with ui.row().classes("vmi-sidebar-heading w-full items-center justify-between no-wrap"):
-                ui.label("Workspace").classes("vmi-sidebar-title")
-                ui.button(icon="chevron_left").props(
-                    'flat round dense data-sidebar-toggle aria-label="Collapse sidebar" aria-expanded="true"'
-                ).classes("vmi-sidebar-toggle")
-            for group, sections in SIDEBAR_GROUPS:
-                disclosure = sidebar_group(group, sections)
-                if group == "Ion":
-                    with disclosure:
-                        sidebar_group("Fallback", ((None, FALLBACK_TABS),)).classes("vmi-sidebar-fallback")
-            with ui.column().classes("vmi-sidebar-foot"):
+            connection_button = None
+            with ui.column().classes("vmi-sidebar-agent w-full gap-0"):
+                with ui.row().classes("vmi-sidebar-heading w-full items-center justify-end no-wrap"):
+                    if agent_enabled:
+                        with ui.tabs().props('inline-label aria-label="Agent session"').classes("vmi-sidebar-agent-tab") as tabs:
+                            tab_groups.append(tabs)
+                            ui.tab("Agent", icon=TAB_ICONS["Agent"]).props('aria-label="Agent"').tooltip("Agent")
+                    ui.button(icon="chevron_left").props(
+                        'flat round dense data-sidebar-toggle aria-label="Collapse sidebar" aria-expanded="true"'
+                    ).classes("vmi-sidebar-toggle")
                 if agent_enabled:
-                    with ui.tabs().props('inline-label aria-label="Agent session"') as tabs:
-                        tab_groups.append(tabs)
-                        ui.tab("Agent", icon=TAB_ICONS["Agent"]).props('aria-label="Agent"').tooltip("Agent")
+                    with ui.column().classes("vmi-sidebar-agent-actions w-full gap-0"):
+                        connection_button = ui.button("Connection", icon="tune").props(
+                            'flat no-caps aria-label="Connection" aria-expanded="false"').tooltip("Connection")
+                        if analysis_runs.available():
+                            ui.button("Analysis runs", icon="folder_open", on_click=lambda: analysis_runs.open_history(MANAGER)) \
+                                .props('flat no-caps aria-label="Analysis runs"').tooltip("Analysis runs")
+            with ui.element("details").classes("vmi-sidebar-disclosure vmi-sidebar-workbench").props(
+                    'open data-workspace-group="Workbench"'):
+                with ui.element("summary"):
+                    with ui.row().classes("items-center gap-2 no-wrap"):
+                        ui.icon("science").props('aria-hidden="true"')
+                        ui.label("Workbench")
+                    ui.icon("expand_more").props('aria-hidden="true"')
+                for group, sections in SIDEBAR_GROUPS:
+                    disclosure = sidebar_group(group, sections)
+                    if group == "Ion":
+                        with disclosure:
+                            sidebar_group("Fallback", ((None, FALLBACK_TABS),)).classes("vmi-sidebar-fallback")
+            with ui.column().classes("vmi-sidebar-foot"):
                 settings_button = ui.button("Settings", icon="settings", on_click=settings_dialog.open).props(
                     'flat no-caps aria-label="Settings"').classes("vmi-sidebar-settings")
                 settings_button.tooltip("Server controls and workflow files" if administrator
@@ -391,7 +406,8 @@ def index() -> None:
                                 module.build(MANAGER, fallback=True)
                             elif module is agent:
                                 ask_agent = module.build(MANAGER, registry=PANEL_OPERATIONS,
-                                                         navigate=lambda name: setattr(panels, "value", name))
+                                                         navigate=lambda name: setattr(panels, "value", name),
+                                                         connection_button=connection_button)
                             elif module in (ion_tof, ion_live):
                                 module.build(MANAGER, ask_agent=handoff_to_agent)
                             else:

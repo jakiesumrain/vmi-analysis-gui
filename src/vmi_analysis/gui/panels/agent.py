@@ -14,7 +14,7 @@ from vmi_analysis.agent_backend import (AGENTS, API_FORMATS, SLASH_CONTROLS, Age
                                         list_provider_models)
 from vmi_analysis.paths import GENERATED_DIR
 
-from .. import analysis_runs, shared, theme
+from .. import shared, theme
 from ..agent_attachments import (IMAGE_SUFFIXES, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_FILES, MAX_BATCH_BYTES,
                                  MAX_PROMPT_IMAGES, attachment_root, prompt_image)
 from ..agent_completion import path_completions
@@ -59,28 +59,11 @@ def _render_review_value(value):
         ui.label("None" if value is None or isinstance(value, (dict, list, tuple)) else str(value))
 
 
-class AgentStatus:
-    def __init__(self):
-        self.badge = None
-        self.spinner = None
-
-    def place_status(self):
-        self.badge = theme.status_badge("idle")
-        self.spinner = ui.spinner("dots", size="sm", color="primary")
-        self.spinner.visible = False
-
-    def sync(self, session):
-        status = session.status if session is not None else "idle"
-        badge_status = {
-            "starting": "queued",
-            "ready": "done",
-            "running": "running",
-            "stopping": "cancelled",
-            "failed": "failed",
-        }.get(status, "idle")
-        theme.set_badge(self.badge, badge_status)
-        self.badge.text = status
-        self.spinner.visible = status in ("starting", "running", "stopping")
+def _conversation_title(entries):
+    for entry in entries:
+        if entry["kind"] == "user" and (title := " ".join(entry["text"].split())):
+            return title if len(title) <= 72 else title[:71].rstrip() + "…"
+    return "New chat"
 
 
 def _workflow_card(jobs, name, targets, navigate):
@@ -128,33 +111,16 @@ def _attachment_reference(value, *, container):
     raise ValueError("Choose an attachment inside the Agent workspace.")
 
 
-def build(jobs, *, registry, navigate):
+def build(jobs, *, registry, navigate, connection_button=None):
     with ui.column().classes("vmi-agent-page w-full gap-0"):
-        return _build_page(jobs, registry=registry, navigate=navigate)
+        return _build_page(jobs, registry=registry, navigate=navigate, connection_button=connection_button)
 
 
-def _build_page(jobs, *, registry, navigate):
+def _build_page(jobs, *, registry, navigate, connection_button):
     account = shared.current_account()
     owner = account.name if account else "local"
-    status = AgentStatus()
-    connection_button = None
-
-    def place_connection():
-        nonlocal connection_button
-        if analysis_runs.available():
-            ui.button("Analysis runs", icon="folder_open", on_click=lambda: analysis_runs.open_history(jobs)) \
-                .props("flat dense no-caps")
-        connection_button = ui.button("Connection", icon="tune").props(
-            'flat dense no-caps aria-label="Connection" aria-expanded="false"')
-        connection_button.classes("vmi-agent-connection-toggle")
-
-    with ui.column().classes("vmi-agent-header w-full gap-0"):
-        theme.panel_header(
-            "Agent",
-            "Inspect shared data and work in your workspace with your own model endpoint.",
-            view=status,
-            actions=place_connection,
-        )
+    with ui.element("h1").classes("vmi-agent-header w-full"):
+        title = ui.label(_conversation_title(()))
 
     with ui.column().classes("vmi-agent-connection w-full") as connection:
         with field_grid():
@@ -191,7 +157,12 @@ def _build_page(jobs, *, registry, navigate):
     error_label.visible = False
 
     with ui.column().classes("vmi-agent-timeline w-full gap-0"):
-        entries_column = ui.column().classes("vmi-agent-entries w-full")
+        with ui.column().classes("vmi-agent-entries w-full"):
+            entries_column = ui.column().classes("vmi-agent-transcript w-full")
+            with ui.row().classes("vmi-agent-activity items-center gap-2") as activity_row:
+                activity_label = ui.label().props('role="status"')
+                activity_spinner = ui.spinner("dots", size="sm", color="primary").props('aria-hidden="true"')
+            activity_row.visible = False
     approval_view = ui.column().classes("vmi-agent-approval w-full gap-2")
 
     workflow_views = {name: _workflow_card(jobs, name, targets, navigate)
@@ -228,9 +199,6 @@ def _build_page(jobs, *, registry, navigate):
                 with ui.menu().props('anchor="top left" self="bottom left" auto-close'):
                     attach_file = ui.menu_item("Attach file")
                     attach_folder = ui.menu_item("Attach folder")
-            with ui.row().classes("vmi-agent-composer-status items-center gap-2 no-wrap"):
-                activity_spinner = ui.spinner("dots", size="sm", color="primary").props('aria-hidden="true"')
-                activity_label = ui.label().classes("vmi-caption").props('role="status"')
             model_select = ui.select({}, label="Model").props(
                 'borderless dense hide-dropdown-icon aria-label="Model"').classes("vmi-agent-model")
             with ui.button(icon="arrow_upward").props(
@@ -443,10 +411,8 @@ def _build_page(jobs, *, registry, navigate):
 
     def toggle_connection():
         connection.visible = not connection.visible
-        connection_button.props(f'aria-expanded="{str(connection.visible).lower()}"')
-        connection_button.classes(remove="vmi-agent-connection-open")
-        if connection.visible:
-            connection_button.classes("vmi-agent-connection-open")
+        if connection_button is not None:
+            connection_button.props(f'aria-expanded="{str(connection.visible).lower()}"')
 
     def open_view_context(view: PanelView | PanelInspection | RunCapture):
         nonlocal view_context, linked_run
@@ -662,7 +628,6 @@ def _build_page(jobs, *, registry, navigate):
     def refresh():
         nonlocal diagnostics_cursor, stop_visible
         session = AGENTS.current(owner)
-        status.sync(session)
         snapshot = session.snapshot() if session is not None else None
         session_status = snapshot["status"] if snapshot else "idle"
         waiting_for_approval = session_status == "running" and approval is not None
@@ -676,9 +641,9 @@ def _build_page(jobs, *, registry, navigate):
         if model_pending:
             activity_text = "Changing model…"
         elif session_status == "running":
-            activity_text = "Waiting for approval…" if waiting_for_approval else (
-                snapshot["activity"] or "Agent working…")
+            activity_text = "Waiting for approval…" if waiting_for_approval else "Working…"
         activity_label.text = activity_text
+        activity_row.visible = bool(activity_text)
         activity_spinner.visible = model_pending or (
             session_status in ("starting", "running", "stopping") and not waiting_for_approval)
         active = session_status in ("starting", "ready", "running", "stopping")
@@ -706,12 +671,14 @@ def _build_page(jobs, *, registry, navigate):
         send_button.set_enabled(stop_visible or not uploading and session_status == "ready"
                                 and not (model_pending or control_pending))
         if snapshot is None:
+            title.text = _conversation_title(())
             if rendered_session is not None:
                 reset_transcript(None)
             return
         transcript_id = snapshot.get("transcript_id", snapshot["id"])
         if transcript_id != rendered_session:
             reset_transcript(transcript_id)
+        title.text = _conversation_title(snapshot["entries"])
         empty_state.visible = not snapshot["entries"]
         for index, entry in enumerate(snapshot["entries"]):
             if index >= len(rendered):
@@ -888,7 +855,9 @@ def _build_page(jobs, *, registry, navigate):
     async def browse_folder():
         await attach_path("dir")
 
-    connection_button.on_click(toggle_connection)
+    if connection_button is not None:
+        connection_button.props(f'aria-controls="c{connection.id}"')
+        connection_button.on_click(toggle_connection)
     session_button.on_click(toggle_session)
     attach_file.on_click(browse_file)
     attach_folder.on_click(browse_folder)

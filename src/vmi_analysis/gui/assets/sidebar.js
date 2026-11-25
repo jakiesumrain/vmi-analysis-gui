@@ -7,7 +7,12 @@
   const groups = [...sidebar.querySelectorAll('.vmi-sidebar-disclosure')];
   const states = new Map();
   const desktop = matchMedia('(min-width: 901px)');
-  const read = key => { try { return localStorage.getItem(key) === 'true'; } catch { return false; } };
+  const read = (key, fallback = false) => {
+    try {
+      const value = localStorage.getItem(key);
+      return value === null ? fallback : value === 'true';
+    } catch { return fallback; }
+  };
   const write = (key, value) => { try { localStorage.setItem(key, String(value)); } catch {} };
   const collapseKey = 'vmi-workspace.sidebar.collapsed';
   let preference = read(collapseKey);
@@ -17,7 +22,7 @@
   for (const group of groups) {
     group.dataset.workspaceReady = 'true';
     const key = `vmi-workspace.${group.dataset.workspaceGroup}.open`;
-    group.open = read(key);
+    group.open = read(key, group.open);
     states.set(group, group.open);
     group.addEventListener('toggle', () => {
       if (collapsed) {
