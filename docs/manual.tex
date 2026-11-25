@@ -477,11 +477,9 @@ session and choose one of those models in the composer. Paste or drop a
 screenshot onto the composer and ask what you want to inspect. The screenshot
 is sent to the selected endpoint when you send the message.
 
-To check a measurement against the saved data, use \emph{+}
-$\rightarrow$ \emph{Link a run} and choose a completed Ion TOF spectrum,
-GMD2-filtered spectrum, or peak fit. In Ion TOF, \emph{Capture plot for Agent}
-takes a PNG of the displayed plot, including its zoom, and links the source
-run. Review both attachments before sending. Use the close button on either
+In Ion TOF, \emph{Capture plot for Agent} takes a PNG of the displayed plot,
+including its zoom, and links the source run so the Agent can check the saved
+data. Review both attachments before sending. Use the close button on either
 attachment to remove it from the draft.
 
 The Agent can report features visible in a screenshot by itself. When a run
@@ -2087,16 +2085,31 @@ images. Fit one or more peaks in a selected interval.
 \end{enumerate}
 
 \textbf{Angular anisotropy.} When enabled, the $\beta$ plot appears directly
-below the spectrum. Use \emph{$\beta$ spectrum} to select an image and
-\emph{$\beta$ plot axes} to set its limits independently. The plot shows
+below the spectrum. Use \emph{$\beta$ spectrum} to select an image.
+\emph{Spectrum axes} sets the shared X limits, and \emph{$\beta$ plot axes}
+sets individual Y limits for each order. The plot shows
 $\beta_L(E)=I_L(E)/I_0(E)$, where
 $I_L$ is the Legendre component of the measured angular distribution.
 The coefficients assume cylindrical symmetry about the vertical axis
 and use even orders. The plot omits bins with nonpositive isotropic
 intensity. Higher orders and weak-signal regions can be noisy. When
-multiple orders are selected, each $\beta_L$ is shown in its own panel
-with a shared horizontal axis and an independent vertical scale; explicit
-$\beta$ plot Y limits apply to every panel.
+multiple orders are selected, they are overlaid on one plot. Each order
+has its own color-matched vertical axis on the left. The $\beta$ ranges may
+extend beyond the entered limits to align zero across all orders.
+Open \emph{Uniform-grid spectra} below the native plots to see the spectrum
+and $\beta$ on the same equal-width bins. Expand \emph{Plot settings} to set
+the bin width, X limits, and individual Y limits for intensity and each
+$\beta$ order, then click
+\emph{Apply plot settings}.
+
+\textbf{Measure a uniform-grid bin with the Agent.} Ask about a completed
+PES run the Agent started, or include the completed run ID in your message.
+For example, ``Using 0.1 eV bins, what are the yield and $\beta_2$ in the
+bin containing 25 eV?'' Supply the spectrum
+number when the run contains multiple spectra. Include the bin width to
+match edited plot settings. The measurement reports the bin edges, the
+measured interval, the integrated yield, the bin-average intensity, and
+the available $\beta$ values. Uncalibrated runs use detector pixel squared.
 
 \textbf{Abel inversion options.} The folded \emph{Abel inversion options}
 section selects the detector quadrants used by the inversion: upper right

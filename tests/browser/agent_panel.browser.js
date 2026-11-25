@@ -69,6 +69,8 @@ async page => {
   await attachmentButton.click();
   const attachFile = page.getByText('Attach file', {exact: true});
   await attachFile.waitFor();
+  check(await page.getByText('Attach folder', {exact: true}).isVisible(), 'Attach folder is missing');
+  check(!await page.getByText('Link a run', {exact: true}).count(), 'Run picker is still in the attachment menu');
   const attachmentBox = await attachmentButton.boundingBox();
   const menuItemBox = await attachFile.boundingBox();
   check(Math.abs(attachmentBox.x - menuItemBox.x) < 36, 'Attachment menu opened far from its button');

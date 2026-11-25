@@ -1,3 +1,13 @@
+// Native PES charts have separate Y scales. Keep their X navigation linked.
+window.vmiSyncPesX = (event, source, target) => {
+  if (!event || !Object.keys(event).some(key => /^xaxis\.(range(\[\d\])?|autorange)$/.test(key))) return;
+  const range = source?.$el?._fullLayout?.xaxis?.range;
+  const chart = target?.$el;
+  const other = chart?._fullLayout?.xaxis?.range;
+  if (!range || !other || range.every((value, index) => value === other[index])) return;
+  target.Plotly.relayout(chart, {"xaxis.range": [...range], "xaxis.autorange": false});
+};
+
 // Keep the axis values in data units so zoom, selection, hover, and export
 // all use the original coordinates.
 window.vmiUpdatePesAxes = (component) => {
@@ -38,13 +48,16 @@ window.vmiUpdatePesAxes = (component) => {
 
     if (exponent !== 0) {
       const suffix = name.slice(5);
-      const xref = horizontal ? `x${suffix}` : axis.anchor;
+      const free = axis.anchor === "free";
+      const baseAxis = free ? full[`yaxis${axis.overlaying?.slice(1) ?? ""}`] : axis;
+      const xref = horizontal ? `x${suffix}` : baseAxis?.anchor;
       const yref = horizontal ? axis.anchor : `y${suffix}`;
       annotations.push({
         xref: `${xref} domain`, yref: `${yref} domain`,
         x: horizontal ? 1 : 0, y: horizontal ? 0 : 1,
         xanchor: horizontal ? "right" : "left",
         yanchor: horizontal ? "top" : "bottom",
+        xshift: free ? axis.shift : 0,
         yshift: horizontal ? -24 : 3,
         text: `×10<sup>${String(exponent).replace("-", "−")}</sup>`,
         font: {color: axis.tickfont.color, size: axis.tickfont.size},

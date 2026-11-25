@@ -202,7 +202,6 @@ def _build_page(jobs, *, registry, navigate):
                 with ui.menu().props('anchor="top left" self="bottom left" auto-close'):
                     attach_file = ui.menu_item("Attach file")
                     attach_folder = ui.menu_item("Attach folder")
-                    link_run = ui.menu_item("Link a run")
             with ui.row().classes("vmi-agent-composer-status items-center gap-2 no-wrap"):
                 activity_spinner = ui.spinner("dots", size="sm", color="primary").props('aria-hidden="true"')
                 activity_label = ui.label().classes("vmi-caption").props('role="status"')
@@ -318,37 +317,6 @@ def _build_page(jobs, *, registry, navigate):
         nonlocal linked_run
         linked_run = None
         refresh_attachments()
-
-    def choose_run():
-        candidates = {}
-        for job in reversed(jobs.jobs()):
-            if registry.can_measure(job):
-                label = " · ".join(filter(None, (job.name, job.extra.get("input_name"), job.id)))
-                candidates[job.id] = label
-        if not candidates:
-            show_error("Complete a panel run that supports measurements before linking it here.")
-            return
-
-        def link():
-            nonlocal linked_run
-            try:
-                linked_run = registry.evidence_run(jobs, selected.value)
-            except ValueError as exc:
-                ui.notify(str(exc), type="warning")
-                return
-            clear_error()
-            refresh_attachments()
-            dialog.close()
-
-        with ui.dialog() as dialog, ui.card().classes("w-full"):
-            ui.label("Link a run").classes("text-lg")
-            selected = ui.select(candidates, value=linked_run.id if linked_run else None,
-                                 label="Completed run", with_input=True).props("outlined dense").classes("w-full")
-            with ui.row():
-                ui.button("Link run", on_click=link)
-                ui.button("Cancel", on_click=dialog.close).props("flat")
-        dialog.on("hide", lambda: dialog.delete())
-        dialog.open()
 
     def remove_attachment(path):
         if path in attached_paths:
@@ -900,7 +868,6 @@ def _build_page(jobs, *, registry, navigate):
     session_button.on_click(toggle_session)
     attach_file.on_click(browse_file)
     attach_folder.on_click(browse_folder)
-    link_run.on_click(choose_run)
     model.on_value_change(lambda _: refresh())
     api.on_value_change(lambda _: refresh())
     load_models_button.on_click(load_models)

@@ -342,6 +342,135 @@ class GuiSubmissionTests(unittest.TestCase):
         self.assertEqual(job.reads, [source])
         self.assertEqual(job.writes, [job.extra["pes_spectra"]])
 
+    def test_pes_has_shared_x_ranges_and_individual_y_ranges_with_aligned_beta_zeros(self):
+        import numpy as np
+        from nicegui import Client, app, ui
+        from vmi_analysis.centroiding.plot_data import save_plot_data
+        from vmi_analysis.gui.jobs import Job
+        from vmi_analysis.gui.panels import pes
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "pes.npz"
+            for alpha, units in ((None, "pixel²"), (0.5, "eV")):
+                with self.subTest(alpha=alpha):
+                    q = np.array([1, 4, 9])
+                    x = q * (alpha or 1)
+                    save_plot_data(path, {"alpha": alpha, "beta_order": 4, "images": [{"path": "image.npy"}]},
+                                   r2_0=q, x_0=x, y_0=[2, 2, 2], beta_x_0=x,
+                                   moments_0=[[2., 2., 2.], [1., 1., 1.], [-2., -2., -2.]])
+                    job = Job("PES", status="done", extra={"pes_spectra": str(path)})
+                    client = Client(ui.page("/_test_pes_uniform_grid"))
+                    callbacks = {}
+                    try:
+                        with client, patch.object(app.storage, "_general", {MIGRATED_KEY: True}), \
+                                patch.object(ui.button, "on_click", lambda button, handler:
+                                             callbacks.__setitem__(button.text, handler)), \
+                                patch.object(pes, "plot_options", wraps=pes.plot_options) as plot_options, \
+                                patch.object(ui, "notify") as notify:
+                            pes.build(Mock(jobs=Mock(return_value=[job])))
+                            callbacks["View latest spectra"]()
+                            native_spectrum, native_beta = [call.args[0] for call in plot_options.call_args_list[-2:]]
+                            self.assertEqual(native_beta.layout.yaxis2.overlaying, "y")
+                            self.assertEqual([trace.xaxis for trace in native_beta.data], ["x", "x"])
+                            self.assertEqual(native_spectrum.layout.xaxis.range, native_beta.layout.xaxis.range)
+                            self.assertEqual(native_spectrum.layout.margin.l, native_beta.layout.margin.l)
+                            self.assertEqual(native_spectrum.layout.margin.r, native_beta.layout.margin.r)
+                            fields = {element.label: element for element in client.elements.values()
+                                      if isinstance(element, ui.number)}
+                            fields["β2 Y min (blank = auto)"].value = -1
+                            fields["β2 Y max (blank = auto)"].value = 2
+                            callbacks["Apply β axes"]()
+                            np.testing.assert_allclose(plot_options.call_args.args[0].layout.yaxis.range, [-1, 2])
+                            fields["β4 Y min (blank = auto)"].value = -10
+                            fields["β4 Y max (blank = auto)"].value = 20
+                            callbacks["Apply β axes"]()
+                            native_axes = plot_options.call_args.args[0].layout
+                            np.testing.assert_allclose(native_axes.yaxis.range, [-1, 2])
+                            np.testing.assert_allclose(native_axes.yaxis2.range, [-10, 20])
+                            fields["Spectrum X min (blank = auto)"].value = x[0]
+                            fields["Spectrum X max (blank = auto)"].value = x[-1]
+                            callbacks["Apply axes"]()
+                            for call in plot_options.call_args_list[-2:]:
+                                self.assertEqual(call.args[0].layout.xaxis.range, (x[0], x[-1]))
+                            spectrum_min = fields["Spectrum X min (blank = auto)"]
+                            spectrum_min.value = x[-1]
+                            drag_mode = next(element for element in client.elements.values() if isinstance(element, ui.toggle))
+                            drag_mode.value = "Select fit range"
+                            spectrum_layout = plot_options.call_args.args[0].layout
+                            self.assertEqual(spectrum_layout.dragmode, "select")
+                            self.assertEqual(spectrum_layout.xaxis.range, (x[0], x[-1]))
+                            notify.assert_not_called()
+                            spectrum_min.value = x[0]
+                            section = next(element for element in client.elements.values()
+                                           if isinstance(element, ui.expansion) and element.text == "Uniform-grid spectra")
+                            self.assertFalse(section.value)
+                            section.open()
+                            settings = next(element for element in client.elements.values()
+                                            if isinstance(element, ui.expansion) and element.text == "Plot settings")
+                            self.assertFalse(settings.value)
+                            self.assertEqual(len(plot_options.call_args.args[0].data), 3)
+                            render_count = plot_options.call_count
+                            chart = [element for element in client.elements.values() if isinstance(element, ui.plotly)][-1]
+                            section.close()
+                            section.open()
+                            self.assertEqual(plot_options.call_count, render_count)
+                            settings.open()
+                            fields = {element.label: element for element in client.elements.values()
+                                      if isinstance(element, ui.number)}
+                            width = fields[f"Bin width ({units})"]
+                            coordinate = "Kinetic energy" if alpha else "Squared detector radius"
+                            x_min, x_max = (fields[f"{coordinate} {bound} ({units})"] for bound in ("min", "max"))
+                            width.value = 3 * (alpha or 1)
+                            x_min.value, x_max.value = x[0], x[-1]
+                            fields["Bin-average intensity Y min"].value = -3
+                            fields["Bin-average intensity Y max"].value = 7
+                            fields["Resampled β2 Y min"].value = -1
+                            fields["Resampled β2 Y max"].value = 2
+                            fields["Resampled β4 Y min"].value = -10
+                            fields["Resampled β4 Y max"].value = 5
+                            apply_settings = callbacks["Apply plot settings"]
+                            apply_settings()
+                            self.assertIs(client.elements.get(chart.id), chart)
+                            fig = plot_options.call_args.args[0]
+                            intensity, beta2, beta4 = fig.data
+                            np.testing.assert_allclose(intensity.x, x[0] + width.value * np.array([0.5, 1.5, 2.5]))
+                            np.testing.assert_allclose(intensity.y, [2, 2, 4 / 3])
+                            np.testing.assert_allclose(beta2.x, intensity.x)
+                            np.testing.assert_allclose(beta2.y, [0.5, 0.5, 0.5])
+                            np.testing.assert_allclose(beta4.y, [-1, -1, -1])
+                            self.assertEqual([beta2.xaxis, beta4.xaxis], ["x2", "x2"])
+                            self.assertEqual([beta2.yaxis, beta4.yaxis], ["y2", "y3"])
+                            self.assertEqual(fig.layout.yaxis3.overlaying, "y2")
+                            self.assertLess(fig.layout.yaxis3.shift, 0)
+                            self.assertEqual(beta4.line.color, fig.layout.yaxis3.tickfont.color)
+                            self.assertIn(units, fig.layout.xaxis2.title.text)
+                            self.assertEqual(fig.layout.xaxis.range, (x[0], x[-1]))
+                            self.assertEqual(fig.layout.xaxis2.range, (x[0], x[-1]))
+                            self.assertEqual(fig.layout.yaxis.range, (-3, 7))
+                            beta_ranges = np.array([fig.layout.yaxis2.range, fig.layout.yaxis3.range])
+                            self.assertTrue(np.all(beta_ranges[:, 0] <= [-1, -10]))
+                            self.assertTrue(np.all(beta_ranges[:, 1] >= [2, 5]))
+                            zero_positions = -beta_ranges[:, 0] / np.ptp(beta_ranges, axis=1)
+                            self.assertAlmostEqual(*zero_positions)
+
+                            x_min.value = x[-1]
+                            apply_settings()
+                            notify.assert_called_once_with("Axis minima must be below maxima.", type="warning")
+                            self.assertIs(plot_options.call_args.args[0], fig)
+
+                            x_min.value = None
+                            apply_settings()
+                            axis = plot_options.call_args.args[0].layout.xaxis2
+                            self.assertTrue(axis.autorange)
+                            self.assertEqual(axis.autorangeoptions.maxallowed, x[-1])
+                            x_max.value = None
+                            apply_settings()
+                            axis = plot_options.call_args.args[0].layout.xaxis2
+                            self.assertTrue(axis.autorange)
+                            self.assertIsNone(axis.autorangeoptions.maxallowed)
+                    finally:
+                        client.delete()
+
     def test_centroid_frame_limit_sanitizes_on_blur(self):
         from nicegui import Client, app, ui
         from vmi_analysis.gui.panels import centroid

@@ -17,12 +17,13 @@ from plotly.subplots import make_subplots
 from vmi_analysis.centroiding.plot_data import load_plot_data
 from vmi_analysis.pes import (ABEL_METHODS, BASELINE_PARAMETERS, BETA_ORDERS, QUADRANT_LABELS,
                               QUADRANT_ORDER, SYMMETRY_AXES, Geometry, PeakGuess, anisotropy_values,
-                              average_anisotropy, evaluate_fit_for_plot, fit_peaks)
+                              average_anisotropy, default_uniform_bin_width, evaluate_fit_for_plot,
+                              fit_peaks, integrate_spectral_bins, uniform_bin_edges, uniform_grid_bounds)
 
 from ..agent_panels import PanelOperation, PanelView, number as finite_number, require_completed_job, resolve_path
 from ..shared import checked_path, generated_dir, workspace_root
 from .. import theme
-from ..centroid_plots import _style, linear_axis_limits, plot_options
+from ..centroid_plots import SERIES_COLORS, _style, linear_axis_limits, plot_options
 from ..jobs import Job, JobManager
 from ..resources import canonical_path
 from .common import (GENERATED, REPO_ROOT, JobView, action_bar, adopt_agent_form, check_grid,
@@ -32,7 +33,18 @@ from .picker import LocalFilePicker
 JOB_NAME = "PES"
 FIT_OPERATION = "pes_fit"
 PROFILES = ("Gaussian", "Voigt")
+PES_SAMPLE_MARKER = {"size": 4}
+BETA_AXIS_SPACING = 64
 _AXIS_SCRIPT = (files("vmi_analysis.gui.assets") / "pes_axes.js").read_text(encoding="utf-8")
+
+MEASUREMENT_PARAMETERS = {
+    "coordinate": {"type": "number", "description": "Required. Find the bin containing this coordinate in the saved run's units."},
+    "bin_width": {"type": "number", "description": "Width in the same units as coordinate. Optional, defaults to the initial uniform-grid plot width. "
+                  "Supply the width explicitly to match a plot with edited settings."},
+    "unit": {"type": "string", "choices": ["eV", "pixel²"], "description": "Optional check against the saved run's units. "
+             "Supply it when the user names a unit."},
+    "spectrum": {"type": "integer", "description": "One-based spectrum number from the PES results. Required when the run has multiple spectra."},
+}
 
 
 def _csv_download(rows, header, name):
@@ -53,15 +65,74 @@ def _scientific_plot():
     return chart
 
 
-def _style_comparison_plot(fig, height):
+def _style_comparison_plot(fig, height, *, beta_orders=()):
     _style(fig, "")
+    left = 82 + BETA_AXIS_SPACING * max(0, len(beta_orders) - 1)
     fig.update_layout(
         height=height, showlegend=True,
-        margin={"l": 82, "r": 24, "t": 48, "b": 57, "autoexpand": False},
+        margin={"l": left, "r": 24, "t": 48, "b": 57, "autoexpand": False},
         legend={"orientation": "h", "x": 1, "xanchor": "right", "y": 1.01, "yanchor": "bottom"},
     )
     fig.update_xaxes(automargin=False)
     fig.update_yaxes(automargin=False)
+
+
+def _aligned_beta_ranges(beta_values, limits):
+    """Expand each requested range so zero has the same relative height."""
+    bounds = []
+    for values, (low, high) in zip(beta_values, limits):
+        finite = values[np.isfinite(values)]
+        start, end = (float(finite.min()), float(finite.max())) if finite.size else (0.0, 0.0)
+        padding = max(end - start, abs(start), abs(end)) * 0.05
+        if low is None and high is not None and start - padding >= high:
+            low = high - (end - start or abs(high) * 0.05 or 1)
+        if high is None and low is not None and end + padding <= low:
+            high = low + (end - start or abs(low) * 0.05 or 1)
+        if low is None:
+            low = start - padding
+        if high is None:
+            high = end + padding
+        bounds.append((min(low, 0.0), max(high, 0.0)))
+
+    # Prefer complete manual ranges that can place zero inside the plot.
+    # Normalize their extents so larger-magnitude orders carry equal weight.
+    anchors = [(low, high) for low, high in limits if low is not None and high is not None and low < 0 < high]
+    negative = positive = 0.0
+    for low, high in anchors or bounds:
+        scale = max(-low, high)
+        if scale:
+            negative = max(negative, -low / scale)
+            positive = max(positive, high / scale)
+    total = negative + positive
+    below_zero, above_zero = (negative / total, positive / total) if total else (0.5, 0.5)
+    ranges = []
+    for low, high in bounds:
+        below = -low / below_zero if below_zero else 0.0
+        above = high / above_zero if above_zero else 0.0
+        span = max(below, above) or 1.0
+        ranges.append((-below_zero * span, above_zero * span))
+    return ranges
+
+
+def _add_beta_traces(fig, x, orders, beta_values, *, subplot=1, y_limits):
+    """Overlay each order on its own left axis within the β subplot."""
+    suffix = str(subplot) if subplot > 1 else ""
+    base_y = f"y{suffix}"
+    ranges = _aligned_beta_ranges(beta_values, y_limits)
+    for index, (order, values, axis_range) in enumerate(zip(orders, beta_values, ranges)):
+        axis_suffix = str(subplot + index) if index else suffix
+        color = SERIES_COLORS[index + 1]
+        label = f"β{order}"
+        fig.add_scatter(x=x, y=values, xaxis=f"x{suffix}", yaxis=f"y{axis_suffix}",
+                        name=label, mode="lines+markers", marker=PES_SAMPLE_MARKER, line_color=color)
+        axis = dict(title_text=f"{label} (dimensionless)", title_font_color=color,
+                    tickfont_color=color, linecolor=color, showline=True,
+                    showgrid=index == 0, zeroline=index == 0, range=axis_range,
+                    autorange=False, fixedrange=True)
+        if index:
+            axis.update(overlaying=base_y, anchor="free", side="left", position=0,
+                        shift=-BETA_AXIS_SPACING * index, automargin=False)
+        fig.update_layout({f"yaxis{axis_suffix}": axis})
 
 
 def spectra_job(paths, geometry, overrides, *, alpha=None, abel_method="hansenlaw", beta_order=0,
@@ -171,10 +242,59 @@ def _prepare_spectra(jobs, params):
     }
 
 
+def _measure_uniform_bin(jobs, job, parameters):
+    if parameters.keys() - MEASUREMENT_PARAMETERS.keys():
+        raise ValueError("Use only parameters listed by describe for PES measurements.")
+    coordinate = finite_number(parameters.get("coordinate"))
+    path = checked_path(job.extra["pes_spectra"])
+    with jobs.preview_read_access([path]):
+        meta, arrays = load_plot_data(path)
+
+    unit = "eV" if meta.get("alpha") is not None else "pixel²"
+    if "unit" in parameters and parameters["unit"] != unit:
+        raise ValueError(f"This PES run uses {unit}. Supply the coordinate and bin width in those units.")
+    names = [f"{i}. {Path(image['path']).name}" for i, image in enumerate(meta["images"], 1)]
+    spectrum = parameters.get("spectrum", 1 if len(names) == 1 else None)
+    if type(spectrum) is not int or not 1 <= spectrum <= len(names):
+        raise ValueError("Choose a PES spectrum number. " + ", ".join(names))
+    grids = [arrays[f"x_{i}"] for i in range(len(names))]
+    low, high = uniform_grid_bounds(grids)
+    width = finite_number(parameters.get("bin_width", default_uniform_bin_width(low, high)))
+    edges = uniform_bin_edges(low, high, width)
+    if not edges[0] <= coordinate <= edges[-1]:
+        raise ValueError(f"The coordinate is outside this run's uniform grid ({edges[0]:g} to {edges[-1]:g} {unit}).")
+    index = min(int(np.searchsorted(edges, coordinate, side="right")) - 1, edges.size - 2)
+    bin_edges = edges[index:index + 2]
+    i = spectrum - 1
+    x = grids[i]
+    integrated = integrate_spectral_bins(x, arrays[f"y_{i}"], bin_edges)[0]
+    density = integrated / width
+    coverage = [max(bin_edges[0], x[0]), min(bin_edges[1], x[-1])] if x.size >= 2 else None
+    beta = {}
+    if orders := range(2, meta.get("beta_order", 0) + 1, 2):
+        moments = integrate_spectral_bins(arrays[f"beta_x_{i}"], arrays[f"moments_{i}"], bin_edges)
+        beta = {f"beta_{order}": float(value) if np.isfinite(value) else None
+                for order, value in zip(orders, anisotropy_values(moments)[:, 0])}
+    return {
+        "method": "Piecewise-linear integration on the PES uniform grid. β is the ratio of the integrated Legendre moments.",
+        "spectrum": names[i], "coordinate": coordinate, "unit": unit,
+        "grid_origin": float(low), "bin_width": width,
+        "bin_edges": bin_edges.tolist(), "bin_center": float(bin_edges[0] + width / 2),
+        "measured_interval": list(map(float, coverage)) if coverage and coverage[0] < coverage[1] else None,
+        "integrated_yield": float(integrated) if np.isfinite(integrated) else None,
+        "yield_unit": f"arbitrary units × {unit}",
+        "bin_average_intensity": float(density) if np.isfinite(density) else None,
+        "intensity_unit": "arbitrary units",
+        "beta": beta,
+    }
+
+
 def agent_operations():
     spectra = {
         "panel": JOB_NAME, "manual": JOB_NAME,
-        "summary": "Generate spectra and optional angular anisotropy from one or more VMI images.",
+        "summary": "Generate spectra and optional angular anisotropy from one or more VMI images. "
+                   "Measure intensity, yield, and β in a uniform-grid bin of a completed run.",
+        "measurements": MEASUREMENT_PARAMETERS,
         "parameters": {
             "images": {"type": "list of paths", "description": "VMI images (.npy or .txt)"},
             "source_job_id": {"type": "job ID", "description": "Optional completed Centroiding, Binning, or Circularize job"},
@@ -202,7 +322,8 @@ def agent_operations():
             "auto_profile": {"type": "string", "choices": list(PROFILES)},
         },
     }
-    return (PanelOperation("pes", spectra, _prepare_spectra, (JOB_NAME,), outputs=("pes_spectra",)),
+    return (PanelOperation("pes", spectra, _prepare_spectra, (JOB_NAME,), outputs=("pes_spectra",),
+                           measure_result=_measure_uniform_bin),
             PanelOperation(FIT_OPERATION, fit, None, ()))
 
 
@@ -379,10 +500,11 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
 
     def reset():
         state.update(spectra={}, angular={}, beta_orders=(), plot=None, spectrum_axes=(), selecting=False)
+        state.update(native_x_axis=None, native_y_axis=None, native_x_range=None, redraw_beta=None)
         fit_card.set_visibility(False)
         fit_display.clear()
 
-    def axis_controls(title, label, prefix, apply_label, apply, *, selector=None, note=None):
+    def axis_controls(title, label, apply_label, apply, build_fields, *, selector=None, note=None):
         def toggle():
             panel.set_visibility(not panel.visible)
             button.props(f'aria-expanded="{str(panel.visible).lower()}"')
@@ -395,42 +517,71 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             panel.set_visibility(False)
             if note:
                 ui.label(note).classes("vmi-subtitle")
-            with field_grid():
-                fields = [number(f"{label} {axis} {bound} (blank = auto)", f"{prefix}{axis.lower()}{bound}")
-                          for axis in ("X", "Y") for bound in ("min", "max")]
+            fields = build_fields()
             ui.button(apply_label, on_click=apply).props("flat")
         return fields, selected
-
-    def axis_bounds(fields):
-        xmin, xmax, ymin, ymax = (field.value for field in fields)
-        return linear_axis_limits(xmin, xmax), linear_axis_limits(ymin, ymax)
 
     def refresh_plot(reset_axes=False):
         if state["plot"] is None:
             return
-        try:
-            x_axis, y_axis = axis_bounds(state["spectrum_axes"])
-        except ValueError as exc:
-            ui.notify(str(exc), type="warning")
-            x_axis = y_axis = {"autorange": True}
         if reset_axes:
-            state["revision"] += 1
+            xmin, xmax, ymin, ymax = (field.value for field in state["spectrum_axes"])
+            try:
+                x_axis, y_axis = linear_axis_limits(xmin, xmax), linear_axis_limits(ymin, ymax)
+            except ValueError as exc:
+                ui.notify(str(exc), type="warning")
+                if state["native_x_axis"] is not None:
+                    return
+                xmin = xmax = None
+                x_axis = y_axis = linear_axis_limits(None, None)
+            if state["native_x_range"]:
+                start, end = state["native_x_range"]
+                width = end - start
+                if xmin is None:
+                    xmin = start if xmax is None or xmax > start else xmax - width
+                if xmax is None:
+                    xmax = end if xmin < end else xmin + width
+                x_axis = linear_axis_limits(xmin, xmax)
+            state.update(native_x_axis=x_axis, native_y_axis=y_axis, revision=state["revision"] + 1)
         selecting = state["selecting"]
         low, high = fit_low.value, fit_high.value
         fig = go.Figure()
         for name, (_, x, y) in state["spectra"].items():
-            fig.add_scatter(x=x, y=y, name=name, mode="lines+markers" if selecting else "lines",
-                            marker={"opacity": 0}, hovertemplate="%{x:.6g}, %{y:.6g}<extra>%{fullData.name}</extra>")
+            fig.add_scatter(x=x, y=y, name=name, mode="lines+markers", marker=PES_SAMPLE_MARKER,
+                            hovertemplate="%{x:.6g}, %{y:.6g}<extra>%{fullData.name}</extra>")
         if low is not None and high is not None and low < high:
             fig.add_vrect(x0=low, x1=high, fillcolor="#1e40af",
                           opacity=0.14, line_width=0, layer="below")
-        _style_comparison_plot(fig, 402)
+        _style_comparison_plot(fig, 402, beta_orders=state["beta_orders"])
         fig.update_layout(uirevision=state["revision"], selectdirection="h",
                           selections=[], selectionrevision=f"{low}:{high}",
                           dragmode="select" if selecting else "zoom")
-        fig.update_xaxes(title_text=f"{state['x_label']} ({state['units']})", **x_axis)
-        fig.update_yaxes(title_text="Intensity (arb. units)", **y_axis)
+        fig.update_xaxes(title_text=f"{state['x_label']} ({state['units']})", **state["native_x_axis"])
+        fig.update_yaxes(title_text="Intensity (arb. units)", **state["native_y_axis"])
         state["plot"].update_figure(plot_options(fig))
+        if reset_axes and state["redraw_beta"]:
+            state["redraw_beta"]()
+
+    def spectrum_axis_fields():
+        with field_grid():
+            return [number(f"Spectrum {axis} {bound} (blank = auto)", f"{axis.lower()}{bound}")
+                    for axis in ("X", "Y") for bound in ("min", "max")]
+
+    def range_fields(label, *, key=None):
+        with field_grid():
+            if key is not None:
+                return tuple(number(f"{label} {bound} (blank = auto)", f"{key}_{bound}")
+                             for bound in ("min", "max"))
+            return tuple(num_input(f"{label} {bound}", None, step="any").props('placeholder="Auto"')
+                         for bound in ("min", "max"))
+
+    def read_range(label, fields):
+        low, high = (field.value for field in fields)
+        try:
+            linear_axis_limits(low, high)
+        except ValueError as exc:
+            raise ValueError(f"{label}. {exc}") from exc
+        return low, high
 
     def select_range(event):
         if not state["selecting"] or not event.args:
@@ -474,13 +625,23 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             ui.toggle(["Zoom", "Select fit range"], value="Zoom", on_change=set_drag_mode)
             ui.button("Clear fit range", on_click=clear_fit_range).props("flat")
         with ui.column().classes("w-full gap-0"):
-            state["spectrum_axes"], _ = axis_controls("Photoelectron spectra", "Spectrum", "", "Apply axes",
-                                                      lambda: refresh_plot(reset_axes=True))
+            if state["angular"]:
+                grids = [x for _, x, _ in state["spectra"].values()] + [x for x, _ in state["angular"].values()]
+                start = min(x[0] for x in grids if x.size)
+                end = max(x[-1] for x in grids if x.size)
+                padding = (end - start) / 16 if end > start else max(abs(start) / 16, 0.5)
+                state["native_x_range"] = (start - padding, end + padding)
+            state["spectrum_axes"], _ = axis_controls(
+                "Photoelectron spectra", "Spectrum", "Apply axes", lambda: refresh_plot(reset_axes=True),
+                spectrum_axis_fields,
+                note="The spectrum and β plots share the X limits." if state["angular"] else None,
+            )
             state["plot"] = _scientific_plot()
             state["plot"].on("plotly_selected", select_range,
                                js_handler="event => emit(event?.range ?? null)")
-            if state["angular"]:
-                show_anisotropy()
+            refresh_plot(reset_axes=True)
+            beta_spectrum = show_anisotropy() if state["angular"] else None
+            show_resampled(beta_spectrum)
         with ui.row().classes("gap-2"):
             ui.button("Download spectra CSV", icon="download", on_click=download_spectra).props("flat")
             if state["angular"]:
@@ -489,7 +650,6 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
         fit_low.label = f"Fit X min ({state['units']})"
         fit_high.label = f"Fit X max ({state['units']})"
         fit_card.set_visibility(True)
-        refresh_plot(reset_axes=True)
 
     def download_spectra():
         _csv_download(((name, q, x, y) for name, arrays in state["spectra"].items()
@@ -507,49 +667,131 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
 
     def show_anisotropy():
         names = list(state["angular"])
+        orders = state["beta_orders"]
         fields, spectrum = axis_controls(
-            "Angular anisotropy (β)", "β plot", "beta_", "Apply β axes", lambda: redraw(update_axes=True),
+            "Angular anisotropy (β)", "β plot", "Apply β axes", lambda: redraw(update_axes=True),
+            lambda: [range_fields(f"β{order} Y", key=f"beta_{order}_y") for order in orders],
             selector=lambda: ui.select(names, value=names[0], label="β spectrum").props("outlined dense").classes("max-w-full"),
-            note="Each β order is shown in its own panel with an independent vertical scale. "
-                 "Leave the Y limits blank to auto-range each panel; explicit Y limits apply to every panel. "
+            note="Leave limits blank to use the data range. β ranges can extend to align zero. "
                  "β can be unreliable where the signal is weak; bins with nonpositive isotropic intensity are omitted.",
         )
         chart = _scientific_plot()
         revision = 0
-        x_axis = y_axis = {"autorange": True}
+        y_limits = [(None, None)] * len(orders)
 
         def redraw(update_axes=False):
-            nonlocal x_axis, y_axis, revision
+            nonlocal y_limits, revision
             if update_axes:
                 try:
-                    x_axis, y_axis = axis_bounds(fields)
+                    y_limits = [read_range(f"β{order} Y limits", pair) for order, pair in zip(orders, fields)]
                 except ValueError as exc:
                     ui.notify(str(exc), type="warning")
                 else:
                     revision += 1
             x, moments = state["angular"][spectrum.value]
-            orders = state["beta_orders"]
             beta_values = anisotropy_values(moments)
-            rows = max(1, len(orders))
-            fig = make_subplots(rows=rows, cols=1, shared_xaxes=True,
-                                vertical_spacing=0.04 if rows > 1 else 0.0)
-            for row, (order, values) in enumerate(zip(orders, beta_values), start=1):
-                fig.add_scatter(x=x, y=values, mode="lines", name=f"β{order}",
-                                row=row, col=1)
-                fig.update_yaxes(title_text=f"β{order} (dimensionless)",
-                                 row=row, col=1, **y_axis)
-            _style_comparison_plot(fig, max(347, 210 * rows + 100))
-            fig.update_layout(uirevision=f"{spectrum.value}:{revision}", showlegend=False)
-            for row in range(1, rows + 1):
-                fig.update_xaxes(**x_axis, row=row, col=1)
-                if row < rows:
-                    fig.update_xaxes(showticklabels=False, title_text="", row=row, col=1)
+            fig = go.Figure()
+            _style_comparison_plot(fig, 402, beta_orders=orders)
+            _add_beta_traces(fig, x, orders, beta_values, y_limits=y_limits)
+            fig.update_layout(uirevision=f"{spectrum.value}:{revision}")
             fig.update_xaxes(title_text=f"{state['x_label']} ({state['units']})",
-                             row=rows, col=1)
+                             uirevision=state["revision"], **state["native_x_axis"])
             chart.update_figure(plot_options(fig))
 
         spectrum.on_value_change(lambda _: redraw())
+        state["redraw_beta"] = redraw
+        native_plot = state["plot"]
+        for source, target in ((native_plot, chart), (chart, native_plot)):
+            source.on("plotly_relayout", js_handler=(
+                f"event => vmiSyncPesX(event, getElement({source.id}), getElement({target.id}))"
+            ))
         redraw(update_axes=True)
+        return spectrum
+
+    def show_resampled(beta_spectrum):
+        spectra, angular = state["spectra"], state["angular"]
+        units, x_label = state["units"], state["x_label"]
+        orders = state["beta_orders"]
+        with ui.expansion("Uniform-grid spectra", icon="show_chart", value=False).classes("w-full").props(
+                'header-class="vmi-section-toggle text-primary" hide-expand-icon') as section:
+            try:
+                low, high = uniform_grid_bounds(x for _, x, _ in spectra.values())
+                applied_width = default_uniform_bin_width(low, high)
+                applied_edges = uniform_bin_edges(low, high, applied_width)
+            except ValueError as exc:
+                ui.label(str(exc)).classes("vmi-subtitle")
+                return
+            x_axis = linear_axis_limits(None, None)
+            intensity_axis = linear_axis_limits(None, None)
+            beta_limits = [(None, None)] * len(orders)
+            with ui.expansion("Plot settings", icon="tune", value=False).classes("w-full").props(
+                    'header-class="vmi-section-toggle text-primary" hide-expand-icon'):
+                with ui.column().classes("w-full"):
+                    with ui.row().classes("items-center gap-2"):
+                        width = num_input(f"Bin width ({units})", applied_width, step="any")
+                        x_min = num_input(f"{x_label} min ({units})", None, step="any").props('placeholder="Auto"')
+                        x_max = num_input(f"{x_label} max ({units})", None, step="any").props('placeholder="Auto"')
+                    intensity_fields = range_fields("Bin-average intensity Y")
+                    beta_fields = [range_fields(f"Resampled β{order} Y") for order in orders]
+                    ui.button("Apply plot settings", on_click=lambda: apply_settings()).props("flat")
+                    ui.label("Intensity is averaged over each bin. Edge bins include only the measured yield."
+                             + (" β follows the β spectrum selected above. β ranges can extend to align zero."
+                                if beta_spectrum else "")).classes("vmi-subtitle")
+            plots = ui.column().classes("w-full gap-0")
+
+        chart = None
+        plotted_beta = None
+
+        def apply_settings():
+            nonlocal applied_width, applied_edges, x_axis, intensity_axis, beta_limits
+            step = width.value
+            try:
+                new_edges = uniform_bin_edges(low, high, step)
+                new_x = linear_axis_limits(x_min.value, x_max.value)
+                new_intensity = linear_axis_limits(*read_range("Bin-average intensity Y limits", intensity_fields))
+                new_beta = [read_range(f"Resampled β{order} Y limits", pair)
+                            for order, pair in zip(orders, beta_fields)]
+            except ValueError as exc:
+                ui.notify(str(exc), type="warning")
+                return
+            applied_width, applied_edges = step, new_edges
+            x_axis, intensity_axis, beta_limits = new_x, new_intensity, new_beta
+            redraw()
+
+        def redraw():
+            nonlocal chart, plotted_beta
+            selected_beta = beta_spectrum.value if beta_spectrum is not None else None
+            step = applied_width
+            edges = applied_edges
+            centers = edges[:-1] + step / 2
+            rows = 2 if beta_spectrum else 1
+            fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.04)
+            for name, (_, x, y) in spectra.items():
+                density = integrate_spectral_bins(x, y, edges) / step
+                fig.add_scatter(x=centers, y=density, name=name, mode="lines+markers", marker=PES_SAMPLE_MARKER,
+                                row=1, col=1)
+            fig.update_yaxes(title_text="Bin-average intensity", row=1, col=1, **intensity_axis)
+            _style_comparison_plot(fig, 610 if beta_spectrum else 347, beta_orders=orders)
+            if selected_beta is not None:
+                x, moments = angular[selected_beta]
+                beta = anisotropy_values(integrate_spectral_bins(x, moments, edges))
+                _add_beta_traces(fig, centers, orders, beta, subplot=2, y_limits=beta_limits)
+            fig.update_xaxes(**x_axis)
+            fig.update_xaxes(title_text=f"{x_label} ({units})", row=rows, col=1)
+            if chart is None:
+                with plots:
+                    chart = _scientific_plot()
+            chart.update_figure(plot_options(fig))
+            plotted_beta = selected_beta
+
+        def refresh_if_needed(_event):
+            selected_beta = beta_spectrum.value if beta_spectrum is not None else None
+            if section.value and (chart is None or plotted_beta != selected_beta):
+                redraw()
+
+        section.on_value_change(refresh_if_needed)
+        if beta_spectrum:
+            beta_spectrum.on_value_change(refresh_if_needed)
 
     with theme.panel_card():
         theme.form_section("VMI images")
