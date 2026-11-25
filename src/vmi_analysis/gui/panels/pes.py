@@ -68,11 +68,49 @@ def _style_comparison_plot(fig, height, *, beta_orders=()):
     fig.update_yaxes(automargin=False)
 
 
-def _add_beta_traces(fig, x, orders, beta_values, *, subplot=1, y_limits=None):
+def _aligned_beta_ranges(beta_values, limits):
+    """Expand each requested range so zero has the same relative height."""
+    bounds = []
+    for values, (low, high) in zip(beta_values, limits):
+        finite = values[np.isfinite(values)]
+        start, end = (float(finite.min()), float(finite.max())) if finite.size else (0.0, 0.0)
+        padding = max(end - start, abs(start), abs(end)) * 0.05
+        if low is None and high is not None and start - padding >= high:
+            low = high - (end - start or abs(high) * 0.05 or 1)
+        if high is None and low is not None and end + padding <= low:
+            high = low + (end - start or abs(low) * 0.05 or 1)
+        if low is None:
+            low = start - padding
+        if high is None:
+            high = end + padding
+        bounds.append((min(low, 0.0), max(high, 0.0)))
+
+    # Prefer complete manual ranges that can place zero inside the plot.
+    # Normalize their extents so larger-magnitude orders carry equal weight.
+    anchors = [(low, high) for low, high in limits if low is not None and high is not None and low < 0 < high]
+    negative = positive = 0.0
+    for low, high in anchors or bounds:
+        scale = max(-low, high)
+        if scale:
+            negative = max(negative, -low / scale)
+            positive = max(positive, high / scale)
+    total = negative + positive
+    below_zero, above_zero = (negative / total, positive / total) if total else (0.5, 0.5)
+    ranges = []
+    for low, high in bounds:
+        below = -low / below_zero if below_zero else 0.0
+        above = high / above_zero if above_zero else 0.0
+        span = max(below, above) or 1.0
+        ranges.append((-below_zero * span, above_zero * span))
+    return ranges
+
+
+def _add_beta_traces(fig, x, orders, beta_values, *, subplot=1, y_limits):
     """Overlay each order on its own left axis within the β subplot."""
     suffix = str(subplot) if subplot > 1 else ""
     base_y = f"y{suffix}"
-    for index, (order, values) in enumerate(zip(orders, beta_values)):
+    ranges = _aligned_beta_ranges(beta_values, y_limits)
+    for index, (order, values, axis_range) in enumerate(zip(orders, beta_values, ranges)):
         axis_suffix = str(subplot + index) if index else suffix
         color = SERIES_COLORS[index + 1]
         label = f"β{order}"
@@ -80,7 +118,8 @@ def _add_beta_traces(fig, x, orders, beta_values, *, subplot=1, y_limits=None):
                         name=label, mode="lines+markers", marker=PES_SAMPLE_MARKER, line_color=color)
         axis = dict(title_text=f"{label} (dimensionless)", title_font_color=color,
                     tickfont_color=color, linecolor=color, showline=True,
-                    showgrid=index == 0, zeroline=index == 0, **(y_limits or {}))
+                    showgrid=index == 0, zeroline=index == 0, range=axis_range,
+                    autorange=False, fixedrange=True)
         if index:
             axis.update(overlaying=base_y, anchor="free", side="left", position=0,
                         shift=-BETA_AXIS_SPACING * index, automargin=False)
@@ -406,7 +445,7 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
         fit_card.set_visibility(False)
         fit_display.clear()
 
-    def axis_controls(title, label, prefix, apply_label, apply, *, axes=("X", "Y"), selector=None, note=None):
+    def axis_controls(title, label, apply_label, apply, build_fields, *, selector=None, note=None):
         def toggle():
             panel.set_visibility(not panel.visible)
             button.props(f'aria-expanded="{str(panel.visible).lower()}"')
@@ -419,9 +458,7 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             panel.set_visibility(False)
             if note:
                 ui.label(note).classes("vmi-subtitle")
-            with field_grid():
-                fields = [number(f"{label} {axis} {bound} (blank = auto)", f"{prefix}{axis.lower()}{bound}")
-                          for axis in axes for bound in ("min", "max")]
+            fields = build_fields()
             ui.button(apply_label, on_click=apply).props("flat")
         return fields, selected
 
@@ -467,6 +504,27 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
         state["plot"].update_figure(plot_options(fig))
         if reset_axes and state["redraw_beta"]:
             state["redraw_beta"]()
+
+    def spectrum_axis_fields():
+        with field_grid():
+            return [number(f"Spectrum {axis} {bound} (blank = auto)", f"{axis.lower()}{bound}")
+                    for axis in ("X", "Y") for bound in ("min", "max")]
+
+    def range_fields(label, *, key=None):
+        with field_grid():
+            if key is not None:
+                return tuple(number(f"{label} {bound} (blank = auto)", f"{key}_{bound}")
+                             for bound in ("min", "max"))
+            return tuple(num_input(f"{label} {bound}", None, step="any").props('placeholder="Auto"')
+                         for bound in ("min", "max"))
+
+    def read_range(label, fields):
+        low, high = (field.value for field in fields)
+        try:
+            linear_axis_limits(low, high)
+        except ValueError as exc:
+            raise ValueError(f"{label}. {exc}") from exc
+        return low, high
 
     def select_range(event):
         if not state["selecting"] or not event.args:
@@ -517,7 +575,8 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
                 padding = (end - start) / 16 if end > start else max(abs(start) / 16, 0.5)
                 state["native_x_range"] = (start - padding, end + padding)
             state["spectrum_axes"], _ = axis_controls(
-                "Photoelectron spectra", "Spectrum", "", "Apply axes", lambda: refresh_plot(reset_axes=True),
+                "Photoelectron spectra", "Spectrum", "Apply axes", lambda: refresh_plot(reset_axes=True),
+                spectrum_axis_fields,
                 note="The spectrum and β plots share the X limits." if state["angular"] else None,
             )
             state["plot"] = _scientific_plot()
@@ -551,33 +610,32 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
 
     def show_anisotropy():
         names = list(state["angular"])
+        orders = state["beta_orders"]
         fields, spectrum = axis_controls(
-            "Angular anisotropy (β)", "β plot", "beta_", "Apply β axes", lambda: redraw(update_axes=True),
-            axes=("Y",),
+            "Angular anisotropy (β)", "β plot", "Apply β axes", lambda: redraw(update_axes=True),
+            lambda: [range_fields(f"β{order} Y", key=f"beta_{order}_y") for order in orders],
             selector=lambda: ui.select(names, value=names[0], label="β spectrum").props("outlined dense").classes("max-w-full"),
-            note="Each β order has its own vertical scale. "
-                 "Leave the Y limits blank to auto-range each axis. Explicit Y limits apply to every β axis. "
+            note="Leave limits blank to use the data range. β ranges can extend to align zero. "
                  "β can be unreliable where the signal is weak; bins with nonpositive isotropic intensity are omitted.",
         )
         chart = _scientific_plot()
         revision = 0
-        y_axis = {"autorange": True}
+        y_limits = [(None, None)] * len(orders)
 
         def redraw(update_axes=False):
-            nonlocal y_axis, revision
+            nonlocal y_limits, revision
             if update_axes:
                 try:
-                    y_axis = linear_axis_limits(*(field.value for field in fields))
+                    y_limits = [read_range(f"β{order} Y limits", pair) for order, pair in zip(orders, fields)]
                 except ValueError as exc:
                     ui.notify(str(exc), type="warning")
                 else:
                     revision += 1
             x, moments = state["angular"][spectrum.value]
-            orders = state["beta_orders"]
             beta_values = anisotropy_values(moments)
             fig = go.Figure()
             _style_comparison_plot(fig, 402, beta_orders=orders)
-            _add_beta_traces(fig, x, orders, beta_values, y_limits=y_axis)
+            _add_beta_traces(fig, x, orders, beta_values, y_limits=y_limits)
             fig.update_layout(uirevision=f"{spectrum.value}:{revision}")
             fig.update_xaxes(title_text=f"{state['x_label']} ({state['units']})",
                              uirevision=state["revision"], **state["native_x_axis"])
@@ -607,17 +665,22 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             span = max(x[-1] for x in sampled) - low
             applied_width = float(f"{span / 200:.2g}")
             x_axis = linear_axis_limits(None, None)
+            intensity_axis = linear_axis_limits(None, None)
+            beta_limits = [(None, None)] * len(orders)
             with ui.row().classes("items-center gap-2"):
                 width = num_input(f"Bin width ({units})", applied_width, step="any")
-                x_min = num_input(f"X min ({units})", None, step="any").props('placeholder="Auto"')
-                x_max = num_input(f"X max ({units})", None, step="any").props('placeholder="Auto"')
-                ui.button("Apply plot settings", on_click=lambda: apply_settings()).props("flat")
+                x_min = num_input(f"{x_label} min ({units})", None, step="any").props('placeholder="Auto"')
+                x_max = num_input(f"{x_label} max ({units})", None, step="any").props('placeholder="Auto"')
+            intensity_fields = range_fields("Bin-average intensity Y")
+            beta_fields = [range_fields(f"Resampled β{order} Y") for order in orders]
+            ui.button("Apply plot settings", on_click=lambda: apply_settings()).props("flat")
             ui.label("Intensity is averaged over each bin. Edge bins include only the measured yield."
-                     + (" β follows the β spectrum selected above." if beta_spectrum else "")).classes("vmi-subtitle")
+                     + (" β follows the β spectrum selected above. β ranges can extend to align zero."
+                        if beta_spectrum else "")).classes("vmi-subtitle")
             plots = ui.column().classes("w-full gap-0")
 
         def apply_settings():
-            nonlocal applied_width, x_axis
+            nonlocal applied_width, x_axis, intensity_axis, beta_limits
             step = width.value
             if step is None or not np.isfinite(step) or not np.isfinite(low + step) or step <= 0:
                 ui.notify("Enter a positive, finite bin width.", type="warning")
@@ -626,11 +689,15 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
                 ui.notify(f"Use a larger bin width for at most {MAX_RESAMPLED_BINS:,} bins.", type="warning")
                 return
             try:
-                x_axis = linear_axis_limits(x_min.value, x_max.value)
+                new_x = linear_axis_limits(x_min.value, x_max.value)
+                new_intensity = linear_axis_limits(*read_range("Bin-average intensity Y limits", intensity_fields))
+                new_beta = [read_range(f"Resampled β{order} Y limits", pair)
+                            for order, pair in zip(orders, beta_fields)]
             except ValueError as exc:
                 ui.notify(str(exc), type="warning")
                 return
             applied_width = step
+            x_axis, intensity_axis, beta_limits = new_x, new_intensity, new_beta
             redraw()
 
         def redraw():
@@ -644,12 +711,12 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
                 density = integrate_spectral_bins(x, y, edges) / step
                 fig.add_scatter(x=centers, y=density, name=name, mode="lines+markers", marker=PES_SAMPLE_MARKER,
                                 row=1, col=1)
-            fig.update_yaxes(title_text="Bin-average intensity", row=1, col=1)
+            fig.update_yaxes(title_text="Bin-average intensity", row=1, col=1, **intensity_axis)
             _style_comparison_plot(fig, max(347, 210 * rows + 100), beta_orders=orders)
             if beta_spectrum:
                 x, moments = angular[beta_spectrum.value]
                 beta = anisotropy_values(integrate_spectral_bins(x, moments, edges))
-                _add_beta_traces(fig, centers, orders, beta, subplot=2)
+                _add_beta_traces(fig, centers, orders, beta, subplot=2, y_limits=beta_limits)
             fig.update_xaxes(**x_axis)
             fig.update_xaxes(title_text=f"{x_label} ({units})", row=rows, col=1)
             plots.clear()

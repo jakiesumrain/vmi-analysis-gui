@@ -342,7 +342,7 @@ class GuiSubmissionTests(unittest.TestCase):
         self.assertEqual(job.reads, [source])
         self.assertEqual(job.writes, [job.extra["pes_spectra"]])
 
-    def test_pes_uniform_grid_uses_completed_run_units_for_width_and_x_limits(self):
+    def test_pes_has_shared_x_ranges_and_individual_y_ranges_with_aligned_beta_zeros(self):
         import numpy as np
         from nicegui import Client, app, ui
         from vmi_analysis.centroiding.plot_data import save_plot_data
@@ -377,6 +377,16 @@ class GuiSubmissionTests(unittest.TestCase):
                             self.assertEqual(native_spectrum.layout.margin.r, native_beta.layout.margin.r)
                             fields = {element.label: element for element in client.elements.values()
                                       if isinstance(element, ui.number)}
+                            fields["β2 Y min (blank = auto)"].value = -1
+                            fields["β2 Y max (blank = auto)"].value = 2
+                            callbacks["Apply β axes"]()
+                            np.testing.assert_allclose(plot_options.call_args.args[0].layout.yaxis.range, [-1, 2])
+                            fields["β4 Y min (blank = auto)"].value = -10
+                            fields["β4 Y max (blank = auto)"].value = 20
+                            callbacks["Apply β axes"]()
+                            native_axes = plot_options.call_args.args[0].layout
+                            np.testing.assert_allclose(native_axes.yaxis.range, [-1, 2])
+                            np.testing.assert_allclose(native_axes.yaxis2.range, [-10, 20])
                             fields["Spectrum X min (blank = auto)"].value = x[0]
                             fields["Spectrum X max (blank = auto)"].value = x[-1]
                             callbacks["Apply axes"]()
@@ -389,9 +399,16 @@ class GuiSubmissionTests(unittest.TestCase):
                             fields = {element.label: element for element in client.elements.values()
                                       if isinstance(element, ui.number)}
                             width = fields[f"Bin width ({units})"]
-                            x_min, x_max = fields[f"X min ({units})"], fields[f"X max ({units})"]
+                            coordinate = "Kinetic energy" if alpha else "Squared detector radius"
+                            x_min, x_max = (fields[f"{coordinate} {bound} ({units})"] for bound in ("min", "max"))
                             width.value = 3 * (alpha or 1)
                             x_min.value, x_max.value = x[0], x[-1]
+                            fields["Bin-average intensity Y min"].value = -3
+                            fields["Bin-average intensity Y max"].value = 7
+                            fields["Resampled β2 Y min"].value = -1
+                            fields["Resampled β2 Y max"].value = 2
+                            fields["Resampled β4 Y min"].value = -10
+                            fields["Resampled β4 Y max"].value = 5
                             apply_settings = callbacks["Apply plot settings"]
                             apply_settings()
                             fig = plot_options.call_args.args[0]
@@ -409,6 +426,12 @@ class GuiSubmissionTests(unittest.TestCase):
                             self.assertIn(units, fig.layout.xaxis2.title.text)
                             self.assertEqual(fig.layout.xaxis.range, (x[0], x[-1]))
                             self.assertEqual(fig.layout.xaxis2.range, (x[0], x[-1]))
+                            self.assertEqual(fig.layout.yaxis.range, (-3, 7))
+                            beta_ranges = np.array([fig.layout.yaxis2.range, fig.layout.yaxis3.range])
+                            self.assertTrue(np.all(beta_ranges[:, 0] <= [-1, -10]))
+                            self.assertTrue(np.all(beta_ranges[:, 1] >= [2, 5]))
+                            zero_positions = -beta_ranges[:, 0] / np.ptp(beta_ranges, axis=1)
+                            self.assertAlmostEqual(*zero_positions)
 
                             x_min.value = x[-1]
                             apply_settings()
