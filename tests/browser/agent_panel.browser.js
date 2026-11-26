@@ -4,7 +4,7 @@ async page => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.setViewportSize({width: 1440, height: 1000});
-  await page.getByRole('tab', {name: 'Agent', exact: true}).click();
+  await page.getByRole('button', {name: 'Agent', exact: true}).click();
   const panel = page.getByRole('tabpanel');
   await panel.getByRole('heading', {name: 'New chat', exact: true}).waitFor();
   await page.waitForFunction(() => !document.querySelector('[class*="enter-active"], [class*="leave-active"]'));

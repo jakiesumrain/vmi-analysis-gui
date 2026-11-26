@@ -26,6 +26,7 @@ from .panels.picker import LocalFilePicker
 
 # Keep the saved key so existing on/off preferences carry over.
 KEEP_ALIVE_KEY = "server.keep_alive_while_jobs"
+APP_TITLE = "Agent-native VMI analysis"
 DEFAULT_RECONNECT_TIMEOUT = 30.0
 DEFAULT_SHUTDOWN_GRACE = 2.0
 
@@ -132,7 +133,6 @@ TAB_ICONS = {
     "Trig Calibration": "track_changes",
     "Circularize": "donut_large",
     "PES": "multiline_chart",
-    "Agent": "smart_toy",
     "TPX3 Dump": "memory",
     ion_tof.JOB_NAME: "timer",
     ion_momenta.JOB_NAME: "open_with",
@@ -285,8 +285,11 @@ def index() -> None:
             ui.button("Close", on_click=lambda: settings_dialog.close()).props("flat")
 
     with ui.header().classes("vmi-header items-center justify-between px-6 py-3"):
-        with ui.row().classes("items-baseline gap-3"):
-            ui.label("VMI Analysis").classes("vmi-title vmi-title-md vmi-title-bold")
+        with ui.row().classes("items-center gap-3 no-wrap"):
+            ui.button(icon="view_sidebar").props(
+                'flat round dense data-sidebar-toggle aria-label="Collapse sidebar" aria-expanded="true"'
+            ).classes("vmi-sidebar-toggle")
+            ui.label(APP_TITLE).classes("vmi-title vmi-title-md vmi-title-bold")
             ui.label("electron and ion imaging toolbox").classes("vmi-subtitle")
         if account:
             ui.label(account.name).classes("vmi-status-label")
@@ -317,8 +320,14 @@ def index() -> None:
 
     tab_groups = []
     panel_disclosures = {}
+    agent_entry = None
 
     def reveal_active_group(event):
+        if agent_entry is not None:
+            if event.value == "Agent":
+                agent_entry.props('aria-current="page"')
+            else:
+                agent_entry.props(remove="aria-current")
         if disclosure := panel_disclosures.get(event.value):
             ui.run_javascript(f"""
                 for (let group = getHtmlElement({disclosure.id}); group;
@@ -346,18 +355,12 @@ def index() -> None:
         return disclosure
 
     with ui.row().classes("vmi-workbench w-full no-wrap"):
-        with ui.column().classes("vmi-sidebar"):
+        with ui.element("aside").classes("vmi-sidebar-rail") as rail, ui.column().classes("vmi-sidebar"):
             connection_button = None
-            with ui.column().classes("vmi-sidebar-agent w-full gap-0"):
-                with ui.row().classes("vmi-sidebar-heading w-full items-center justify-end no-wrap"):
-                    if agent_enabled:
-                        with ui.tabs().props('inline-label aria-label="Agent session"').classes("vmi-sidebar-agent-tab") as tabs:
-                            tab_groups.append(tabs)
-                            ui.tab("Agent", icon=TAB_ICONS["Agent"]).props('aria-label="Agent"').tooltip("Agent")
-                    ui.button(icon="chevron_left").props(
-                        'flat round dense data-sidebar-toggle aria-label="Collapse sidebar" aria-expanded="true"'
-                    ).classes("vmi-sidebar-toggle")
-                if agent_enabled:
+            if agent_enabled:
+                with ui.column().classes("vmi-sidebar-agent w-full gap-0"):
+                    with ui.element("button").props('type="button"').classes("vmi-sidebar-primary") as agent_entry:
+                        ui.label("Agent")
                     with ui.column().classes("vmi-sidebar-agent-actions w-full gap-0"):
                         connection_button = ui.button("Connection", icon="tune").props(
                             'flat no-caps aria-label="Connection" aria-expanded="false"').tooltip("Connection")
@@ -366,10 +369,8 @@ def index() -> None:
                                 .props('flat no-caps aria-label="Analysis runs"').tooltip("Analysis runs")
             with ui.element("details").classes("vmi-sidebar-disclosure vmi-sidebar-workbench").props(
                     'open data-workspace-group="Workbench"'):
-                with ui.element("summary"):
-                    with ui.row().classes("items-center gap-2 no-wrap"):
-                        ui.icon("science").props('aria-hidden="true"')
-                        ui.label("Workbench")
+                with ui.element("summary").classes("vmi-sidebar-primary"):
+                    ui.label("Workbench")
                     ui.icon("expand_more").props('aria-hidden="true"')
                 for group, sections in SIDEBAR_GROUPS:
                     disclosure = sidebar_group(group, sections)
@@ -381,6 +382,10 @@ def index() -> None:
                     'flat no-caps aria-label="Settings"').classes("vmi-sidebar-settings")
                 settings_button.tooltip("Server controls and workflow files" if administrator
                                         else "Account and workflow files")
+
+        with rail:
+            ui.element("div").classes("vmi-sidebar-resizer").props(
+                'role="separator" aria-label="Resize sidebar" aria-orientation="vertical" tabindex="0"')
 
         with ui.column().classes("vmi-workspace"):
             with ui.tab_panels(value=TABS[0][0], on_change=reveal_active_group).props(
@@ -415,6 +420,8 @@ def index() -> None:
 
     for tabs in tab_groups:
         tabs.bind_value(panels)
+    if agent_entry is not None:
+        agent_entry.on("click", lambda: setattr(panels, "value", "Agent"))
     ui.context.client.on_connect(lambda: ui.run_javascript(SIDEBAR_JS.read_text(encoding="utf-8")))
 
     with ui.footer().classes(
@@ -452,7 +459,7 @@ def main(*, host: str = "0.0.0.0", launch_command: str = "uv run vmi-analysis") 
     init_zoom_overlay()
     pes.init_axes()
     ion_momenta.init_area_selection()
-    ui.run(title="VMI Analysis",
+    ui.run(title=APP_TITLE,
            favicon=str(files("vmi_analysis.gui.assets") / "electron-spectrum-measured.svg"),
            host=host,
            port=port,

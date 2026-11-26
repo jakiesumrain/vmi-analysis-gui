@@ -1,5 +1,6 @@
 // Checks disclosure state and panel navigation in a fresh browser session.
 async page => {
+  await page.setViewportSize({width: 1440, height: 1000});
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   const group = name => page.locator(`[data-workspace-group="${name}"]`);
@@ -18,6 +19,7 @@ async page => {
     localStorage.removeItem('vmi-workspace.Ion.open');
     localStorage.removeItem('vmi-workspace.Fallback.open');
     localStorage.removeItem('vmi-workspace.sidebar.collapsed');
+    localStorage.removeItem('vmi-workspace.sidebar.width');
   });
   await page.reload();
   await electron.locator('summary').waitFor();
@@ -62,15 +64,41 @@ async page => {
 
   const sidebar = page.locator('.vmi-sidebar');
   const settings = sidebar.getByRole('button', {name: 'Settings', exact: true});
-  const agent = sidebar.locator(':scope > .vmi-sidebar-agent').getByRole('tab', {name: 'Agent', exact: true});
-  const collapse = sidebar.getByRole('button', {name: 'Collapse sidebar', exact: true});
+  const agent = sidebar.locator(':scope > .vmi-sidebar-agent').getByRole('button', {name: 'Agent', exact: true});
+  const header = page.locator('.vmi-header');
+  const collapse = header.getByRole('button', {name: 'Collapse sidebar', exact: true});
+  const workbenchHeading = workbench.locator(':scope > summary');
   if ((await agent.boundingBox()).y >= (await workbench.boundingBox()).y ||
-      await workbench.getByRole('tab', {name: 'Agent', exact: true}).count()) {
+      await sidebar.getByRole('tab', {name: 'Agent', exact: true}).count()) {
     throw new Error('Agent should be a top-level item above Workbench');
   }
-  const [agentBox, collapseBox] = await Promise.all([agent.boundingBox(), collapse.boundingBox()]);
-  if (Math.abs(agentBox.y + agentBox.height / 2 - collapseBox.y - collapseBox.height / 2) > 1) {
-    throw new Error('The collapse button should stay beside Agent on desktop');
+  const typography = item => item.evaluate(element => {
+    const style = getComputedStyle(element);
+    return [style.fontFamily, style.fontSize, style.fontWeight];
+  });
+  if (String(await typography(agent)) !== String(await typography(workbenchHeading)) ||
+      (await agent.getByText('Agent', {exact: true}).boundingBox()).x !==
+      (await workbenchHeading.getByText('Workbench', {exact: true}).boundingBox()).x) {
+    throw new Error('Agent and Workbench headings should have matching typography and alignment');
+  }
+  const title = header.getByText('Agent-native VMI analysis', {exact: true});
+  if ((await collapse.boundingBox()).x >= (await title.boundingBox()).x) {
+    throw new Error('The sidebar toggle should be to the left of the app title');
+  }
+  const divider = page.getByRole('separator', {name: 'Resize sidebar'});
+  const startWidth = (await sidebar.boundingBox()).width;
+  const {x, y, width: hitWidth} = await divider.boundingBox();
+  await page.mouse.move(x + hitWidth / 2, y + 100);
+  await page.mouse.down();
+  await page.mouse.move(x + hitWidth / 2 + 72, y + 100);
+  await page.mouse.up();
+  await page.waitForFunction(width =>
+    document.querySelector('.vmi-sidebar').getBoundingClientRect().width === width, startWidth + 72);
+  await divider.press('ArrowLeft');
+  const resizedWidth = startWidth + 56;
+  if ((await sidebar.boundingBox()).width !== resizedWidth ||
+      await divider.getAttribute('aria-valuenow') !== String(resizedWidth)) {
+    throw new Error('The resize handle did not shrink the sidebar or update its accessible value');
   }
   const tabPanels = page.locator('.vmi-tab-panels');
   await tabPanels.evaluate(element => {
@@ -83,7 +111,7 @@ async page => {
   });
   await agent.click();
   await panel('New chat').waitFor();
-  await page.getByRole('tab', {name: 'Agent', exact: true, selected: true}).waitFor();
+  await agent.and(page.locator('[aria-current="page"]')).waitFor();
   const connection = page.locator('.vmi-agent-connection');
   const connectionButton = page.getByRole('button', {name: 'Connection', exact: true});
   const baseUrl = connection.getByRole('textbox', {name: 'Base URL', exact: true});
@@ -102,11 +130,12 @@ async page => {
   await page.waitForFunction(() => document.querySelector('.vmi-sidebar--collapsed'));
   const width = (await sidebar.boundingBox()).width;
   if (width > 80) throw new Error('Icon rail is not narrow');
+  if (await divider.isVisible()) throw new Error('Resize handle is visible in the icon rail');
   if (await settings.locator('.block').isVisible()) {
     throw new Error('Settings label text is shown in the icon rail');
   }
   for (const name of ['Circularize', 'TPX3 Dump', 'Ion Pipeline', 'Agent']) {
-    await tab(name).click();
+    await (name === 'Agent' ? agent : tab(name)).click();
     await panel(name === 'Agent' ? 'New chat' : name).waitFor();
   }
   if (await tabPanels.getAttribute('data-saw-horizontal-slide')) throw new Error('Panels still slide horizontally');
@@ -119,14 +148,15 @@ async page => {
   if (!(await sidebar.getAttribute('class')).includes('vmi-sidebar--collapsed')) {
     throw new Error('Collapsed rail preference was lost on reload');
   }
-  await sidebar.getByRole('button', {name: 'Expand sidebar', exact: true}).press('Space');
+  await header.getByRole('button', {name: 'Expand sidebar', exact: true}).press('Space');
   await page.waitForFunction(() => !document.querySelector('.vmi-sidebar--collapsed'));
-  if ((await sidebar.boundingBox()).width <= width) throw new Error('Sidebar did not expand');
+  if ((await sidebar.boundingBox()).width !== resizedWidth) throw new Error('Resized width was lost on reload');
   if (!await settings.locator('.block').isVisible()) {
     throw new Error('Settings label text did not return when the sidebar expanded');
   }
 
   await page.setViewportSize({width: 390, height: 844});
+  if (await divider.isVisible()) throw new Error('Resize handle is visible on narrow screens');
   if (!await settings.isVisible()) throw new Error('Settings is hidden on narrow screens');
   if (!await ionSummary.isVisible()) throw new Error('Ion heading is hidden on narrow screens');
   const strip = electron.getByRole('tablist');
