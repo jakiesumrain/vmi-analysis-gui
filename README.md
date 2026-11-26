@@ -19,7 +19,7 @@ Open [localhost:13517](http://localhost:13517). Set `VMI_GUI_PORT` to choose ano
 
 To use the local Agent, install Node.js and the Pi package pinned in the
 [Agent image](packaging/agent/Dockerfile). Confirm `pi --version` works
-in the shell that starts VMI Analysis. Then open **Agent → Connection**
+in the shell that starts VMI Analysis. Then open **Settings → Agent connection**
 and enter your model endpoint, model ID, API format, and key.
 
 **Settings → Save workflow** exports form values. A Trig Calibration session separately preserves ring selections, masks, and fits. Supply your own experiment files. Use the optional `live` dependency for Timepix3 preview.
@@ -31,6 +31,10 @@ and enter your model endpoint, model ID, API format, and key.
 | Local single user | One person runs analyses under their OS account | [Installation and first run](docs/manual.pdf) |
 | Manual-only shared | A trusted Linux lab team needs separate settings and job ownership on one server without sandbox tools | [Manual-only setup and caveats](docs/shared-server.md#manual-only-shared-mode) |
 | Sandboxed shared | A Linux server serves multiple accounts with isolated panel jobs and optional Agent containers | [Shared-server setup](docs/shared-server.md#set-up-the-linux-host) |
+
+Connect to a shared server through an SSH tunnel and sign in from your browser.
+The optional desktop client can open the tunnel, sign you in, and start the
+Agent from a saved profile. [Connection options](docs/shared-server.md#connect-from-linux-or-windows)
 
 ## Documentation
 

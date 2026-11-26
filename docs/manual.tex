@@ -682,6 +682,14 @@ Linux host's LAN address and an authorized SSH account. To give each person
 separate settings, files, and jobs, set up a shared server as described in
 Section~\ref{sec:shared-accounts}, then use the same tunnels below.
 
+On Windows, the optional
+\href{https://github.com/jakiesumrain/vmi-analysis-client}{VMI Analysis Client}
+can open the SSH tunnel and browser. To sign in automatically, save your VMI
+username and password under \emph{VMI account and Agent} in the client.
+Add model settings and an API key to start the Agent in sandboxed mode.
+The client keeps the password and key in the OS keychain. In manual-only
+mode, it opens the Workbench after sign-in.
+
 \begin{enumerate}
   \item For single-user mode, start the web server on the loopback interface
     from the Linux repository checkout.
