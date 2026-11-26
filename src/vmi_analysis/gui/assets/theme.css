@@ -233,7 +233,6 @@ html, body {
   gap: var(--vmi-space-2);
   margin-top: auto;
   padding: var(--vmi-space-3) 0 0;
-  border-top: 1px solid var(--vmi-hairline);
 }
 .vmi-sidebar-account {
   min-width: 0;
@@ -248,13 +247,9 @@ html, body {
   margin-inline-start: auto;
   min-width: 40px !important;
   min-height: 40px !important;
-  background: var(--vmi-hairline) !important;
-  border: 1px solid var(--vmi-hairline);
-  border-radius: var(--vmi-radius-md);
   color: var(--vmi-primary) !important;
 }
 .vmi-sidebar-settings .q-icon { font-size: 1.15rem; margin: 0; }
-.vmi-sidebar-settings:hover { border-color: var(--vmi-primary); }
 @media (min-width: 901px) {
   .vmi-sidebar-rail:has(.vmi-sidebar--collapsed) {
     flex-basis: var(--vmi-sidebar-collapsed-w);
