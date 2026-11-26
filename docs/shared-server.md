@@ -118,6 +118,8 @@ at the highest planned acquisition rate.
 
 ## Connect from Linux or Windows
 
+### Use your browser
+
 - **Linux:** Keep this [OpenSSH](https://man.openbsd.org/ssh#L) command running.
   Replace `ssh-user@linux-host` with your SSH username and the host name.
 
@@ -134,6 +136,18 @@ at the highest planned acquisition rate.
 Open [127.0.0.1:13517](http://127.0.0.1:13517) and sign in with your VMI
 account. If the client port is busy, use another local port and change the
 browser URL to match. Keep the remote port set to the server port.
+
+### Use the optional desktop client
+
+On Windows, the VMI Analysis Client can manage the SSH tunnel and open the
+same web UI in your browser. Enter your SSH connection details, then choose
+**Connect**. [Build and run the client](https://github.com/jakiesumrain/vmi-analysis-client#run-on-windows)
+
+To sign in automatically, enter your VMI username and password under
+**VMI account and Agent** and choose **Save profile**. Add model settings and
+an API key to start or reopen the Agent when you connect. The client uses the
+OS keychain for the password and key. The server uses the key for the Agent
+session. In manual-only mode, the client signs you in and opens the Workbench.
 
 ## Use your workspace
 
@@ -187,15 +201,13 @@ files and form settings.
 
 ## Use the Agent panel
 
-Every signed-in account can open **Agent** in the sidebar footer above
-**Settings**. Enter the
-model endpoint's base URL, model ID, API format, and API key, then choose
-**Start session**. The key is never saved in account settings or workflow files.
-It is passed only to that session's container through an environment variable;
-the temporary model configuration contains an environment-variable reference,
-not the literal key. The key field clears after startup. **Stop session** stops
-the container, removes the temporary configuration, and clears the backend's
-remaining key copies. Process exit and server shutdown perform the same cleanup.
+In sandboxed mode, open **Agent** in the sidebar. Under **Settings → Agent
+connection**, enter the model endpoint's base URL, model ID, API format, and
+API key. Choose **Start session**. The server passes the key to the session
+container through an environment variable and clears the key field. **Stop
+session** stops the container, removes its temporary configuration, and clears
+the server's remaining key copies. Process exit and server shutdown perform
+the same cleanup.
 
 Each account has at most one agent session. It survives a browser reload or
 disconnect so the user can sign back in and continue. The container can read
