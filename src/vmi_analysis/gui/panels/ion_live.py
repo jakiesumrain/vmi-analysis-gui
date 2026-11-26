@@ -15,7 +15,8 @@ from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS, tof_bin_edges
 from .. import shared, theme
 from ..agent_panels import PanelInspection, PanelOperation
 from ..centroid_plots import SERIES_COLORS, _style, plot_options
-from .common import field_grid, num_input
+from ..workflow import register_value
+from .common import field_grid, num_input, persist
 
 
 JOB_NAME = "Live TPX3"
@@ -38,6 +39,17 @@ def _endpoint(value):
             or target.username or target.password or target.path or target.query or target.fragment):
         raise ValueError("Enter a TCP endpoint such as tcp://acquisition-host:5556.")
     return value.strip()
+
+
+def _valid_endpoint_setting(value):
+    if not isinstance(value, str):
+        return False
+    try:
+        if value.strip():
+            _endpoint(value)
+    except ValueError:
+        return False
+    return True
 
 
 def agent_operations():
@@ -94,6 +106,9 @@ def build(_jobs, *, ask_agent=None):
     if shared.SERVER and not configured_endpoint:
         ui.label("Ask the server administrator to configure VMI_TPX3_LIVE_ENDPOINT.").classes("vmi-subtitle")
         return
+
+    def number(label, key, value=None):
+        return persist(num_input(label, value, step="any"), f"ion_live.{key}")
 
     receiver = None
     previous = None
@@ -232,18 +247,35 @@ def build(_jobs, *, ask_agent=None):
                             placeholder="tcp://acquisition-host:5556").props("outlined dense").classes("w-full")
         if shared.SERVER:
             endpoint.disable()
+        else:
+            store = shared.settings_store()
+            endpoint_key = "ion_live.endpoint"
+            default_endpoint = configured_endpoint if _valid_endpoint_setting(configured_endpoint) else ""
+
+            def saved_endpoint():
+                value = store.get(endpoint_key, default_endpoint)
+                return value if _valid_endpoint_setting(value) else default_endpoint
+
+            def save_endpoint(event):
+                if _valid_endpoint_setting(event.value):
+                    store[endpoint_key] = event.value.strip()
+
+            endpoint.value = saved_endpoint()
+            endpoint.on_value_change(save_endpoint)
+            register_value(endpoint_key, saved_endpoint, _valid_endpoint_setting)
         with field_grid(3):
-            minimum = num_input("TOF minimum (ns)", 0, step="any")
-            maximum = num_input("TOF maximum (ns)", 15_000, step="any")
-            tof_width = num_input("TOF bin size (ns)", DEFAULT_BIN_SIZE_NS, step="any")
+            minimum = number("TOF minimum (ns)", "tof_min", 0)
+            maximum = number("TOF maximum (ns)", "tof_max", 15_000)
+            tof_width = number("TOF bin size (ns)", "tof_bin_width", DEFAULT_BIN_SIZE_NS)
         gmd_fields = {}
         with ui.expansion("GMD histogram settings", icon="bar_chart").classes("w-full"):
             ui.label("Leave a limit blank to use the data range. Leave bin size blank for 40 bins. "
                      "These settings apply only to the GMD histograms.").classes("vmi-subtitle")
             for name in ("GMD1", "GMD2"):
                 with field_grid(3):
-                    gmd_fields[name] = tuple(num_input(f"{name} {label} (nA)", None, step="any")
-                                             for label in ("minimum", "maximum", "bin size"))
+                    gmd_fields[name] = tuple(number(f"{name} {label} (nA)", f"{name.lower()}_{key}")
+                                             for label, key in (("minimum", "min"), ("maximum", "max"),
+                                                                ("bin size", "bin_width")))
         bin_controls = [minimum, maximum, tof_width, *(control for fields in gmd_fields.values() for control in fields)]
         with ui.row():
             start_button = ui.button("Start preview", icon="play_arrow", on_click=start)

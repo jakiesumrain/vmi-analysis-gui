@@ -21,11 +21,12 @@ from vmi_analysis.pes import (ABEL_METHODS, BASELINE_PARAMETERS, BETA_ORDERS, QU
                               fit_peaks, integrate_spectral_bins, uniform_bin_edges, uniform_grid_bounds)
 
 from ..agent_panels import PanelOperation, PanelView, number as finite_number, require_completed_job, resolve_path
-from ..shared import checked_path, generated_dir, workspace_root
+from ..shared import checked_path, generated_dir, settings_store, workspace_root
 from .. import theme
 from ..centroid_plots import SERIES_COLORS, _style, linear_axis_limits, plot_options
 from ..jobs import Job, JobManager
 from ..resources import canonical_path
+from ..workflow import PES_UNIFORM_PREFIXES
 from .common import (GENERATED, REPO_ROOT, JobView, action_bar, adopt_agent_form, check_grid,
                      confirm_clear_outputs, field_grid, num_input, persist)
 from .picker import LocalFilePicker
@@ -567,13 +568,13 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             return [number(f"Spectrum {axis} {bound} (blank = auto)", f"{axis.lower()}{bound}")
                     for axis in ("X", "Y") for bound in ("min", "max")]
 
-    def range_fields(label, *, key=None):
+    def range_fields(label, *, key=None, values=(None, None)):
         with field_grid():
             if key is not None:
                 return tuple(number(f"{label} {bound} (blank = auto)", f"{key}_{bound}")
                              for bound in ("min", "max"))
-            return tuple(num_input(f"{label} {bound}", None, step="any").props('placeholder="Auto"')
-                         for bound in ("min", "max"))
+            return tuple(num_input(f"{label} {bound}", value, step="any").props('placeholder="Auto"')
+                         for bound, value in zip(("min", "max"), values))
 
     def read_range(label, fields):
         low, high = (field.value for field in fields)
@@ -712,6 +713,12 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
         spectra, angular = state["spectra"], state["angular"]
         units, x_label = state["units"], state["x_label"]
         orders = state["beta_orders"]
+        store = settings_store()
+        prefix = PES_UNIFORM_PREFIXES[units]
+
+        def saved_range(axis):
+            return tuple(store.get(f"{prefix}{axis}_{bound}") for bound in ("min", "max"))
+
         with ui.expansion("Uniform-grid spectra", icon="show_chart", value=False).classes("w-full").props(
                 'header-class="vmi-section-toggle text-primary" hide-expand-icon') as section:
             try:
@@ -728,11 +735,15 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
                     'header-class="vmi-section-toggle text-primary" hide-expand-icon'):
                 with ui.column().classes("w-full"):
                     with ui.row().classes("items-center gap-2"):
-                        width = num_input(f"Bin width ({units})", applied_width, step="any")
-                        x_min = num_input(f"{x_label} min ({units})", None, step="any").props('placeholder="Auto"')
-                        x_max = num_input(f"{x_label} max ({units})", None, step="any").props('placeholder="Auto"')
-                    intensity_fields = range_fields("Bin-average intensity Y")
-                    beta_fields = [range_fields(f"Resampled β{order} Y") for order in orders]
+                        stored_width = store.get(prefix + "bin_width")
+                        width = num_input(f"Bin width ({units})",
+                                          applied_width if stored_width is None else stored_width, step="any")
+                        x_low, x_high = saved_range("x")
+                        x_min = num_input(f"{x_label} min ({units})", x_low, step="any").props('placeholder="Auto"')
+                        x_max = num_input(f"{x_label} max ({units})", x_high, step="any").props('placeholder="Auto"')
+                    intensity_fields = range_fields("Bin-average intensity Y", values=saved_range("intensity_y"))
+                    beta_fields = [range_fields(f"Resampled β{order} Y", values=saved_range(f"beta_{order}_y"))
+                                   for order in orders]
                     ui.button("Apply plot settings", on_click=lambda: apply_settings()).props("flat")
                     ui.label("Intensity is averaged over each bin. Edge bins include only the measured yield."
                              + (" β follows the β spectrum selected above. β ranges can extend to align zero."
@@ -742,7 +753,7 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
         chart = None
         plotted_beta = None
 
-        def apply_settings():
+        def apply_settings(*, save=True):
             nonlocal applied_width, applied_edges, x_axis, intensity_axis, beta_limits
             step = width.value
             try:
@@ -751,12 +762,19 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
                 new_intensity = linear_axis_limits(*read_range("Bin-average intensity Y limits", intensity_fields))
                 new_beta = [read_range(f"Resampled β{order} Y limits", pair)
                             for order, pair in zip(orders, beta_fields)]
-            except ValueError as exc:
+                if save:
+                    fields = {"x": (x_min, x_max), "intensity_y": intensity_fields}
+                    fields.update((f"beta_{order}_y", pair) for order, pair in zip(orders, beta_fields))
+                    values = {f"{prefix}{axis}_{bound}": field.value for axis, pair in fields.items()
+                              for bound, field in zip(("min", "max"), pair)}
+                    store.update({prefix + "bin_width": step, **values})
+            except (OSError, ValueError) as exc:
                 ui.notify(str(exc), type="warning")
                 return
             applied_width, applied_edges = step, new_edges
             x_axis, intensity_axis, beta_limits = new_x, new_intensity, new_beta
-            redraw()
+            if save:
+                redraw()
 
         def redraw():
             nonlocal chart, plotted_beta
@@ -789,6 +807,7 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
             if section.value and (chart is None or plotted_beta != selected_beta):
                 redraw()
 
+        apply_settings(save=False)
         section.on_value_change(refresh_if_needed)
         if beta_spectrum:
             beta_spectrum.on_value_change(refresh_if_needed)
