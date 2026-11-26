@@ -157,14 +157,6 @@ class SharedServer:
         self.sessions.pop(token, None)
         return None
 
-    def sign_in(self, account, request, response):
-        for token in list(self.sessions):
-            self.session(token)
-        self.sessions.pop(request.scope.get('vmi_session'), None)
-        token = secrets.token_urlsafe(32)
-        self.sessions[token] = (account, monotonic() + MAX_SESSION_AGE)
-        response.set_cookie(COOKIE, token, httponly=True, samesite='strict', max_age=MAX_SESSION_AGE)
-
     def path(self, account, value, *, write=False, cwd=None):
         path = (Path(cwd or account.root) / Path(value).expanduser()).resolve()
         if path.is_relative_to(account.root) or (not write and (
@@ -277,8 +269,6 @@ class AccountMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        from .desktop_client import PUBLIC_ROUTES
-
         if scope['type'] not in ('http', 'websocket'):
             return await self.app(scope, receive, send)
         headers = Headers(scope=scope)
@@ -297,7 +287,6 @@ class AccountMiddleware:
         public_login = scope['type'] == 'http' and (
             scope['path'] == '/login'
             or (scope['method'] == 'GET' and scope['path'] in LOGIN_ASSETS)
-            or (scope['method'], scope['path']) in PUBLIC_ROUTES
         )
         if not public_login and not request_account(scope):
             if scope['type'] == 'websocket':
@@ -325,15 +314,14 @@ class AccountMiddleware:
 
 
 def install(config_path):
-    from . import desktop_client
+    from .agent_api import start_session
 
     global SERVER
     if sys.platform != 'linux':
         raise RuntimeError('Shared-server mode requires a Linux host.')
     SERVER = SharedServer(json.loads(Path(config_path).read_text(encoding='utf-8')))
-    SERVER.desktop_links = desktop_client.DesktopLinks(SERVER)
-    desktop_client.install(app, SERVER.desktop_links)
     app.add_middleware(AccountMiddleware)
+    app.post('/api/agent/session')(start_session)
     assets = files('vmi_analysis.gui.assets')
     login_page = (assets / 'login.html').read_text(encoding='utf-8')
 
@@ -371,8 +359,13 @@ def install(config_path):
             message = '<p class="login-error" role="alert">Check your account name and password, then try again.</p>'
             return HTMLResponse(login_page.replace('{message}', message), status_code=401,
                                 headers={'Cache-Control': 'no-store'})
+        for token in list(SERVER.sessions):
+            SERVER.session(token)
+        SERVER.sessions.pop(request.scope.get('vmi_session'), None)
+        token = secrets.token_urlsafe(32)
+        SERVER.sessions[token] = (account, monotonic() + MAX_SESSION_AGE)
         response = RedirectResponse('/', status_code=303)
-        SERVER.sign_in(account, request, response)
+        response.set_cookie(COOKIE, token, httponly=True, samesite='strict', max_age=MAX_SESSION_AGE)
         return response
 
     @app.post('/logout')
