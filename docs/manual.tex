@@ -286,13 +286,16 @@ one Run/Stop control. See Section~\ref{sec:panels} for the panel-specific fields
 \subsection{Window layout and tabs}
 \label{sec:tabs}
 
-Use the left sidebar to select a panel. Expand or collapse \emph{Electron}
-and \emph{Ion} independently. Both start collapsed. The browser remembers
-which groups you open.
-On desktop, use the arrow beside \emph{Workspace} to collapse the sidebar
-to icons. Hover over an icon to see its tool name. Use the arrow again to
-expand the sidebar. The browser remembers the sidebar width.
-Open \emph{Settings} at the bottom of the sidebar for workspace and server controls.
+Open \emph{Workbench} in the left sidebar to select a panel. Expand or
+collapse \emph{Electron} and \emph{Ion} independently. Both start collapsed.
+The browser remembers which groups you open.
+On desktop, use the sidebar button beside the application title to collapse
+or expand the sidebar. Hover over a tool icon to see its name. Drag the right
+edge to resize the expanded sidebar, or focus the divider and use the left
+and right arrow keys. The browser remembers the sidebar width.
+Open the \emph{Settings} icon at the bottom right of the sidebar for workspace
+and server controls. In shared mode, the account name appears to its left
+when the sidebar is expanded.
 On narrow windows, scroll the tool rows above the panel.
 In \emph{Electron}, \emph{Acquire} groups \emph{GMD Map}, \emph{Movie},
 \emph{Dark Frame}, and \emph{Accumulate}. \emph{Analyze} groups
@@ -301,7 +304,8 @@ In \emph{Electron}, \emph{Acquire} groups \emph{GMD Map}, \emph{Movie},
 \emph{Ion} contains \emph{TPX3 Dump}, \emph{Ion TOF}, \emph{Ion momenta},
 \emph{Ion Pipeline}, and \emph{Live TPX3}. The folded \emph{Fallback} group
 contains three manual comparison tools. \emph{Agent} appears above
-\emph{Settings} when the deployment enables it.
+\emph{Workbench} when enabled. Use its chevron in the expanded sidebar to
+show or hide \emph{Analysis runs}.
 
 The footer shows running and queued jobs, the job limit, and the server's
 disconnect mode. Open \emph{Settings} to change the limit or disconnect mode,
@@ -451,7 +455,7 @@ selected band, masks, and fitted rings.
 
 \subsection{Run a panel with the Agent}
 
-Open \emph{Agent} and expand \emph{Connection}. Enter the model endpoint,
+Open \emph{Settings} and expand \emph{Agent connection}. Enter the model endpoint,
 model ID, API format, and API key. Choose \emph{Start session}.
 Use an endpoint you trust with the prompts and data you send. The server
 keeps the key only for the session. Local mode uses Pi on the host by
@@ -471,7 +475,7 @@ ambiguous alignment can pause the workflow for a shift decision.
 
 \subsection{Analyze a screenshot with the Agent}
 
-Open \emph{Connection}, enter the model IDs for your endpoint, and select
+Under \emph{Agent connection} in \emph{Settings}, enter the model IDs for your endpoint and select
 the models that accept images under \emph{Image-capable models}. Start the
 session and choose one of those models in the composer. Paste or drop a
 screenshot onto the composer and ask what you want to inspect. The screenshot
@@ -495,7 +499,7 @@ Read the script, inputs, and parameters in the review before choosing
 and account running VMI Analysis. A shared Linux server uses the bundled
 Agent image in a separate container with networking disabled.
 
-Open \emph{Analysis runs} in the Agent header to follow the log, cancel a
+Open \emph{Analysis runs} under \emph{Agent} in the sidebar to follow the log, cancel a
 run, or download the approved script, run record, log, and output files.
 The script receives the run record path as its first argument. The record
 contains named input paths and JSON parameters. Write result files directly

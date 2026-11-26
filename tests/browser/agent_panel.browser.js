@@ -4,33 +4,32 @@ async page => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.setViewportSize({width: 1440, height: 1000});
-  await page.getByRole('tab', {name: 'Agent', exact: true}).click();
-  const panel = page.getByRole('tabpanel');
-  await panel.locator('.vmi-title').filter({hasText: /^Agent$/}).waitFor();
-  await page.waitForFunction(() => !document.querySelector('[class*="enter-active"], [class*="leave-active"]'));
-
-  const header = panel.locator('.vmi-panel-head').filter({hasText: /^Agent/});
-  const title = header.locator('.vmi-title');
-  const connectionButton = header.getByRole('button', {name: 'Connection', exact: true});
-  const titleBox = await title.boundingBox();
-  const connectionBox = await connectionButton.boundingBox();
-  const headerBox = await header.boundingBox();
-  check(connectionBox.x > titleBox.x + titleBox.width, 'Connection is not to the right of the title');
-  check(connectionBox.x - headerBox.x < headerBox.width / 2, 'Connection is too far from the title');
-
-  const drawer = panel.locator('.vmi-agent-connection');
+  const settingsButton = page.getByRole('button', {name: 'Settings', exact: true});
+  const settings = page.getByRole('dialog');
+  const connection = settings.getByRole('button', {name: /^(Expand|Collapse) "Agent connection"$/});
+  const drawer = settings.locator('.vmi-agent-connection');
   const baseUrl = drawer.getByRole('textbox', {name: 'Base URL', exact: true});
   const diagnostics = drawer.locator('.vmi-agent-diagnostics');
-  check(!await diagnostics.isVisible(), 'Diagnostics is visible with Connection closed');
-  check(!await baseUrl.isVisible(), 'Connection drawer should start closed');
-  await connectionButton.press('Enter');
-  await baseUrl.waitFor({state: 'visible'});
-  await diagnostics.waitFor({state: 'visible'});
+  await settingsButton.press('Enter');
+  await connection.waitFor();
+  check(!await baseUrl.isVisible(), 'Agent connection should start folded');
+  await connection.press('Enter');
+  await baseUrl.waitFor();
+  await diagnostics.waitFor();
   await drawer.getByRole('textbox', {name: 'Model IDs', exact: true}).fill('test-model');
-  check(await connectionButton.getAttribute('aria-expanded') === 'true', 'Drawer state is not announced');
-  await connectionButton.press('Space');
-  await baseUrl.waitFor({state: 'hidden'});
-  await diagnostics.waitFor({state: 'hidden'});
+  await settings.getByRole('button', {name: 'Close', exact: true}).click();
+  await settings.waitFor({state: 'hidden'});
+
+  await page.getByRole('button', {name: 'Agent', exact: true}).click();
+  const panel = page.getByRole('tabpanel');
+  await panel.getByRole('heading', {name: 'New chat', exact: true}).waitFor();
+  await page.waitForFunction(() => !document.querySelector('[class*="enter-active"], [class*="leave-active"]'));
+
+  const actions = page.locator('.vmi-sidebar-agent-actions');
+  await actions.getByRole('button', {name: 'Analysis runs', exact: true}).waitFor();
+  check(!await actions.getByRole('button', {name: 'Connection', exact: true}).count(),
+    'Connection is still in the Agent sidebar');
+  check(!await panel.getByText('idle', {exact: true}).count(), 'Chat still shows an idle badge');
 
   const composer = panel.locator('.vmi-agent-composer');
   const prompt = composer.getByRole('textbox', {name: 'Instruction', exact: true});
@@ -38,6 +37,19 @@ async page => {
   check(await composer.evaluate(element => element.getBoundingClientRect().bottom <= innerHeight),
     'Composer starts below the viewport');
   const modelSelector = composer.locator('.vmi-agent-model');
+  await modelSelector.click();
+  await page.getByText('Configure models…', {exact: true}).click();
+  await baseUrl.waitFor();
+  await connection.press('Space');
+  await baseUrl.waitFor({state: 'hidden'});
+  await page.keyboard.press('Escape');
+  await settings.waitFor({state: 'hidden'});
+  await prompt.fill('/settings');
+  await page.getByRole('option', {name: /^\/settings /}).click();
+  await prompt.press('Enter');
+  await baseUrl.waitFor();
+  await page.keyboard.press('Escape');
+  await settings.waitFor({state: 'hidden'});
   const modelBox = await modelSelector.boundingBox();
   const sendBox = await send.boundingBox();
   check(modelBox.x + modelBox.width <= sendBox.x && sendBox.x - modelBox.x - modelBox.width < 16,
@@ -61,8 +73,20 @@ async page => {
     'Composer placeholder is hidden');
   check(!await send.locator('.block').isVisible(), 'Icon-only Send button still shows its text label');
   check(!await send.isEnabled(), 'Send should be disabled before a session starts');
-  check(await panel.locator('.vmi-agent-empty').isVisible(), 'Conversation empty state is missing');
-  check(await panel.locator('.vmi-agent-empty').evaluate(element => getComputedStyle(element).borderWidth) === '0px',
+  const welcome = panel.locator('.vmi-agent-empty');
+  check(await welcome.getByText('What would you like to analyze?', {exact: true}).isVisible(),
+    'Conversation welcome is missing');
+  await page.waitForFunction(() => document.querySelector('.vmi-agent-empty img')?.naturalWidth > 0);
+  check(await welcome.evaluate(element => {
+    const icon = element.querySelector('img').getBoundingClientRect();
+    const area = element.getBoundingClientRect();
+    const text = element.lastElementChild.getBoundingClientRect();
+    return icon.width === 76 && icon.height === 76 &&
+      Math.abs(icon.x + icon.width / 2 - area.x - area.width / 2) < 1 &&
+      icon.bottom < text.top && Math.abs((icon.top + text.bottom) / 2 - (area.top + area.bottom) / 2) < 1 &&
+      area.height > 300;
+  }), 'Welcome icon and prompt should be centered in the available chat space');
+  check(await welcome.evaluate(element => getComputedStyle(element).borderWidth) === '0px',
     'Conversation still uses the old boxed empty state');
   check((await composer.boundingBox()).height <= 115, 'Empty composer is taller than expected');
   const attachmentButton = composer.getByRole('button', {name: 'Attach file or folder', exact: true});
@@ -75,6 +99,7 @@ async page => {
   const menuItemBox = await attachFile.boundingBox();
   check(Math.abs(attachmentBox.x - menuItemBox.x) < 36, 'Attachment menu opened far from its button');
   await page.keyboard.press('Escape');
+  await attachFile.waitFor({state: 'detached'});
 
   await prompt.evaluate(element => {
     const transfer = new DataTransfer();
@@ -161,20 +186,20 @@ async page => {
   await page.setViewportSize({width: 390, height: 844});
   const composerBox = await composer.boundingBox();
   check(composerBox.x >= 0 && composerBox.x + composerBox.width <= 390, 'Composer overflows the narrow viewport');
-  check(await connectionButton.isVisible(), 'Connection is hidden on narrow screens');
+  check(await settingsButton.isVisible(), 'Settings is hidden on narrow screens');
   check(!await composer.getByText('Enter to send', {exact: false}).isVisible(), 'Keyboard hint crowds the composer');
   check(await composer.getByRole('button', {name: 'Attach file or folder', exact: true}).isVisible(),
     'Attachment control is missing');
   await checkToolbarAlignment();
-  await connectionButton.click();
+  await settingsButton.click();
   await baseUrl.waitFor({state: 'visible'});
   const drawerBox = await drawer.boundingBox();
-  check(drawerBox.x >= 0 && drawerBox.x + drawerBox.width <= 390, 'Connection drawer overflows the narrow viewport');
+  check(drawerBox.x >= 0 && drawerBox.x + drawerBox.width <= 390, 'Agent connection overflows the narrow viewport');
   const gridColumns = await drawer.locator('.vmi-field-grid').evaluateAll(elements =>
     elements.map(element => getComputedStyle(element).gridTemplateColumns));
   check(gridColumns.every(columns => !columns.trim().includes(' ')),
     'Connection fields do not collapse to one column on narrow screens');
   await page.screenshot({path: '.cache/vmi-analysis/agent_panel_mobile.png'});
   check(errors.length === 0, errors.join('; '));
-  return {passed: true, checks: ['title action', 'keyboard drawer', 'visible composer', 'screenshot paste', 'file drop', 'page scroll', 'latest messages', 'narrow layout']};
+  return {passed: true, checks: ['title action', 'connection settings', 'chat shortcuts', 'visible composer', 'screenshot paste', 'file drop', 'page scroll', 'latest messages', 'narrow layout']};
 }

@@ -1,6 +1,7 @@
 """Interactive per-user agent sessions for shared data and private workspaces."""
 
 import asyncio
+from base64 import b64encode
 from importlib.resources import files
 import json
 import os
@@ -14,7 +15,7 @@ from vmi_analysis.agent_backend import (AGENTS, API_FORMATS, SLASH_CONTROLS, Age
                                         list_provider_models)
 from vmi_analysis.paths import GENERATED_DIR
 
-from .. import analysis_runs, shared, theme
+from .. import shared, theme
 from ..agent_attachments import (IMAGE_SUFFIXES, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_FILES, MAX_BATCH_BYTES,
                                  MAX_PROMPT_IMAGES, attachment_root, prompt_image)
 from ..agent_completion import path_completions
@@ -31,6 +32,9 @@ SLASH_BUILTINS = {
     **{name: description for name, (_, description) in SLASH_CONTROLS.items()},
 }
 AGENT_CHAT_JS = files("vmi_analysis.gui.assets") / "agent_chat.js"
+WELCOME_ICON = "data:image/svg+xml;base64," + b64encode(
+    (files("vmi_analysis.gui.assets") / "electron-spectrum-welcome.svg").read_bytes()
+).decode("ascii")
 
 
 def _render_review_details(details):
@@ -59,28 +63,11 @@ def _render_review_value(value):
         ui.label("None" if value is None or isinstance(value, (dict, list, tuple)) else str(value))
 
 
-class AgentStatus:
-    def __init__(self):
-        self.badge = None
-        self.spinner = None
-
-    def place_status(self):
-        self.badge = theme.status_badge("idle")
-        self.spinner = ui.spinner("dots", size="sm", color="primary")
-        self.spinner.visible = False
-
-    def sync(self, session):
-        status = session.status if session is not None else "idle"
-        badge_status = {
-            "starting": "queued",
-            "ready": "done",
-            "running": "running",
-            "stopping": "cancelled",
-            "failed": "failed",
-        }.get(status, "idle")
-        theme.set_badge(self.badge, badge_status)
-        self.badge.text = status
-        self.spinner.visible = status in ("starting", "running", "stopping")
+def _conversation_title(entries):
+    for entry in entries:
+        if entry["kind"] == "user" and (title := " ".join(entry["text"].split())):
+            return title if len(title) <= 72 else title[:71].rstrip() + "…"
+    return "New chat"
 
 
 def _workflow_card(jobs, name, targets, navigate):
@@ -128,35 +115,19 @@ def _attachment_reference(value, *, container):
     raise ValueError("Choose an attachment inside the Agent workspace.")
 
 
-def build(jobs, *, registry, navigate):
+def build(jobs, *, registry, navigate, settings_dialog, connection_settings):
     with ui.column().classes("vmi-agent-page w-full gap-0"):
-        return _build_page(jobs, registry=registry, navigate=navigate)
+        return _build_page(jobs, registry=registry, navigate=navigate, settings_dialog=settings_dialog,
+                           connection_settings=connection_settings)
 
 
-def _build_page(jobs, *, registry, navigate):
+def _build_page(jobs, *, registry, navigate, settings_dialog, connection_settings):
     account = shared.current_account()
     owner = account.name if account else "local"
-    status = AgentStatus()
-    connection_button = None
+    with ui.element("h1").classes("vmi-agent-header w-full"):
+        title = ui.label(_conversation_title(()))
 
-    def place_connection():
-        nonlocal connection_button
-        if analysis_runs.available():
-            ui.button("Analysis runs", icon="folder_open", on_click=lambda: analysis_runs.open_history(jobs)) \
-                .props("flat dense no-caps")
-        connection_button = ui.button("Connection", icon="tune").props(
-            'flat dense no-caps aria-label="Connection" aria-expanded="false"')
-        connection_button.classes("vmi-agent-connection-toggle")
-
-    with ui.column().classes("vmi-agent-header w-full gap-0"):
-        theme.panel_header(
-            "Agent",
-            "Inspect shared data and work in your workspace with your own model endpoint.",
-            view=status,
-            actions=place_connection,
-        )
-
-    with ui.column().classes("vmi-agent-connection w-full") as connection:
+    with connection_settings, ui.column().classes("vmi-agent-connection w-full"):
         with field_grid():
             base_url = ui.input("Base URL", placeholder="https://provider.example/v1") \
                 .classes("w-full").props("outlined dense autocomplete=off")
@@ -183,15 +154,21 @@ def _build_page(jobs, *, registry, navigate):
             load_models_button = ui.button("Load models", icon="sync").props("flat")
             load_models_button.visible = not shared.SERVER and os.environ.get("VMI_AGENT_BACKEND") != "container"
             load_models_note = ui.label("").classes("vmi-caption").props('role="status"')
+        connection_error = ui.label().classes("vmi-agent-error").props('role="alert"')
+        connection_error.visible = False
         theme.form_section("Diagnostics")
         diagnostics_log = theme.log_console().classes("vmi-agent-diagnostics")
-    connection.set_visibility(False)
     error_label = ui.label("").classes("vmi-agent-error vmi-agent-notice w-full") \
         .props('role="alert" tabindex="-1"')
     error_label.visible = False
 
     with ui.column().classes("vmi-agent-timeline w-full gap-0"):
-        entries_column = ui.column().classes("vmi-agent-entries w-full")
+        with ui.column().classes("vmi-agent-entries w-full"):
+            entries_column = ui.column().classes("vmi-agent-transcript w-full")
+            with ui.row().classes("vmi-agent-activity items-center gap-2") as activity_row:
+                activity_label = ui.label().props('role="status"')
+                activity_spinner = ui.spinner("dots", size="sm", color="primary").props('aria-hidden="true"')
+            activity_row.visible = False
     approval_view = ui.column().classes("vmi-agent-approval w-full gap-2")
 
     workflow_views = {name: _workflow_card(jobs, name, targets, navigate)
@@ -228,9 +205,6 @@ def _build_page(jobs, *, registry, navigate):
                 with ui.menu().props('anchor="top left" self="bottom left" auto-close'):
                     attach_file = ui.menu_item("Attach file")
                     attach_folder = ui.menu_item("Attach folder")
-            with ui.row().classes("vmi-agent-composer-status items-center gap-2 no-wrap"):
-                activity_spinner = ui.spinner("dots", size="sm", color="primary").props('aria-hidden="true"')
-                activity_label = ui.label().classes("vmi-caption").props('role="status"')
             model_select = ui.select({}, label="Model").props(
                 'borderless dense hide-dropdown-icon aria-label="Model"').classes("vmi-agent-model")
             with ui.button(icon="arrow_upward").props(
@@ -279,8 +253,7 @@ def _build_page(jobs, *, registry, navigate):
         if updating_models or not event.value:
             return
         if event.value == MODEL_SETTINGS:
-            if not connection.visible:
-                toggle_connection()
+            open_connection_settings()
             refresh()
         elif (session := AGENTS.current(owner)) is not None and session.active:
             return change_model(session, event.value)
@@ -441,12 +414,9 @@ def _build_page(jobs, *, registry, navigate):
             return
         ui.run_javascript(f"window.vmiAgentCompletionResults?.({prompt.id}, {request_id}, {json.dumps(items)})")
 
-    def toggle_connection():
-        connection.visible = not connection.visible
-        connection_button.props(f'aria-expanded="{str(connection.visible).lower()}"')
-        connection_button.classes(remove="vmi-agent-connection-open")
-        if connection.visible:
-            connection_button.classes("vmi-agent-connection-open")
+    def open_connection_settings():
+        connection_settings.open()
+        settings_dialog.open()
 
     def open_view_context(view: PanelView | PanelInspection | RunCapture):
         nonlocal view_context, linked_run
@@ -632,9 +602,9 @@ def _build_page(jobs, *, registry, navigate):
         diagnostics_log.clear()
         entries_column.clear()
         with entries_column:
-            with ui.row().classes("vmi-agent-empty w-full items-center justify-center gap-2") as empty:
-                ui.icon("forum").props('aria-hidden="true"')
-                ui.label("Start a session to begin a conversation.").classes("vmi-caption")
+            with ui.column().classes("vmi-agent-empty w-full items-center justify-center") as empty:
+                ui.element("img").props(f'src="{WELCOME_ICON}" alt="" width="76" height="76"')
+                ui.label("What would you like to analyze?")
             empty_state = empty
 
     def add_entry(entry):
@@ -662,7 +632,6 @@ def _build_page(jobs, *, registry, navigate):
     def refresh():
         nonlocal diagnostics_cursor, stop_visible
         session = AGENTS.current(owner)
-        status.sync(session)
         snapshot = session.snapshot() if session is not None else None
         session_status = snapshot["status"] if snapshot else "idle"
         waiting_for_approval = session_status == "running" and approval is not None
@@ -671,14 +640,14 @@ def _build_page(jobs, *, registry, navigate):
         activity_text = {
             "starting": "Connecting…",
             "stopping": "Closing session…",
-            "failed": "Open Connection for diagnostics.",
+            "failed": "Open Agent connection in Settings for diagnostics.",
         }.get(session_status, "")
         if model_pending:
             activity_text = "Changing model…"
         elif session_status == "running":
-            activity_text = "Waiting for approval…" if waiting_for_approval else (
-                snapshot["activity"] or "Agent working…")
+            activity_text = "Waiting for approval…" if waiting_for_approval else "Working"
         activity_label.text = activity_text
+        activity_row.visible = bool(activity_text)
         activity_spinner.visible = model_pending or (
             session_status in ("starting", "running", "stopping") and not waiting_for_approval)
         active = session_status in ("starting", "ready", "running", "stopping")
@@ -706,12 +675,14 @@ def _build_page(jobs, *, registry, navigate):
         send_button.set_enabled(stop_visible or not uploading and session_status == "ready"
                                 and not (model_pending or control_pending))
         if snapshot is None:
+            title.text = _conversation_title(())
             if rendered_session is not None:
                 reset_transcript(None)
             return
         transcript_id = snapshot.get("transcript_id", snapshot["id"])
         if transcript_id != rendered_session:
             reset_transcript(transcript_id)
+        title.text = _conversation_title(snapshot["entries"])
         empty_state.visible = not snapshot["entries"]
         for index, entry in enumerate(snapshot["entries"]):
             if index >= len(rendered):
@@ -734,13 +705,15 @@ def _build_page(jobs, *, registry, navigate):
 
     async def toggle_session():
         clear_error()
+        connection_error.visible = False
         session = AGENTS.current(owner)
         if session is not None and session.active:
             session_button.set_enabled(False)
             try:
                 await asyncio.to_thread(AGENTS.stop, owner)
             except Exception as exc:
-                show_error(f"Could not stop the agent cleanly: {exc}")
+                connection_error.text = f"Could not stop the agent cleanly: {exc}"
+                connection_error.visible = True
             finally:
                 api_key.value = ""
                 refresh()
@@ -767,7 +740,8 @@ def _build_page(jobs, *, registry, navigate):
             clear_error()
         except (OSError, RuntimeError, ValueError) as exc:
             api_key.value = ""
-            show_error(f"Could not start the session: {exc}")
+            connection_error.text = f"Could not start the session: {exc}"
+            connection_error.visible = True
         finally:
             refresh()
 
@@ -776,15 +750,14 @@ def _build_page(jobs, *, registry, navigate):
         name = token[1:] if token.startswith("/") else ""
         argument = argument.strip()
         if name == "settings":
-            if not connection.visible:
-                toggle_connection()
+            open_connection_settings()
             return True
         if name == "model":
             if argument and session is not None and session.active:
                 await asyncio.to_thread(session.set_model, argument)
             elif argument:
                 if argument not in configured_models():
-                    raise ValueError("Choose a model configured in Connection.")
+                    raise ValueError("Choose a model configured under Agent connection in Settings.")
                 model_select.value = argument
             else:
                 model_select.run_method("showPopup")
@@ -818,8 +791,8 @@ def _build_page(jobs, *, registry, navigate):
             if image_paths:
                 snapshot = session.snapshot()
                 if snapshot.get("model") not in snapshot.get("image_models", ()):
-                    raise ValueError("Select an image-capable model. Configure which models accept images in Connection "
-                                     "before starting the session.")
+                    raise ValueError("Select an image-capable model. Configure image support under Agent connection "
+                                     "in Settings before starting the session.")
             run = registry.evidence_run(jobs, linked_run.id) if linked_run is not None else None
             references = tuple(_attachment_reference(path, container=container_mode()) for path in paths)
             model_context = ""
@@ -888,7 +861,6 @@ def _build_page(jobs, *, registry, navigate):
     async def browse_folder():
         await attach_path("dir")
 
-    connection_button.on_click(toggle_connection)
     session_button.on_click(toggle_session)
     attach_file.on_click(browse_file)
     attach_folder.on_click(browse_folder)
