@@ -55,7 +55,7 @@ class ConcurrencyControlsTests(unittest.TestCase):
                     gui.index()
                 self.assertTrue(any(
                     element.__class__.__name__ == 'Button'
-                    and getattr(element, 'text', '') == 'Settings'
+                    and element._props.get('aria-label') == 'Settings'
                     for element in client.elements.values()))
                 self.assertTrue(any(
                     element.__class__.__name__ == 'Label'
