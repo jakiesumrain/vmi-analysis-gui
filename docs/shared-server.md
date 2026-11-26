@@ -151,6 +151,20 @@ administrators can change the running server's limit or stop it from Settings.
 Set the startup limit in the JSON file. Restart the server to add or remove
 accounts or change a password hash.
 
+## Open VMI from the desktop client
+
+The optional VMI Analysis Client opens the same GUI through its SSH tunnel.
+Sign in to VMI once through the tunnel. Under **Settings → Desktop client**,
+choose **Generate link code**, then enter that code and your VMI account name
+in the client's **VMI account and Agent** section. A new link replaces the
+account's previous client link. Use **Revoke access** to disconnect that link.
+
+Save a model profile and API key in the client to start the Agent on later
+launches. The client keeps the sign-in credential and model key in the OS
+keychain. The server uses the model key for the Agent session. You can also
+open the GUI through a manually started SSH tunnel, sign in normally, and
+configure the Agent under **Settings → Agent connection**.
+
 ## Manual-only shared mode
 
 On a Linux host without Bubblewrap, Docker, or Podman, add

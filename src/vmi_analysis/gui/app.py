@@ -276,6 +276,29 @@ def index() -> None:
             ui.button("Load workflow", icon="folder_open", on_click=load_workflow).props("flat")
         if account:
             ui.button("Download workspace file", icon="download", on_click=download_workspace_file).props("flat")
+            with ui.expansion("Desktop client", icon="devices").classes("w-full"):
+                ui.label("A link code lets the desktop client remember this account. Linking again replaces the existing link.") \
+                    .classes("vmi-subtitle")
+                link_code = ui.input("Link code").props("outlined dense readonly").classes("w-full")
+                link_code.visible = False
+
+                def generate_link_code():
+                    token = ui.context.client.request.scope.get("vmi_session")
+                    if shared.SERVER.session(token) is not account:
+                        ui.notify("Sign in again before linking the desktop client.", type="warning")
+                        return
+                    link_code.value = shared.SERVER.desktop_links.issue_code(account, token)
+                    link_code.visible = True
+
+                def revoke_link():
+                    shared.SERVER.desktop_links.revoke(account)
+                    link_code.value = ""
+                    link_code.visible = False
+                    ui.notify("Desktop client access revoked.")
+
+                with ui.row().classes("w-full gap-2"):
+                    ui.button("Generate link code", on_click=generate_link_code).props("flat")
+                    ui.button("Revoke access", on_click=revoke_link).props("flat")
         with ui.row().classes("w-full justify-between items-center"):
             with ui.row().classes("gap-1"):
                 ui.button("About", icon="info",
