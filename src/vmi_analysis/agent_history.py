@@ -12,6 +12,7 @@ class AgentProject:
     id: str
     name: str
     folder: str
+    archived: bool = False
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,7 @@ class SavedChat:
     id: str
     project_id: str | None
     title: str = "New chat"
+    archived: bool = False
 
 
 def conversation_title(entries):
@@ -94,10 +96,27 @@ class AgentHistory:
     def project_folder(self, project_id):
         if project_id is None:
             return self.workspace
-        folder = (self.workspace / self.project(project_id).folder).resolve()
+        project = self.project(project_id)
+        if project.archived:
+            raise ValueError("Restore the project from Archive before using its chats.")
+        folder = (self.workspace / project.folder).resolve()
         if not folder.is_relative_to(self.workspace) or not folder.is_dir():
             raise ValueError("The project folder must be an existing folder inside your workspace.")
         return folder
+
+    def resumable_chat(self, chat_id):
+        chat = self.chat(chat_id)
+        if chat.archived:
+            raise ValueError("Restore the chat from Archive before sending a message.")
+        return chat
+
+    def set_archived(self, *, chat_id=None, project_id=None, archived):
+        if chat_id is not None:
+            chat = self.chat(chat_id)
+            self._save_chat(replace(chat, archived=archived))
+        else:
+            project = self.project(project_id)
+            self._save_project(replace(project, archived=archived))
 
     def create_project(self, name, folder):
         name = name.strip()
@@ -107,9 +126,12 @@ class AgentHistory:
         if not folder.is_relative_to(self.workspace) or not folder.is_dir():
             raise ValueError("Choose a folder inside your workspace.")
         project = AgentProject(uuid4().hex, name, folder.relative_to(self.workspace).as_posix())
+        self._save_project(project)
+        return project
+
+    def _save_project(self, project):
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         _write_json(_record_path(self.root / "projects", project.id), asdict(project))
-        return project
 
     def create_chat(self, project_id):
         self.project_folder(project_id)

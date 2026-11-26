@@ -122,6 +122,10 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
     history = shared.agent_history(account)
     with ui.element("h1").classes("vmi-agent-header w-full"):
         title = ui.label(_conversation_title(()))
+    with ui.dialog() as archive_dialog, ui.card().classes("w-[32rem] max-w-[92vw]"):
+        ui.label("Archive").classes("vmi-title-sm")
+        archive_records = ui.column().classes("w-full gap-2")
+        ui.button("Close", on_click=archive_dialog.close).props("flat no-caps").classes("self-end")
     with connection_settings, ui.column().classes("vmi-agent-connection w-full"):
         with field_grid():
             base_url = ui.input("Base URL", placeholder="https://provider.example/v1") \
@@ -228,6 +232,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
     loading_models = False
     connecting = False
     sending = False
+    archiving = False
     uploading = 0
     upload_note = ""
     selected_chat = None
@@ -648,8 +653,8 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
 
     def select_conversation(chat=None, project=None):
         nonlocal selected_chat, selected_project, follow_current, view_context, linked_run
-        if connecting or sending or uploading:
-            show_error("Wait for the current connection, message, or upload before switching chats.")
+        if connecting or sending or uploading or archiving:
+            show_error("Wait for the current action before switching chats.")
             return
         if approval is not None:
             show_error("Approve or decline the current draft before switching chats.")
@@ -714,6 +719,61 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
                 ui.button("Create project", on_click=save_project).props("unelevated no-caps")
         dialog.open()
 
+    async def change_archive(*, chat=None, project=None, archived, on_success=None):
+        nonlocal archiving
+        if connecting or sending or uploading or archiving:
+            ui.notify("Wait for the current action before changing the archive.", type="warning")
+            return
+        visible = visible_session()
+        current = visible.chat if visible is not None else selected_chat
+        project_id = current.project_id if current is not None else (
+            selected_project.id if selected_project is not None else None)
+        archive_current_chat = chat is not None and current is not None and current.id == chat.id
+        archive_current_project = project is not None and project_id == project.id
+        clear_selection = archived and (archive_current_chat or archive_current_project)
+        archiving = True
+        try:
+            await asyncio.to_thread(
+                AGENTS.set_archived, owner, history, chat_id=chat.id if chat is not None else None,
+                project_id=project.id if project is not None else None, archived=archived)
+        except (OSError, RuntimeError, ValueError) as exc:
+            ui.notify(str(exc), type="warning")
+            return
+        finally:
+            archiving = False
+        if clear_selection:
+            select_conversation()
+        refresh_history()
+        if on_success is not None:
+            on_success()
+
+    def open_archive():
+        def render_archive():
+            projects = {project.id: project for project in history.projects()}
+            archived_projects = [project for project in projects.values() if project.archived]
+            archived_ids = {project.id for project in archived_projects}
+            archived_chats = [chat for chat in history.chats() if chat.archived
+                              and chat.project_id not in archived_ids]
+            archive_records.clear()
+            with archive_records:
+                if not (archived_projects or archived_chats):
+                    ui.label("No archived chats or projects.").classes("vmi-subtitle")
+                for project in archived_projects:
+                    with ui.row().classes("w-full no-wrap items-center justify-between"):
+                        ui.label(project.name).classes("min-w-0 break-words")
+                        ui.button("Restore project", on_click=lambda item=project: change_archive(
+                            project=item, archived=False, on_success=render_archive)).props("flat no-caps shrink-0")
+                for chat in archived_chats:
+                    project = projects.get(chat.project_id)
+                    label = f"{project.name} / {chat.title}" if project is not None else chat.title
+                    with ui.row().classes("w-full no-wrap items-center justify-between"):
+                        ui.label(label).classes("min-w-0 break-words")
+                        ui.button("Restore chat", on_click=lambda item=chat: change_archive(
+                            chat=item, archived=False, on_success=render_archive)).props("flat no-caps shrink-0")
+
+        render_archive()
+        archive_dialog.open()
+
     def refresh_history():
         nonlocal navigation_state
         projects = history.projects()
@@ -731,36 +791,62 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
         for chat in chats:
             chat_groups.setdefault(chat.project_id, []).append(chat)
 
-        def chat_button(chat, project=None):
-            button = ui.button(chat.title, on_click=lambda: select_saved(chat, project)) \
-                .props("flat dense no-caps").classes("vmi-agent-history-chat").tooltip(chat.title)
-            if chat.id == active_id:
-                button.props('aria-current="true"')
+        def archive_menu(label, archive):
+            with ui.button(icon="more_horiz").props(f'flat dense round aria-label="{label} actions"') \
+                    .classes("vmi-agent-row-action"):
+                with ui.menu().props("auto-close"):
+                    ui.menu_item(f"Archive {label.lower()}", on_click=archive)
 
-        def remember_expansion(event, project_id):
-            if event.value:
-                expanded_projects.add(project_id)
-            else:
-                expanded_projects.discard(project_id)
+        def chat_button(chat, project=None):
+            if chat.archived:
+                return
+            with ui.row().classes("vmi-agent-action-row w-full no-wrap items-center gap-0"):
+                button = ui.button(chat.title, on_click=lambda: select_saved(chat, project)) \
+                    .props("flat dense no-caps").classes("vmi-agent-history-label").tooltip(chat.title)
+                if chat.id == active_id:
+                    button.props('aria-current="true"')
+                archive_menu("Chat", lambda: change_archive(chat=chat, archived=True))
+
+        def project_group(project):
+            with ui.row().classes("vmi-agent-action-row w-full no-wrap items-center gap-0"):
+                with ui.button(project.name, icon="folder_open").props("flat dense no-caps") \
+                        .classes("vmi-agent-history-label vmi-agent-project-toggle").tooltip(project.name) as toggle:
+                    ui.icon("expand_more").props('aria-hidden="true"').classes("vmi-agent-project-chevron")
+                archive_menu("Project", lambda: change_archive(project=project, archived=True))
+            with ui.column().classes("vmi-agent-project-chats w-full gap-0") as children:
+                ui.button("New project chat", on_click=lambda: select_conversation(project=project)) \
+                    .props("flat dense no-caps").classes("vmi-agent-history-label").tooltip("New project chat")
+                for chat in chat_groups.get(project.id, ()):
+                    chat_button(chat, project)
+
+            def set_expanded(expanded):
+                children.visible = expanded
+                toggle.props(f'aria-expanded="{str(expanded).lower()}"')
+                if expanded:
+                    expanded_projects.add(project.id)
+                else:
+                    expanded_projects.discard(project.id)
+
+            toggle.props(f'aria-controls="c{children.id}"')
+            set_expanded(project.id in expanded_projects)
+            toggle.on_click(lambda: set_expanded(not children.visible))
 
         history_navigation.clear()
         with history_navigation:
-            ui.button("New chat", icon="add", on_click=select_conversation).props("flat dense no-caps")
+            ui.button("New chat", on_click=select_conversation).props("flat dense no-caps") \
+                .classes("vmi-agent-history-label")
             for chat in chat_groups.get(None, ()):
                 chat_button(chat)
-            with ui.row().classes("vmi-agent-project-heading w-full no-wrap items-center justify-between"):
-                ui.label("Projects").classes("vmi-caption")
-                ui.button(icon="create_new_folder", on_click=project_dialog).props(
-                    'flat dense round aria-label="New project"').tooltip("New project")
+            with ui.row().classes("vmi-agent-action-row vmi-agent-project-heading w-full no-wrap items-center gap-0"):
+                ui.label("Projects").classes("vmi-agent-history-label")
+                ui.button(icon="add", on_click=project_dialog).props('flat dense round aria-label="New project"') \
+                    .classes("vmi-agent-row-action vmi-agent-new-project").tooltip("New project")
             for project in projects:
-                with ui.expansion(project.name, icon="folder_open", value=project.id in expanded_projects,
-                                  on_value_change=lambda event, key=project.id: remember_expansion(event, key)) \
-                        .props("dense").classes("vmi-agent-project w-full"):
-                    ui.button("New project chat", icon="add",
-                              on_click=lambda project=project: select_conversation(project=project)) \
-                        .props("flat dense no-caps")
-                    for chat in chat_groups.get(project.id, ()):
-                        chat_button(chat, project)
+                if not project.archived:
+                    project_group(project)
+            if any(project.archived for project in projects) or any(chat.archived for chat in chats):
+                ui.button("Archive", on_click=open_archive).props("flat dense no-caps") \
+                    .classes("vmi-agent-history-label")
 
     def refresh():
         nonlocal diagnostics_cursor, stop_visible
@@ -811,7 +897,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
         send_tooltip.text = "Stop reply" if stop_visible else "Send (Enter)"
         ready = visible is not None and session_status == "ready" and not (model_pending or control_pending)
         can_open_chat = connected and (visible is None or not visible.active)
-        send_button.set_enabled(stop_visible or not connecting and not sending and not uploading
+        send_button.set_enabled(stop_visible or not connecting and not sending and not uploading and not archiving
                                 and (ready or can_open_chat))
         if snapshot is None and selected_chat is not None:
             archive_id = f"saved:{selected_chat.id}"
@@ -949,7 +1035,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
 
     async def send():
         nonlocal linked_run, selected_chat, follow_current, sending
-        if sending or connecting:
+        if sending or connecting or archiving:
             return
         clear_error()
         session = visible_session()

@@ -217,6 +217,10 @@ with the account's provider connection. If a reply is running in another
 chat, finish or stop that reply first. Reconnect the provider after a server
 restart.
 
+Use the actions menu on a chat or project to archive it. Open **Archive** in
+the sidebar to restore it. Archiving a project hides all of its chats and
+preserves its workspace folder and conversation history.
+
 Chat history can contain prompts, attachments, file excerpts, and tool results.
 The service stores it beside the account's workspace in `.agent-history`.
 The Agent container can write to `/workspace` and the selected chat's history

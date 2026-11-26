@@ -767,11 +767,11 @@ class AgentSession:
                                                  daemon=True)
             self._stop_thread.start()
 
-    def stop_for_switch(self) -> None:
+    def stop_for_switch(self, *, busy_error="Finish or stop the reply in the active chat before sending here.") -> None:
         with self._lock:
             if self.active:
                 if self.status != "ready" or self._pending_model or self._pending_control:
-                    raise RuntimeError("Finish or stop the reply in the active chat before sending here.")
+                    raise RuntimeError(busy_error)
                 self._stop_requested.set()
                 self.status = "stopping"
         self.stop()
@@ -900,7 +900,7 @@ class AgentManager:
                     request = replace(request, model=model,
                                       additional_models=tuple(item for item in request.model_ids if item != model))
                 if history is not None:
-                    project = history.chat(chat_id).project_id if chat_id is not None else project_id
+                    project = history.resumable_chat(chat_id).project_id if chat_id is not None else project_id
                     history.project_folder(project)
                 if current is not None and current.active:
                     current.stop_for_switch()
@@ -920,11 +920,11 @@ class AgentManager:
             if history is not None:
                 if history.workspace != request.workspace.resolve():
                     raise ValueError("Agent history belongs to a different workspace.")
-                chat = history.chat(chat_id) if chat_id is not None else history.create_chat(project_id)
+                chat = history.resumable_chat(chat_id) if chat_id is not None else history.create_chat(project_id)
+                folder = history.project_folder(chat.project_id)
                 directory = history.session_dir(chat)
                 directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-                request = replace(request, workspace=history.workspace, session_dir=directory,
-                                  working_directory=history.project_folder(chat.project_id))
+                request = replace(request, workspace=history.workspace, session_dir=directory, working_directory=folder)
             session = AgentSession(request, self._launcher(shared_mode), history=history, chat=chat)
             self._sessions[request.owner] = session
         try:
@@ -941,6 +941,19 @@ class AgentManager:
     def current(self, owner: str) -> AgentSession | None:
         with self._lock:
             return self._sessions.get(owner)
+
+    def set_archived(self, owner, history, *, chat_id=None, project_id=None, archived):
+        with self._owner_lock(owner):
+            session = self.current(owner)
+            chat = session.chat if session is not None else None
+            closes_chat = archived and chat is not None and (
+                chat.id == chat_id if chat_id is not None else chat.project_id == project_id)
+            if closes_chat and session.active:
+                session.stop_for_switch(busy_error="Finish or stop the active reply before archiving.")
+            history.set_archived(chat_id=chat_id, project_id=project_id, archived=archived)
+            if closes_chat:
+                with self._lock:
+                    self._sessions.pop(owner, None)
 
     def stop(self, owner: str) -> None:
         """Disconnect the account's provider and stop its active chat."""

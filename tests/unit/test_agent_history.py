@@ -92,5 +92,32 @@ class AgentHistoryTests(TestCase):
             current.status = "running"
             with self.assertRaisesRegex(RuntimeError, "Finish or stop the reply"):
                 manager.prompt_chat("alice", "Start another chat", project_id=self.project.id)
+            with self.assertRaisesRegex(RuntimeError, "before archiving"):
+                manager.set_archived("alice", self.history, chat_id=current.chat.id, archived=True)
+            self.assertFalse(self.history.chat(current.chat.id).archived)
             self.assertIs(manager.current("alice"), current)
             self.assertEqual(len(self.history.chats()), 1)
+
+    def test_archiving_a_project_preserves_its_chats_and_provider(self):
+        manager = AgentManager()
+        with patch.object(AgentSession, "start", autospec=True, side_effect=lambda session: session):
+            current = manager.start(self.request, shared_mode=True, history=self.history, project_id=self.project.id)
+            current._append("user", "Check the fit")
+            current.handle_record({"type": "agent_settled"})
+            other = self.history.create_chat(self.project.id)
+            manager.set_archived("alice", self.history, chat_id=other.id, archived=True)
+            manager.set_archived("alice", self.history, project_id=self.project.id, archived=True)
+            self.assertFalse(current.active)
+            self.assertIsNotNone(manager.connection("alice"))
+            self.assertIsNone(manager.current("alice"))
+            with self.assertRaisesRegex(ValueError, "Restore the project"):
+                manager.prompt_chat("alice", "Continue", chat_id=current.chat.id)
+
+            manager.set_archived("alice", self.history, project_id=self.project.id, archived=False)
+            self.assertEqual(self.history.project_folder(self.project.id), self.folder)
+            self.assertEqual(self.history.entries(current.chat)[0]["text"], "Check the fit")
+            self.assertTrue(self.history.chat(other.id).archived)
+            with self.assertRaisesRegex(ValueError, "Restore the chat"):
+                manager.prompt_chat("alice", "Continue", chat_id=other.id)
+            manager.set_archived("alice", self.history, chat_id=other.id, archived=False)
+            self.assertEqual(self.history.resumable_chat(other.id).project_id, self.project.id)
