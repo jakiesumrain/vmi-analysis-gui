@@ -88,6 +88,20 @@ async page => {
       (await workbenchHeading.getByText('Workbench', {exact: true}).boundingBox()).x) {
     throw new Error('Agent and Workbench headings should have matching typography and alignment');
   }
+  const agentHeading = sidebar.locator('.vmi-sidebar-agent-heading');
+  const agentDisclosure = sidebar.getByRole('button', {name: 'Agent actions', exact: true});
+  const background = item => item.evaluate(element => getComputedStyle(element).backgroundColor);
+  const idleBackground = await background(agentHeading);
+  await workbenchHeading.hover();
+  const hoverBackground = await background(workbenchHeading);
+  await agent.hover();
+  if (hoverBackground === idleBackground || await background(agentHeading) !== hoverBackground) {
+    throw new Error('Agent and Workbench should share the same full-row hover highlight');
+  }
+  await agentDisclosure.hover();
+  if (await background(agentHeading) !== hoverBackground) {
+    throw new Error('Hovering the Agent chevron should highlight the full row');
+  }
   const title = header.getByText('Agent-native VMI analysis', {exact: true});
   if ((await collapse.boundingBox()).x >= (await title.boundingBox()).x) {
     throw new Error('The sidebar toggle should be to the left of the app title');
@@ -122,7 +136,6 @@ async page => {
   const connection = page.locator('.vmi-agent-connection');
   const connectionButton = page.getByRole('button', {name: 'Connection', exact: true});
   const agentActions = sidebar.locator('.vmi-sidebar-agent-actions');
-  const agentDisclosure = sidebar.getByRole('button', {name: 'Agent actions', exact: true});
   await agentDisclosure.press('Enter');
   await agentActions.waitFor({state: 'hidden'});
   if (await agentDisclosure.getAttribute('aria-expanded') !== 'false') {

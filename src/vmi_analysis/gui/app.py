@@ -362,9 +362,10 @@ def index() -> None:
                                 "vmi-sidebar-primary") as agent_entry:
                             ui.label("Agent").classes("vmi-sidebar-agent-label")
                             ui.icon("smart_toy").classes("vmi-sidebar-agent-icon").props('aria-hidden="true"')
-                        agent_disclosure = ui.button(icon="expand_more").props(
-                            'flat round dense aria-label="Agent actions" aria-expanded="true"'
-                        ).classes("vmi-sidebar-agent-disclosure")
+                        with ui.element("button").props(
+                            'type="button" aria-label="Agent actions" aria-expanded="true"'
+                        ).classes("vmi-sidebar-agent-disclosure") as agent_disclosure:
+                            ui.icon("expand_more").props('aria-hidden="true"')
                     with ui.column().classes("vmi-sidebar-agent-actions w-full gap-0") as agent_actions:
                         connection_button = ui.button("Connection", icon="tune").props(
                             'flat no-caps aria-label="Connection" aria-expanded="false"').tooltip("Connection")
@@ -377,7 +378,7 @@ def index() -> None:
                         agent_actions.visible = not agent_actions.visible
                         agent_disclosure.props(f'aria-expanded="{str(agent_actions.visible).lower()}"')
 
-                    agent_disclosure.on_click(toggle_agent_actions)
+                    agent_disclosure.on("click", toggle_agent_actions)
             with ui.element("details").classes("vmi-sidebar-disclosure vmi-sidebar-workbench").props(
                     'open data-workspace-group="Workbench"'):
                 with ui.element("summary").classes("vmi-sidebar-primary"):
@@ -478,7 +479,7 @@ def main(*, host: str = "0.0.0.0", launch_command: str = "uv run vmi-analysis") 
     pes.init_axes()
     ion_momenta.init_area_selection()
     ui.run(title=APP_TITLE,
-           favicon=str(files("vmi_analysis.gui.assets") / "electron-spectrum-measured.svg"),
+           favicon=str(files("vmi_analysis.gui.assets") / "electron-spectrum-icon.svg"),
            host=host,
            port=port,
            dark=False,
