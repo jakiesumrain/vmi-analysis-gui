@@ -923,6 +923,7 @@ class AgentPanelTests(unittest.TestCase):
         jobs.submit.side_effect = lambda job: job
 
         session = Mock(id="session", status="ready")
+        session.chat = None
         session.snapshot.return_value = {
             "id": session.id, "status": "ready", "activity": "", "entries": [], "diagnostics": [],
         }
@@ -956,7 +957,8 @@ class AgentPanelTests(unittest.TestCase):
                 with ui.dialog() as settings_dialog:
                     connection_settings = ui.expansion("Agent connection")
                 ask_agent = agent.build(jobs, registry=self.registry, navigate=navigate,
-                                        settings_dialog=settings_dialog, connection_settings=connection_settings)
+                                        settings_dialog=settings_dialog, connection_settings=connection_settings,
+                                        history_navigation=ui.column())
                 ion_tof._peak_fitting(jobs, gated, np.arange(11), {"pixels": np.ones(10)}, ask_agent=ask_agent)
             return timers, buttons, navigate
 

@@ -1,6 +1,20 @@
 import { Type } from 'typebox';
 
+function redact(value, key) {
+    if (typeof value === 'string') return value.replaceAll(key, '[redacted]');
+    if (Array.isArray(value)) return value.map(item => redact(item, key));
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(
+            ([name, item]) => [redact(name, key), redact(item, key)]));
+    }
+    return value;
+}
+
 export default function (pi) {
+    const key = process.env.VMI_AGENT_API_KEY;
+    if (key) {
+        pi.on('message_end', event => ({ message: redact(event.message, key) }));
+    }
     pi.registerTool({
         name: 'vmi_panel',
         label: 'VMI panel',
@@ -10,7 +24,7 @@ export default function (pi) {
             + 'Use measure with a linked job ID and the measurement parameters listed by describe. '
             + 'Use status with the job ID returned after approval. Use wait to follow a running job. '
             + 'If wait returns a checkpoint, tell the user what to confirm in the app. '
-            + 'Pass completed job IDs to subsequent stages. On a shared server, paths inside the container '
+            + 'Pass absolute file paths and completed job IDs to panel operations. On a shared server, paths inside the container '
             + 'are /workspace and /datasets. The browser displays resolved paths and parameters before submission.',
         parameters: Type.Object({
             action: Type.Union(['describe', 'inspect', 'measure', 'propose', 'status', 'wait'].map(action => Type.Literal(action))),

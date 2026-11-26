@@ -47,7 +47,7 @@ async def start_session(request: Request):
     except ValueError:
         raise HTTPException(400, "Check the model connection settings.") from None
     try:
-        await asyncio.to_thread(AGENTS.start, agent, shared_mode=True)
+        await asyncio.to_thread(AGENTS.start, agent, shared_mode=True, history=shared.agent_history(account))
     except (ValueError, RuntimeError, OSError):
         session = AGENTS.current(account.name)
         if session is not None and session.active:
