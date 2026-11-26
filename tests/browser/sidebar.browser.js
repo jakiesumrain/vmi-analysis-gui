@@ -72,6 +72,15 @@ async page => {
   if (Math.abs(agentBox.y + agentBox.height / 2 - collapseBox.y - collapseBox.height / 2) > 1) {
     throw new Error('The collapse button should stay beside Agent on desktop');
   }
+  const tabPanels = page.locator('.vmi-tab-panels');
+  await tabPanels.evaluate(element => {
+    new MutationObserver(records => {
+      if (records.some(record => /q-transition--slide-(left|right)/.test(
+        `${record.oldValue ?? ''} ${record.target.getAttribute('class') ?? ''}`))) {
+        element.dataset.sawHorizontalSlide = 'true';
+      }
+    }).observe(element, {subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true});
+  });
   await agent.click();
   await panel('New chat').waitFor();
   await page.getByRole('tab', {name: 'Agent', exact: true, selected: true}).waitFor();
@@ -100,6 +109,7 @@ async page => {
     await tab(name).click();
     await panel(name === 'Agent' ? 'New chat' : name).waitFor();
   }
+  if (await tabPanels.getAttribute('data-saw-horizontal-slide')) throw new Error('Panels still slide horizontally');
   if (!await settings.isVisible()) throw new Error('Settings is hidden in the icon rail');
   await settings.click();
   await page.getByRole('dialog').waitFor();

@@ -383,8 +383,8 @@ def index() -> None:
                                         else "Account and workflow files")
 
         with ui.column().classes("vmi-workspace"):
-            with ui.tab_panels(value=TABS[0][0], on_change=reveal_active_group).classes(
-                    "vmi-tab-panels w-full bg-transparent") as panels:
+            with ui.tab_panels(value=TABS[0][0], on_change=reveal_active_group).props(
+                    "transition-prev=fade transition-next=fade").classes("vmi-tab-panels w-full bg-transparent") as panels:
                 def export_calibration(extracted_path, image_path, manual_center, **settings):
                     return use_calibration(extracted_path, image_path, manual_center, **settings)
 

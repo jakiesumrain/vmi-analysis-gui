@@ -71,6 +71,7 @@ async page => {
   const menuItemBox = await attachFile.boundingBox();
   check(Math.abs(attachmentBox.x - menuItemBox.x) < 36, 'Attachment menu opened far from its button');
   await page.keyboard.press('Escape');
+  await attachFile.waitFor({state: 'detached'});
 
   await prompt.evaluate(element => {
     const transfer = new DataTransfer();
