@@ -376,11 +376,11 @@ def index() -> None:
                                 .props('flat no-caps aria-label="Analysis runs"').tooltip("Analysis runs")
                         agent_disclosure.props(f'aria-controls="c{agent_actions.id}"')
 
-                        def toggle_agent_actions():
-                            agent_actions.visible = not agent_actions.visible
-                            agent_disclosure.props(f'aria-expanded="{str(agent_actions.visible).lower()}"')
+                        def set_agent_actions_visible(visible):
+                            agent_actions.visible = visible
+                            agent_disclosure.props(f'aria-expanded="{str(visible).lower()}"')
 
-                        agent_disclosure.on("click", toggle_agent_actions)
+                        agent_disclosure.on("click", lambda: set_agent_actions_visible(not agent_actions.visible))
             with ui.element("details").classes("vmi-sidebar-disclosure vmi-sidebar-workbench").props(
                     'open data-workspace-group="Workbench"'):
                 with ui.element("summary").classes("vmi-sidebar-primary"):
@@ -440,7 +440,14 @@ def index() -> None:
     for tabs in tab_groups:
         tabs.bind_value(panels)
     if agent_entry is not None:
-        agent_entry.on("click", lambda: setattr(panels, "value", "Agent"))
+        def open_agent(event):
+            if analysis_history_enabled and not event.args:
+                set_agent_actions_visible(panels.value != "Agent" or not agent_actions.visible)
+            panels.value = "Agent"
+
+        agent_entry.on("click", open_agent, js_handler=(
+            "event => emit(Boolean(event.currentTarget.closest('.vmi-sidebar--collapsed')))"
+        ))
     ui.context.client.on_connect(lambda: ui.run_javascript(SIDEBAR_JS.read_text(encoding="utf-8")))
 
     with ui.footer().classes(

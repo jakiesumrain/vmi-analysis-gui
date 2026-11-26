@@ -130,11 +130,14 @@ async page => {
       }
     }).observe(element, {subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true});
   });
-  await agent.click();
-  await panel('New chat').waitFor();
-  await agent.and(page.locator('[aria-current="page"]')).waitFor();
   const agentActions = sidebar.locator('.vmi-sidebar-agent-actions');
   await agentDisclosure.press('Enter');
+  await agentActions.waitFor({state: 'hidden'});
+  await agent.getByText('Agent', {exact: true}).click();
+  await panel('New chat').waitFor();
+  await agent.and(page.locator('[aria-current="page"]')).waitFor();
+  await agentActions.waitFor();
+  await agent.getByText('Agent', {exact: true}).click();
   await agentActions.waitFor({state: 'hidden'});
   if (await agentDisclosure.getAttribute('aria-expanded') !== 'false') {
     throw new Error('Agent actions do not announce their collapsed state');
@@ -145,6 +148,10 @@ async page => {
   if (await agentActions.isVisible()) {
     throw new Error('Expanding the sidebar changed the Agent actions disclosure');
   }
+  await agent.press('Enter');
+  await agentActions.waitFor();
+  await agentDisclosure.press('Space');
+  await agentActions.waitFor({state: 'hidden'});
   await agentDisclosure.press('Space');
   await agentActions.waitFor();
   if (await page.locator('.vmi-header').getByRole('button', {name: 'Settings', exact: true}).count()) {
@@ -167,6 +174,11 @@ async page => {
     await (name === 'Agent' ? agent : tab(name)).click();
     await panel(name === 'Agent' ? 'New chat' : name).waitFor();
   }
+  await agent.press('Enter');
+  await header.getByRole('button', {name: 'Expand sidebar', exact: true}).press('Enter');
+  await agentActions.waitFor();
+  await collapse.press('Enter');
+  await page.waitForFunction(() => document.querySelector('.vmi-sidebar--collapsed'));
   if (await tabPanels.getAttribute('data-saw-horizontal-slide')) throw new Error('Panels still slide horizontally');
   if (!await settings.isVisible()) throw new Error('Settings is hidden in the icon rail');
   await settings.click();
