@@ -833,8 +833,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
 
         history_navigation.clear()
         with history_navigation:
-            with ui.row().classes("vmi-agent-action-row vmi-agent-section-heading vmi-agent-new-chat-row "
-                                  "w-full no-wrap items-center gap-0"):
+            with ui.row().classes("vmi-agent-action-row vmi-agent-section-heading w-full no-wrap items-center gap-0"):
                 ui.label("New chat").classes("vmi-agent-history-label")
                 ui.button(icon="add", on_click=select_conversation).props('flat dense round aria-label="New chat"') \
                     .classes("vmi-agent-row-action vmi-agent-add-button").tooltip("New chat")

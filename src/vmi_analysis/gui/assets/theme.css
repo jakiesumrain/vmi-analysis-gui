@@ -213,8 +213,8 @@ html, body {
   outline-offset: -2px;
 }
 @media (hover: hover) {
-  .vmi-agent-action-row:not(.vmi-agent-new-chat-row):not(:hover):not(:focus-within) { padding-inline-end: 0; }
-  .vmi-agent-action-row:not(.vmi-agent-new-chat-row) .vmi-agent-row-action { opacity: 0; }
+  .vmi-agent-action-row:not(:hover):not(:focus-within) { padding-inline-end: 0; }
+  .vmi-agent-action-row .vmi-agent-row-action { opacity: 0; }
   .vmi-agent-action-row:is(:hover, :focus-within) .vmi-agent-row-action { opacity: 1; }
 }
 .vmi-sidebar-workbench > .vmi-sidebar-disclosure { padding-inline-start: var(--vmi-space-4); }
