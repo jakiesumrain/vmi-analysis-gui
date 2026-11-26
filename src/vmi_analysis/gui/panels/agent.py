@@ -1,6 +1,7 @@
 """Interactive per-user agent sessions for shared data and private workspaces."""
 
 import asyncio
+from base64 import b64encode
 from importlib.resources import files
 import json
 import os
@@ -31,6 +32,9 @@ SLASH_BUILTINS = {
     **{name: description for name, (_, description) in SLASH_CONTROLS.items()},
 }
 AGENT_CHAT_JS = files("vmi_analysis.gui.assets") / "agent_chat.js"
+WELCOME_ICON = "data:image/svg+xml;base64," + b64encode(
+    (files("vmi_analysis.gui.assets") / "electron-spectrum-welcome.svg").read_bytes()
+).decode("ascii")
 
 
 def _render_review_details(details):
@@ -599,7 +603,7 @@ def _build_page(jobs, *, registry, navigate, connection_button):
         entries_column.clear()
         with entries_column:
             with ui.column().classes("vmi-agent-empty w-full items-center justify-center") as empty:
-                ui.element("img").props('src="/favicon.ico" alt="" width="88" height="88"')
+                ui.element("img").props(f'src="{WELCOME_ICON}" alt="" width="88" height="88"')
                 ui.label("What would you like to analyze?")
             empty_state = empty
 
