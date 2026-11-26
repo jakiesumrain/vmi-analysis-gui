@@ -4,6 +4,9 @@ async page => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.setViewportSize({width: 1440, height: 1000});
+  const panel = page.getByRole('tabpanel');
+  await panel.getByRole('heading', {name: 'New chat', exact: true}).waitFor();
+  await page.getByRole('button', {name: 'Agent', exact: true}).and(page.locator('[aria-current="page"]')).waitFor();
   const settingsButton = page.getByRole('button', {name: 'Settings', exact: true});
   const settings = page.getByRole('dialog');
   const connection = settings.getByRole('button', {name: /^(Expand|Collapse) "Agent connection"$/});
@@ -20,9 +23,6 @@ async page => {
   await settings.getByRole('button', {name: 'Close', exact: true}).click();
   await settings.waitFor({state: 'hidden'});
 
-  await page.getByRole('button', {name: 'Agent', exact: true}).click();
-  const panel = page.getByRole('tabpanel');
-  await panel.getByRole('heading', {name: 'New chat', exact: true}).waitFor();
   await page.waitForFunction(() => !document.querySelector('[class*="enter-active"], [class*="leave-active"]'));
 
   const actions = page.locator('.vmi-sidebar-agent-actions');

@@ -361,7 +361,7 @@ def index() -> None:
             if agent_enabled:
                 with ui.column().classes("vmi-sidebar-agent w-full gap-0"):
                     with ui.row().classes("vmi-sidebar-agent-heading w-full no-wrap items-center gap-0"):
-                        with ui.element("button").props('type="button" aria-label="Agent"').classes(
+                        with ui.element("button").props('type="button" aria-label="Agent" aria-current="page"').classes(
                                 "vmi-sidebar-primary") as agent_entry:
                             ui.label("Agent").classes("vmi-sidebar-agent-label")
                             ui.icon("smart_toy").classes("vmi-sidebar-agent-icon").props('aria-hidden="true"')
@@ -403,7 +403,7 @@ def index() -> None:
                 'role="separator" aria-label="Resize sidebar" aria-orientation="vertical" tabindex="0"')
 
         with ui.column().classes("vmi-workspace"):
-            with ui.tab_panels(value=TABS[0][0], on_change=reveal_active_group).props(
+            with ui.tab_panels(value="Agent" if agent_enabled else TABS[0][0], on_change=reveal_active_group).props(
                     "transition-prev=fade transition-next=fade").classes("vmi-tab-panels w-full bg-transparent") as panels:
                 def navigate(name):
                     panels.value = name
