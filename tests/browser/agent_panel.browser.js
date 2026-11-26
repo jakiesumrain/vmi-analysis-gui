@@ -65,7 +65,7 @@ async page => {
     const icon = element.querySelector('img').getBoundingClientRect();
     const area = element.getBoundingClientRect();
     const text = element.lastElementChild.getBoundingClientRect();
-    return icon.width === 70 && icon.height === 70 &&
+    return icon.width === 76 && icon.height === 76 &&
       Math.abs(icon.x + icon.width / 2 - area.x - area.width / 2) < 1 &&
       icon.bottom < text.top && Math.abs((icon.top + text.bottom) / 2 - (area.top + area.bottom) / 2) < 1 &&
       area.height > 300;
