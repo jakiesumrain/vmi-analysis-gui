@@ -115,18 +115,19 @@ def _attachment_reference(value, *, container):
     raise ValueError("Choose an attachment inside the Agent workspace.")
 
 
-def build(jobs, *, registry, navigate, connection_button=None):
+def build(jobs, *, registry, navigate, settings_dialog, connection_settings):
     with ui.column().classes("vmi-agent-page w-full gap-0"):
-        return _build_page(jobs, registry=registry, navigate=navigate, connection_button=connection_button)
+        return _build_page(jobs, registry=registry, navigate=navigate, settings_dialog=settings_dialog,
+                           connection_settings=connection_settings)
 
 
-def _build_page(jobs, *, registry, navigate, connection_button):
+def _build_page(jobs, *, registry, navigate, settings_dialog, connection_settings):
     account = shared.current_account()
     owner = account.name if account else "local"
     with ui.element("h1").classes("vmi-agent-header w-full"):
         title = ui.label(_conversation_title(()))
 
-    with ui.column().classes("vmi-agent-connection w-full") as connection:
+    with connection_settings, ui.column().classes("vmi-agent-connection w-full"):
         with field_grid():
             base_url = ui.input("Base URL", placeholder="https://provider.example/v1") \
                 .classes("w-full").props("outlined dense autocomplete=off")
@@ -153,9 +154,10 @@ def _build_page(jobs, *, registry, navigate, connection_button):
             load_models_button = ui.button("Load models", icon="sync").props("flat")
             load_models_button.visible = not shared.SERVER and os.environ.get("VMI_AGENT_BACKEND") != "container"
             load_models_note = ui.label("").classes("vmi-caption").props('role="status"')
+        connection_error = ui.label().classes("vmi-agent-error").props('role="alert"')
+        connection_error.visible = False
         theme.form_section("Diagnostics")
         diagnostics_log = theme.log_console().classes("vmi-agent-diagnostics")
-    connection.set_visibility(False)
     error_label = ui.label("").classes("vmi-agent-error vmi-agent-notice w-full") \
         .props('role="alert" tabindex="-1"')
     error_label.visible = False
@@ -251,8 +253,7 @@ def _build_page(jobs, *, registry, navigate, connection_button):
         if updating_models or not event.value:
             return
         if event.value == MODEL_SETTINGS:
-            if not connection.visible:
-                toggle_connection()
+            open_connection_settings()
             refresh()
         elif (session := AGENTS.current(owner)) is not None and session.active:
             return change_model(session, event.value)
@@ -413,10 +414,9 @@ def _build_page(jobs, *, registry, navigate, connection_button):
             return
         ui.run_javascript(f"window.vmiAgentCompletionResults?.({prompt.id}, {request_id}, {json.dumps(items)})")
 
-    def toggle_connection(*, open_only=False):
-        connection.visible = open_only or not connection.visible
-        if connection_button is not None:
-            connection_button.props(f'aria-expanded="{str(connection.visible).lower()}"')
+    def open_connection_settings():
+        connection_settings.open()
+        settings_dialog.open()
 
     def open_view_context(view: PanelView | PanelInspection | RunCapture):
         nonlocal view_context, linked_run
@@ -640,7 +640,7 @@ def _build_page(jobs, *, registry, navigate, connection_button):
         activity_text = {
             "starting": "Connecting…",
             "stopping": "Closing session…",
-            "failed": "Open Connection for diagnostics.",
+            "failed": "Open Agent connection in Settings for diagnostics.",
         }.get(session_status, "")
         if model_pending:
             activity_text = "Changing model…"
@@ -705,13 +705,15 @@ def _build_page(jobs, *, registry, navigate, connection_button):
 
     async def toggle_session():
         clear_error()
+        connection_error.visible = False
         session = AGENTS.current(owner)
         if session is not None and session.active:
             session_button.set_enabled(False)
             try:
                 await asyncio.to_thread(AGENTS.stop, owner)
             except Exception as exc:
-                show_error(f"Could not stop the agent cleanly: {exc}")
+                connection_error.text = f"Could not stop the agent cleanly: {exc}"
+                connection_error.visible = True
             finally:
                 api_key.value = ""
                 refresh()
@@ -738,7 +740,8 @@ def _build_page(jobs, *, registry, navigate, connection_button):
             clear_error()
         except (OSError, RuntimeError, ValueError) as exc:
             api_key.value = ""
-            show_error(f"Could not start the session: {exc}")
+            connection_error.text = f"Could not start the session: {exc}"
+            connection_error.visible = True
         finally:
             refresh()
 
@@ -747,15 +750,14 @@ def _build_page(jobs, *, registry, navigate, connection_button):
         name = token[1:] if token.startswith("/") else ""
         argument = argument.strip()
         if name == "settings":
-            if not connection.visible:
-                toggle_connection()
+            open_connection_settings()
             return True
         if name == "model":
             if argument and session is not None and session.active:
                 await asyncio.to_thread(session.set_model, argument)
             elif argument:
                 if argument not in configured_models():
-                    raise ValueError("Choose a model configured in Connection.")
+                    raise ValueError("Choose a model configured under Agent connection in Settings.")
                 model_select.value = argument
             else:
                 model_select.run_method("showPopup")
@@ -789,8 +791,8 @@ def _build_page(jobs, *, registry, navigate, connection_button):
             if image_paths:
                 snapshot = session.snapshot()
                 if snapshot.get("model") not in snapshot.get("image_models", ()):
-                    raise ValueError("Select an image-capable model. Configure which models accept images in Connection "
-                                     "before starting the session.")
+                    raise ValueError("Select an image-capable model. Configure image support under Agent connection "
+                                     "in Settings before starting the session.")
             run = registry.evidence_run(jobs, linked_run.id) if linked_run is not None else None
             references = tuple(_attachment_reference(path, container=container_mode()) for path in paths)
             model_context = ""
@@ -859,9 +861,6 @@ def _build_page(jobs, *, registry, navigate, connection_button):
     async def browse_folder():
         await attach_path("dir")
 
-    if connection_button is not None:
-        connection_button.props(f'aria-controls="c{connection.id}"')
-        connection_button.on_click(lambda: toggle_connection(open_only=navigate("Agent")))
     session_button.on_click(toggle_session)
     attach_file.on_click(browse_file)
     attach_folder.on_click(browse_folder)

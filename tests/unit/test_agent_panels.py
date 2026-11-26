@@ -953,7 +953,10 @@ class AgentPanelTests(unittest.TestCase):
                 timers.setdefault(callback.__name__, callback)
 
             with client, patch.object(shared, "workspace_timer", timer), patch.object(ui, "button", button):
-                ask_agent = agent.build(jobs, registry=self.registry, navigate=navigate)
+                with ui.dialog() as settings_dialog:
+                    connection_settings = ui.expansion("Agent connection")
+                ask_agent = agent.build(jobs, registry=self.registry, navigate=navigate,
+                                        settings_dialog=settings_dialog, connection_settings=connection_settings)
                 ion_tof._peak_fitting(jobs, gated, np.arange(11), {"pixels": np.ones(10)}, ask_agent=ask_agent)
             return timers, buttons, navigate
 

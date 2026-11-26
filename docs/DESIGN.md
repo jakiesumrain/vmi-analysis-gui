@@ -131,7 +131,7 @@ The shell is a persistent workbench with four regions, and only four:
   The Ion group includes a nested Fallback disclosure. It starts closed and
   contains the three manual comparison tools. Agent appears above Workbench
   in local and sandboxed shared mode. The Agent chevron folds its actions.
-  The collapsed rail shows the Agent icon and hides its actions.
+  The collapsed rail shows the Agent icon and hides Analysis runs.
 - **Workspace** — exactly one active panel. Panels switch; they do not
   stack, scroll into each other, or open side by side.
 - **Status footer** — one compact line of global state: active jobs, queued
@@ -195,9 +195,9 @@ A panel that invents its own layout vocabulary is a defect.
 ### Agent conversation and approval
 
 - Use the workspace for the conversation and keep one page scroll surface.
-  Keep the composer at the bottom of the viewport and **Connection** under
-  **Agent** in the expanded sidebar. Connection contains diagnostics and model
-  setup. Center the application icon and a short prompt in an empty conversation.
+  Keep the composer at the bottom of the viewport. Put model setup, session
+  controls, and diagnostics under **Agent connection** in **Settings**.
+  Center the application icon and a short prompt in an empty conversation.
 - Place ongoing activity in the conversation. Keep the composer controls
   for input, attachments, model selection, and Send or Stop.
 - Show resolved inputs, parameters, and outputs beside **Approve and run**

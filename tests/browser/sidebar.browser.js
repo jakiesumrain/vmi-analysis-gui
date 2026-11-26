@@ -133,8 +133,6 @@ async page => {
   await agent.click();
   await panel('New chat').waitFor();
   await agent.and(page.locator('[aria-current="page"]')).waitFor();
-  const connection = page.locator('.vmi-agent-connection');
-  const connectionButton = page.getByRole('button', {name: 'Connection', exact: true});
   const agentActions = sidebar.locator('.vmi-sidebar-agent-actions');
   await agentDisclosure.press('Enter');
   await agentActions.waitFor({state: 'hidden'});
@@ -149,12 +147,6 @@ async page => {
   }
   await agentDisclosure.press('Space');
   await agentActions.waitFor();
-  const baseUrl = connection.getByRole('textbox', {name: 'Base URL', exact: true});
-  if (await baseUrl.isVisible()) throw new Error('Agent connection settings should start collapsed');
-  await connectionButton.click();
-  await baseUrl.waitFor({state: 'visible'});
-  await connectionButton.click();
-  await baseUrl.waitFor({state: 'hidden'});
   if (await page.locator('.vmi-header').getByRole('button', {name: 'Settings', exact: true}).count()) {
     throw new Error('Settings is still in the header');
   }

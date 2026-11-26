@@ -158,6 +158,7 @@ def index() -> None:
     theme.apply_theme()
     account = shared.current_account()
     agent_enabled = shared.agent_enabled()
+    analysis_history_enabled = analysis_runs.available()
     administrator = account is None or account.admin
     store = shared.settings_store()
     workflow_fields = workflow.result_fields(store)
@@ -238,9 +239,12 @@ def index() -> None:
         settings_dialog.close()
         about_dialog.open()
 
-    with ui.dialog() as settings_dialog, ui.card().classes("w-96 gap-3"):
+    with ui.dialog() as settings_dialog, ui.card().classes(
+            "w-full max-w-xl gap-3" if agent_enabled else "w-96 gap-3"):
         ui.label("Settings").classes("text-lg font-semibold")
         ui.separator()
+        if agent_enabled:
+            connection_settings = ui.expansion("Agent connection", icon="tune").classes("w-full")
         if account is None:
             with ui.row().classes("w-full items-center justify-between"):
                 ui.label("Keep running on disconnect").classes("vmi-subtitle")
@@ -354,7 +358,6 @@ def index() -> None:
 
     with ui.row().classes("vmi-workbench w-full no-wrap"):
         with ui.element("aside").classes("vmi-sidebar-rail") as rail, ui.column().classes("vmi-sidebar"):
-            connection_button = None
             if agent_enabled:
                 with ui.column().classes("vmi-sidebar-agent w-full gap-0"):
                     with ui.row().classes("vmi-sidebar-agent-heading w-full no-wrap items-center gap-0"):
@@ -362,23 +365,22 @@ def index() -> None:
                                 "vmi-sidebar-primary") as agent_entry:
                             ui.label("Agent").classes("vmi-sidebar-agent-label")
                             ui.icon("smart_toy").classes("vmi-sidebar-agent-icon").props('aria-hidden="true"')
-                        with ui.element("button").props(
-                            'type="button" aria-label="Agent actions" aria-expanded="true"'
-                        ).classes("vmi-sidebar-agent-disclosure") as agent_disclosure:
-                            ui.icon("expand_more").props('aria-hidden="true"')
-                    with ui.column().classes("vmi-sidebar-agent-actions w-full gap-0") as agent_actions:
-                        connection_button = ui.button("Connection", icon="tune").props(
-                            'flat no-caps aria-label="Connection" aria-expanded="false"').tooltip("Connection")
-                        if analysis_runs.available():
+                        if analysis_history_enabled:
+                            with ui.element("button").props(
+                                'type="button" aria-label="Agent actions" aria-expanded="true"'
+                            ).classes("vmi-sidebar-agent-disclosure") as agent_disclosure:
+                                ui.icon("expand_more").props('aria-hidden="true"')
+                    if analysis_history_enabled:
+                        with ui.column().classes("vmi-sidebar-agent-actions w-full gap-0") as agent_actions:
                             ui.button("Analysis runs", icon="folder_open", on_click=lambda: analysis_runs.open_history(MANAGER)) \
                                 .props('flat no-caps aria-label="Analysis runs"').tooltip("Analysis runs")
-                    agent_disclosure.props(f'aria-controls="c{agent_actions.id}"')
+                        agent_disclosure.props(f'aria-controls="c{agent_actions.id}"')
 
-                    def toggle_agent_actions():
-                        agent_actions.visible = not agent_actions.visible
-                        agent_disclosure.props(f'aria-expanded="{str(agent_actions.visible).lower()}"')
+                        def toggle_agent_actions():
+                            agent_actions.visible = not agent_actions.visible
+                            agent_disclosure.props(f'aria-expanded="{str(agent_actions.visible).lower()}"')
 
-                    agent_disclosure.on("click", toggle_agent_actions)
+                        agent_disclosure.on("click", toggle_agent_actions)
             with ui.element("details").classes("vmi-sidebar-disclosure vmi-sidebar-workbench").props(
                     'open data-workspace-group="Workbench"'):
                 with ui.element("summary").classes("vmi-sidebar-primary"):
@@ -394,8 +396,7 @@ def index() -> None:
                     ui.label(account.name).classes("vmi-sidebar-account").tooltip(account.name)
                 settings_button = ui.button(icon="settings", on_click=settings_dialog.open).props(
                     'flat round dense aria-label="Settings"').classes("vmi-sidebar-settings")
-                settings_button.tooltip("Server controls and workflow files" if administrator
-                                        else "Account and workflow files")
+                settings_button.tooltip("Settings")
 
         with rail:
             ui.element("div").classes("vmi-sidebar-resizer").props(
@@ -405,9 +406,7 @@ def index() -> None:
             with ui.tab_panels(value=TABS[0][0], on_change=reveal_active_group).props(
                     "transition-prev=fade transition-next=fade").classes("vmi-tab-panels w-full bg-transparent") as panels:
                 def navigate(name):
-                    changed = panels.value != name
                     panels.value = name
-                    return changed
 
                 def export_calibration(extracted_path, image_path, manual_center, **settings):
                     return use_calibration(extracted_path, image_path, manual_center, **settings)
@@ -431,7 +430,8 @@ def index() -> None:
                             elif module is agent:
                                 ask_agent = module.build(MANAGER, registry=PANEL_OPERATIONS,
                                                          navigate=navigate,
-                                                         connection_button=connection_button)
+                                                         settings_dialog=settings_dialog,
+                                                         connection_settings=connection_settings)
                             elif module in (ion_tof, ion_live):
                                 module.build(MANAGER, ask_agent=handoff_to_agent)
                             else:
