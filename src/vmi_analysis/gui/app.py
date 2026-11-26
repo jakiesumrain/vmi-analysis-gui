@@ -476,12 +476,6 @@ def main(*, host: str = "0.0.0.0", launch_command: str = "uv run vmi-analysis") 
     if config_path:
         host = "127.0.0.1"
         shared.install(config_path)
-    elif os.environ.get("VMI_GUI_LOCAL_CLIENT") == "1":
-        from .agent_api import local_desktop, start_local_session
-
-        host = "127.0.0.1"
-        app.head("/api/local-client")(local_desktop)
-        app.post("/api/local-client")(start_local_session)
     port = startup_port(host=host, launch_command=launch_command)
     from vmi_analysis.paths import prepare_workspace
     prepare_workspace()

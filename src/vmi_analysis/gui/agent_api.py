@@ -1,12 +1,11 @@
-"""Start an Agent for a shared account or an opted-in local desktop."""
+"""Start an Agent session for an authenticated shared account."""
 
 import asyncio
 
-from fastapi import HTTPException, Request, Response
+from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
 from vmi_analysis.agent_backend import AGENTS, AgentRequest, validate_request
-from vmi_analysis.paths import GENERATED_DIR
 from . import shared
 
 
@@ -20,36 +19,13 @@ class ModelConnection(BaseModel):
 
 
 async def start_session(request: Request):
+    server = shared.SERVER
     account = shared.request_account(request.scope)
     if account is None:
         raise HTTPException(401, "Sign in to VMI Analysis first.")
-    if shared.SERVER.manual_only:
+    if server.manual_only:
         raise HTTPException(403, "Agent is disabled in manual-only mode.")
-    return await _start(request, account)
-
-
-def _require_local_desktop(request: Request):
-    host, port = request.scope.get("server") or (None, None)
-    if (shared.SERVER is not None or host != "127.0.0.1" or port is None
-            or request.client is None or request.client.host != "127.0.0.1"
-            or request.headers.get("host") != f"127.0.0.1:{port}"
-            or "origin" in request.headers or "sec-fetch-site" in request.headers):
-        raise HTTPException(403, "The desktop endpoint requires a direct loopback connection.")
-
-
-async def local_desktop(request: Request):
-    _require_local_desktop(request)
-    return Response(status_code=204, headers={"X-VMI-Local-Client": "1", "Cache-Control": "no-store"})
-
-
-async def start_local_session(request: Request):
-    _require_local_desktop(request)
-    return await _start(request, None)
-
-
-async def _start(request: Request, account):
-    owner = account.name if account else "local"
-    session = AGENTS.current(owner)
+    session = AGENTS.current(account.name)
     if session is not None and session.active:
         return {"state": "active"}
 
@@ -61,11 +37,8 @@ async def _start(request: Request, account):
     try:
         profile = ModelConnection.model_validate(await request.json())
         agent = AgentRequest(
-            owner=owner,
-            workspace=account.root if account else shared.workspace_root(),
-            config_root=account.root.parent / ".agent" if account else GENERATED_DIR / "agent",
-            datasets=shared.SERVER.datasets if account else None,
-            analysis=shared.analysis_root(account) if account else None,
+            owner=account.name, workspace=account.root, config_root=account.root.parent / ".agent",
+            datasets=server.datasets, analysis=shared.analysis_root(account),
             base_url=profile.base_url.strip(), api=profile.api, model=profile.model,
             additional_models=tuple(profile.additional_models), image_models=tuple(profile.image_models),
             api_key=profile.api_key,
@@ -74,10 +47,9 @@ async def _start(request: Request, account):
     except ValueError:
         raise HTTPException(400, "Check the model connection settings.") from None
     try:
-        await asyncio.to_thread(AGENTS.start, agent, shared_mode=account is not None,
-                                history=shared.agent_history(account))
+        await asyncio.to_thread(AGENTS.start, agent, shared_mode=True, history=shared.agent_history(account))
     except (ValueError, RuntimeError, OSError):
-        session = AGENTS.current(owner)
+        session = AGENTS.current(account.name)
         if session is not None and session.active:
             return {"state": "active"}
         raise HTTPException(503, "Agent could not start. Check the server diagnostics.") from None

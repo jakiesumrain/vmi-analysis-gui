@@ -61,25 +61,3 @@ class AgentApiTests(TestCase):
             response = self.start(api_key={"secret": self.connection["api_key"]})
         self.assertEqual(response.status_code, 400)
         self.assertNotIn(self.connection["api_key"], response.text)
-
-    def test_local_desktop_requires_loopback_and_uses_the_local_agent(self):
-        app = FastAPI()
-        app.head("/api/local-client")(agent_api.local_desktop)
-        app.post("/api/local-client")(agent_api.start_local_session)
-        base = "http://127.0.0.1:13517"
-        with patch.object(shared, "SERVER", None), TestClient(
-                app, base_url=base, client=("127.0.0.1", 50000)) as client:
-            self.assertEqual(client.head("/api/local-client").headers["X-VMI-Local-Client"], "1")
-            with patch.object(agent_api.AGENTS, "current", return_value=None), patch.object(
-                    agent_api.AGENTS, "start") as start:
-                for headers in ({"Origin": "http://evil.test"}, {"Sec-Fetch-Site": "same-origin"},
-                                {"Host": "example.test"}):
-                    denied = client.post("/api/local-client", json=self.connection, headers=headers)
-                    self.assertEqual(denied.status_code, 403)
-                start.assert_not_called()
-                self.assertEqual(client.post("/api/local-client", json=self.connection).json(), {"state": "started"})
-                self.assertEqual(start.call_args.args[0].owner, "local")
-                self.assertFalse(start.call_args.kwargs["shared_mode"])
-        with patch.object(shared, "SERVER", None), TestClient(
-                app, base_url=base, client=("192.0.2.10", 50000)) as client:
-            self.assertEqual(client.head("/api/local-client").status_code, 403)

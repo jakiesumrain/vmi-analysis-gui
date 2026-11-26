@@ -22,12 +22,6 @@ To use the local Agent, install Node.js and the Pi package pinned in the
 in the shell that starts VMI Analysis. Then open **Settings → Agent connection**
 and enter your model endpoint, model ID, API format, and key.
 
-To start the local Agent with a saved model connection from the
-[desktop client](https://github.com/jakiesumrain/vmi-analysis-client), set
-`VMI_GUI_LOCAL_CLIENT=1` before starting the GUI. This binds the GUI to
-`127.0.0.1`. In the client, select **Local (this computer)** and use the
-port shown by the GUI.
-
 **Settings → Save workflow** exports form values. A Trig Calibration session separately preserves ring selections, masks, and fits. Supply your own experiment files. Use the optional `live` dependency for Timepix3 preview.
 
 ## Choose a deployment
