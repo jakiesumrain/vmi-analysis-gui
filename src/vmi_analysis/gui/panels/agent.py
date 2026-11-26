@@ -603,7 +603,7 @@ def _build_page(jobs, *, registry, navigate, connection_button):
         entries_column.clear()
         with entries_column:
             with ui.column().classes("vmi-agent-empty w-full items-center justify-center") as empty:
-                ui.element("img").props(f'src="{WELCOME_ICON}" alt="" width="88" height="88"')
+                ui.element("img").props(f'src="{WELCOME_ICON}" alt="" width="56" height="56"')
                 ui.label("What would you like to analyze?")
             empty_state = empty
 
