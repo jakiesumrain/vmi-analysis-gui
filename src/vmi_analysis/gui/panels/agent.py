@@ -833,14 +833,16 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
 
         history_navigation.clear()
         with history_navigation:
-            ui.button("New chat", on_click=select_conversation).props("flat dense no-caps") \
-                .classes("vmi-agent-history-label")
+            with ui.row().classes("vmi-agent-action-row vmi-agent-section-heading w-full no-wrap items-center gap-0"):
+                ui.label("New chat").classes("vmi-agent-history-label")
+                ui.button(icon="add", on_click=select_conversation).props('flat dense round aria-label="New chat"') \
+                    .classes("vmi-agent-row-action vmi-agent-add-button").tooltip("New chat")
             for chat in chat_groups.get(None, ()):
                 chat_button(chat)
-            with ui.row().classes("vmi-agent-action-row vmi-agent-project-heading w-full no-wrap items-center gap-0"):
+            with ui.row().classes("vmi-agent-action-row vmi-agent-section-heading w-full no-wrap items-center gap-0"):
                 ui.label("Projects").classes("vmi-agent-history-label")
                 ui.button(icon="add", on_click=project_dialog).props('flat dense round aria-label="New project"') \
-                    .classes("vmi-agent-row-action vmi-agent-new-project").tooltip("New project")
+                    .classes("vmi-agent-row-action vmi-agent-add-button").tooltip("New project")
             for project in projects:
                 if not project.archived:
                     project_group(project)
