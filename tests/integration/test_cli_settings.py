@@ -348,6 +348,7 @@ class GuiSubmissionTests(unittest.TestCase):
         from vmi_analysis.centroiding.plot_data import save_plot_data
         from vmi_analysis.gui.jobs import Job
         from vmi_analysis.gui.panels import pes
+        from vmi_analysis.gui.workflow import PES_UNIFORM_PREFIXES
 
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "pes.npz"
@@ -361,8 +362,13 @@ class GuiSubmissionTests(unittest.TestCase):
                     job = Job("PES", status="done", extra={"pes_spectra": str(path)})
                     client = Client(ui.page("/_test_pes_uniform_grid"))
                     callbacks = {}
+                    prefix = PES_UNIFORM_PREFIXES[units]
+                    saved_width = 2 * (alpha or 1)
+                    store = {MIGRATED_KEY: True, prefix + "bin_width": saved_width,
+                             prefix + "x_min": x[0], prefix + "x_max": x[-1],
+                             prefix + "intensity_y_min": -2, prefix + "intensity_y_max": 6}
                     try:
-                        with client, patch.object(app.storage, "_general", {MIGRATED_KEY: True}), \
+                        with client, patch.object(app.storage, "_general", store), \
                                 patch.object(ui.button, "on_click", lambda button, handler:
                                              callbacks.__setitem__(button.text, handler)), \
                                 patch.object(pes, "plot_options", wraps=pes.plot_options) as plot_options, \
@@ -408,7 +414,11 @@ class GuiSubmissionTests(unittest.TestCase):
                             settings = next(element for element in client.elements.values()
                                             if isinstance(element, ui.expansion) and element.text == "Plot settings")
                             self.assertFalse(settings.value)
-                            self.assertEqual(len(plot_options.call_args.args[0].data), 3)
+                            restored = plot_options.call_args.args[0]
+                            self.assertEqual(len(restored.data), 3)
+                            np.testing.assert_allclose(np.diff(restored.data[0].x), saved_width)
+                            self.assertEqual(restored.layout.xaxis2.range, (x[0], x[-1]))
+                            self.assertEqual(restored.layout.yaxis.range, (-2, 6))
                             render_count = plot_options.call_count
                             chart = [element for element in client.elements.values() if isinstance(element, ui.plotly)][-1]
                             section.close()
@@ -430,6 +440,8 @@ class GuiSubmissionTests(unittest.TestCase):
                             fields["Resampled β4 Y max"].value = 5
                             apply_settings = callbacks["Apply plot settings"]
                             apply_settings()
+                            self.assertEqual(store[prefix + "bin_width"], width.value)
+                            self.assertEqual(store[prefix + "beta_4_y_max"], 5)
                             self.assertIs(client.elements.get(chart.id), chart)
                             fig = plot_options.call_args.args[0]
                             intensity, beta2, beta4 = fig.data
@@ -455,6 +467,7 @@ class GuiSubmissionTests(unittest.TestCase):
 
                             x_min.value = x[-1]
                             apply_settings()
+                            self.assertEqual(store[prefix + "x_min"], x[0])
                             notify.assert_called_once_with("Axis minima must be below maxima.", type="warning")
                             self.assertIs(plot_options.call_args.args[0], fig)
 

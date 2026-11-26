@@ -11,10 +11,13 @@ from typing import Callable
 
 from nicegui import ui
 
+from vmi_analysis.pes import BETA_ORDERS
+
 from .centroid_plots import COLORMAPS, RESULT_COLORMAP_DEFAULTS
 from .settings import storage_key
 
 SCHEMA = "vmi-workflow/1"
+PES_UNIFORM_PREFIXES = {"eV": "pes.uniform_ev_", "pixel²": "pes.uniform_pixel2_"}
 Value = str | bool | int | float | None
 
 
@@ -45,6 +48,17 @@ def result_fields(store):
             key = prefix + bound
             fields[key] = Field(lambda key=key: store.get(key),
                                 lambda value: value is None or _accepts_number(value))
+    beta_axes = tuple(f"beta_{order}_y" for order in BETA_ORDERS if order)
+    for key in (f"pes.{axis}_{bound}" for axis in beta_axes for bound in ("min", "max")):
+        fields[key] = Field(lambda key=key: store.get(key), _accepts_limit)
+    for prefix in PES_UNIFORM_PREFIXES.values():
+        key = prefix + "bin_width"
+        fields[key] = Field(lambda key=key: store.get(key),
+                            lambda value: value is None or (_accepts_number(value) and value > 0))
+        for axis in ("x", "intensity_y", *beta_axes):
+            for bound in ("min", "max"):
+                key = f"{prefix}{axis}_{bound}"
+                fields[key] = Field(lambda key=key: store.get(key), _accepts_limit)
     for bound in ("x_min", "x_max", "y_min", "y_max"):
         key = storage_key("spectrum_plot", bound)
         fields[key] = Field(lambda key=key: store.get(key, -1.0),
@@ -54,6 +68,15 @@ def result_fields(store):
 
 def _accepts_number(value):
     return (type(value) is int and abs(value) < 2**53) or (type(value) is float and isfinite(value))
+
+
+def _accepts_limit(value):
+    return value is None or _accepts_number(value)
+
+
+def register_value(key, read, accepts):
+    if (fields := _fields.get()) is not None:
+        fields[key] = Field(read, accepts)
 
 
 def register_field(key, widget):
