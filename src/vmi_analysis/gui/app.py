@@ -291,8 +291,6 @@ def index() -> None:
             ).classes("vmi-sidebar-toggle")
             ui.label(APP_TITLE).classes("vmi-title vmi-title-md vmi-title-bold")
             ui.label("electron and ion imaging toolbox").classes("vmi-subtitle")
-        if account:
-            ui.label(account.name).classes("vmi-status-label")
 
     def status_item(label, value, note):
         with ui.row().classes("vmi-status-item items-baseline gap-1"):
@@ -359,14 +357,27 @@ def index() -> None:
             connection_button = None
             if agent_enabled:
                 with ui.column().classes("vmi-sidebar-agent w-full gap-0"):
-                    with ui.element("button").props('type="button"').classes("vmi-sidebar-primary") as agent_entry:
-                        ui.label("Agent")
-                    with ui.column().classes("vmi-sidebar-agent-actions w-full gap-0"):
+                    with ui.row().classes("vmi-sidebar-agent-heading w-full no-wrap items-center gap-0"):
+                        with ui.element("button").props('type="button" aria-label="Agent"').classes(
+                                "vmi-sidebar-primary") as agent_entry:
+                            ui.label("Agent").classes("vmi-sidebar-agent-label")
+                            ui.icon("smart_toy").classes("vmi-sidebar-agent-icon").props('aria-hidden="true"')
+                        agent_disclosure = ui.button(icon="expand_more").props(
+                            'flat round dense aria-label="Agent actions" aria-expanded="true"'
+                        ).classes("vmi-sidebar-agent-disclosure")
+                    with ui.column().classes("vmi-sidebar-agent-actions w-full gap-0") as agent_actions:
                         connection_button = ui.button("Connection", icon="tune").props(
                             'flat no-caps aria-label="Connection" aria-expanded="false"').tooltip("Connection")
                         if analysis_runs.available():
                             ui.button("Analysis runs", icon="folder_open", on_click=lambda: analysis_runs.open_history(MANAGER)) \
                                 .props('flat no-caps aria-label="Analysis runs"').tooltip("Analysis runs")
+                    agent_disclosure.props(f'aria-controls="c{agent_actions.id}"')
+
+                    def toggle_agent_actions():
+                        agent_actions.visible = not agent_actions.visible
+                        agent_disclosure.props(f'aria-expanded="{str(agent_actions.visible).lower()}"')
+
+                    agent_disclosure.on_click(toggle_agent_actions)
             with ui.element("details").classes("vmi-sidebar-disclosure vmi-sidebar-workbench").props(
                     'open data-workspace-group="Workbench"'):
                 with ui.element("summary").classes("vmi-sidebar-primary"):
@@ -377,9 +388,11 @@ def index() -> None:
                     if group == "Ion":
                         with disclosure:
                             sidebar_group("Fallback", ((None, FALLBACK_TABS),)).classes("vmi-sidebar-fallback")
-            with ui.column().classes("vmi-sidebar-foot"):
-                settings_button = ui.button("Settings", icon="settings", on_click=settings_dialog.open).props(
-                    'flat no-caps aria-label="Settings"').classes("vmi-sidebar-settings")
+            with ui.row().classes("vmi-sidebar-foot items-center no-wrap"):
+                if account:
+                    ui.label(account.name).classes("vmi-sidebar-account").tooltip(account.name)
+                settings_button = ui.button(icon="settings", on_click=settings_dialog.open).props(
+                    'flat round dense aria-label="Settings"').classes("vmi-sidebar-settings")
                 settings_button.tooltip("Server controls and workflow files" if administrator
                                         else "Account and workflow files")
 
@@ -390,6 +403,11 @@ def index() -> None:
         with ui.column().classes("vmi-workspace"):
             with ui.tab_panels(value=TABS[0][0], on_change=reveal_active_group).props(
                     "transition-prev=fade transition-next=fade").classes("vmi-tab-panels w-full bg-transparent") as panels:
+                def navigate(name):
+                    changed = panels.value != name
+                    panels.value = name
+                    return changed
+
                 def export_calibration(extracted_path, image_path, manual_center, **settings):
                     return use_calibration(extracted_path, image_path, manual_center, **settings)
 
@@ -411,7 +429,7 @@ def index() -> None:
                                 module.build(MANAGER, fallback=True)
                             elif module is agent:
                                 ask_agent = module.build(MANAGER, registry=PANEL_OPERATIONS,
-                                                         navigate=lambda name: setattr(panels, "value", name),
+                                                         navigate=navigate,
                                                          connection_button=connection_button)
                             elif module in (ion_tof, ion_live):
                                 module.build(MANAGER, ask_agent=handoff_to_agent)

@@ -5,7 +5,6 @@
   const toggle = document.querySelector('[data-sidebar-toggle]');
   const rail = sidebar.closest('.vmi-sidebar-rail');
   const resizer = rail.querySelector('.vmi-sidebar-resizer');
-  const settingsLabel = sidebar.querySelector('.vmi-sidebar-settings .block');
   const groups = [...sidebar.querySelectorAll('.vmi-sidebar-disclosure')];
   const states = new Map();
   const desktop = matchMedia('(min-width: 901px)');
@@ -54,11 +53,6 @@
       }
     }
     sidebar.classList.toggle('vmi-sidebar--collapsed', collapsed);
-    // Quasar's .block utility uses display: block !important; match its priority.
-    if (settingsLabel) {
-      if (collapsed) settingsLabel.style.setProperty('display', 'none', 'important');
-      else settingsLabel.style.removeProperty('display');
-    }
     const label = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
     toggle.setAttribute('aria-label', label);
     toggle.setAttribute('aria-expanded', String(!collapsed));

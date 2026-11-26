@@ -64,6 +64,13 @@ async page => {
 
   const sidebar = page.locator('.vmi-sidebar');
   const settings = sidebar.getByRole('button', {name: 'Settings', exact: true});
+  const sidebarFoot = sidebar.locator('.vmi-sidebar-foot');
+  const settingsBox = await settings.boundingBox();
+  const footBox = await sidebarFoot.boundingBox();
+  if (Math.abs(settingsBox.x + settingsBox.width - footBox.x - footBox.width) > 1 ||
+      await settings.locator('.block').count() || await sidebarFoot.locator('.vmi-sidebar-account').count()) {
+    throw new Error('The local sidebar footer should have only a right-aligned Settings icon');
+  }
   const agent = sidebar.locator(':scope > .vmi-sidebar-agent').getByRole('button', {name: 'Agent', exact: true});
   const header = page.locator('.vmi-header');
   const collapse = header.getByRole('button', {name: 'Collapse sidebar', exact: true});
@@ -114,6 +121,21 @@ async page => {
   await agent.and(page.locator('[aria-current="page"]')).waitFor();
   const connection = page.locator('.vmi-agent-connection');
   const connectionButton = page.getByRole('button', {name: 'Connection', exact: true});
+  const agentActions = sidebar.locator('.vmi-sidebar-agent-actions');
+  const agentDisclosure = sidebar.getByRole('button', {name: 'Agent actions', exact: true});
+  await agentDisclosure.press('Enter');
+  await agentActions.waitFor({state: 'hidden'});
+  if (await agentDisclosure.getAttribute('aria-expanded') !== 'false') {
+    throw new Error('Agent actions do not announce their collapsed state');
+  }
+  await collapse.press('Enter');
+  await header.getByRole('button', {name: 'Expand sidebar', exact: true}).press('Enter');
+  await agentDisclosure.waitFor();
+  if (await agentActions.isVisible()) {
+    throw new Error('Expanding the sidebar changed the Agent actions disclosure');
+  }
+  await agentDisclosure.press('Space');
+  await agentActions.waitFor();
   const baseUrl = connection.getByRole('textbox', {name: 'Base URL', exact: true});
   if (await baseUrl.isVisible()) throw new Error('Agent connection settings should start collapsed');
   await connectionButton.click();
@@ -131,8 +153,10 @@ async page => {
   const width = (await sidebar.boundingBox()).width;
   if (width > 80) throw new Error('Icon rail is not narrow');
   if (await divider.isVisible()) throw new Error('Resize handle is visible in the icon rail');
-  if (await settings.locator('.block').isVisible()) {
-    throw new Error('Settings label text is shown in the icon rail');
+  if (await agentActions.isVisible() || await agentDisclosure.isVisible() ||
+      await agent.locator('.vmi-sidebar-agent-label').isVisible() ||
+      !await agent.locator('.vmi-sidebar-agent-icon').isVisible()) {
+    throw new Error('The collapsed sidebar should show only the Agent icon');
   }
   for (const name of ['Circularize', 'TPX3 Dump', 'Ion Pipeline', 'Agent']) {
     await (name === 'Agent' ? agent : tab(name)).click();
@@ -151,8 +175,8 @@ async page => {
   await header.getByRole('button', {name: 'Expand sidebar', exact: true}).press('Space');
   await page.waitForFunction(() => !document.querySelector('.vmi-sidebar--collapsed'));
   if ((await sidebar.boundingBox()).width !== resizedWidth) throw new Error('Resized width was lost on reload');
-  if (!await settings.locator('.block').isVisible()) {
-    throw new Error('Settings label text did not return when the sidebar expanded');
+  if (!await settings.isVisible() || !await agentActions.isVisible()) {
+    throw new Error('Settings and expanded Agent actions should be visible in the wide sidebar');
   }
 
   await page.setViewportSize({width: 390, height: 844});

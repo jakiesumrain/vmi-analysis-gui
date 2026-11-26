@@ -409,8 +409,8 @@ def _build_page(jobs, *, registry, navigate, connection_button):
             return
         ui.run_javascript(f"window.vmiAgentCompletionResults?.({prompt.id}, {request_id}, {json.dumps(items)})")
 
-    def toggle_connection():
-        connection.visible = not connection.visible
+    def toggle_connection(*, open_only=False):
+        connection.visible = open_only or not connection.visible
         if connection_button is not None:
             connection_button.props(f'aria-expanded="{str(connection.visible).lower()}"')
 
@@ -598,9 +598,9 @@ def _build_page(jobs, *, registry, navigate, connection_button):
         diagnostics_log.clear()
         entries_column.clear()
         with entries_column:
-            with ui.row().classes("vmi-agent-empty w-full items-center justify-center gap-2") as empty:
-                ui.icon("forum").props('aria-hidden="true"')
-                ui.label("Start a session to begin a conversation.").classes("vmi-caption")
+            with ui.column().classes("vmi-agent-empty w-full items-center justify-center") as empty:
+                ui.element("img").props('src="/favicon.ico" alt="" width="56" height="56"')
+                ui.label("What would you like to analyze?")
             empty_state = empty
 
     def add_entry(entry):
@@ -857,7 +857,7 @@ def _build_page(jobs, *, registry, navigate, connection_button):
 
     if connection_button is not None:
         connection_button.props(f'aria-controls="c{connection.id}"')
-        connection_button.on_click(toggle_connection)
+        connection_button.on_click(lambda: toggle_connection(open_only=navigate("Agent")))
     session_button.on_click(toggle_session)
     attach_file.on_click(browse_file)
     attach_folder.on_click(browse_folder)

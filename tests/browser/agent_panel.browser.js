@@ -57,8 +57,19 @@ async page => {
     'Composer placeholder is hidden');
   check(!await send.locator('.block').isVisible(), 'Icon-only Send button still shows its text label');
   check(!await send.isEnabled(), 'Send should be disabled before a session starts');
-  check(await panel.locator('.vmi-agent-empty').isVisible(), 'Conversation empty state is missing');
-  check(await panel.locator('.vmi-agent-empty').evaluate(element => getComputedStyle(element).borderWidth) === '0px',
+  const welcome = panel.locator('.vmi-agent-empty');
+  check(await welcome.getByText('What would you like to analyze?', {exact: true}).isVisible(),
+    'Conversation welcome is missing');
+  await page.waitForFunction(() => document.querySelector('.vmi-agent-empty img')?.naturalWidth > 0);
+  check(await welcome.evaluate(element => {
+    const icon = element.querySelector('img').getBoundingClientRect();
+    const area = element.getBoundingClientRect();
+    const text = element.lastElementChild.getBoundingClientRect();
+    return Math.abs(icon.x + icon.width / 2 - area.x - area.width / 2) < 1 &&
+      icon.bottom < text.top && Math.abs((icon.top + text.bottom) / 2 - (area.top + area.bottom) / 2) < 1 &&
+      area.height > 300;
+  }), 'Welcome icon and prompt should be centered in the available chat space');
+  check(await welcome.evaluate(element => getComputedStyle(element).borderWidth) === '0px',
     'Conversation still uses the old boxed empty state');
   check((await composer.boundingBox()).height <= 115, 'Empty composer is taller than expected');
   const attachmentButton = composer.getByRole('button', {name: 'Attach file or folder', exact: true});
