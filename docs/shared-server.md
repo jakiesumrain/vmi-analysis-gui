@@ -203,18 +203,19 @@ files and form settings.
 
 In sandboxed mode, open **Agent** in the sidebar. Under **Settings → Agent
 connection**, enter the model endpoint's base URL, model ID, API format, and
-API key. Choose **Start session**. The server passes the key to the session
-container through an environment variable and clears the key field. **Stop
-session** stops the container, removes its temporary configuration, and clears
-the server's remaining key copies. Process exit and server shutdown perform
-the same cleanup.
+API key, then choose **Connect provider**. The provider connection stays in
+memory for the account. Each Agent process receives its key through an
+environment variable and removes its temporary configuration when it exits.
+**Disconnect provider** stops the active Agent and clears the account's
+connection. Server shutdown also clears it.
 
 Each account has at most one live Agent session. It survives a browser reload
 or disconnect. Choose **New project** in the sidebar to group chats by a folder
 inside **My workspace**, or **New chat** to work from the workspace root. Open
-a saved chat to read it. To continue after a stop or server restart, choose
-**Resume chat** and supply the Agent connection. Stop the current session
-before resuming another chat.
+a saved chat to read it. Send a message to start or resume the selected chat
+with the account's provider connection. If a reply is running in another
+chat, finish or stop that reply first. Reconnect the provider after a server
+restart.
 
 Chat history can contain prompts, attachments, file excerpts, and tool results.
 The service stores it beside the account's workspace in `.agent-history`.

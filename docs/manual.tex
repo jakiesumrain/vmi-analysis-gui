@@ -456,10 +456,12 @@ selected band, masks, and fitted rings.
 \subsection{Run a panel with the Agent}
 
 Open \emph{Settings} and expand \emph{Agent connection}. Enter the model endpoint,
-model ID, API format, and API key. Choose \emph{Start session}.
-Use an endpoint you trust with the prompts and data you send. The server
-keeps the key only for the session. Local mode uses Pi on the host by
-default. Sandboxed shared mode uses the configured Docker or Podman image.
+model ID, API format, and API key. Choose \emph{Connect provider}.
+Use an endpoint you trust with the prompts and data you send. The provider
+connection stays in memory until you disconnect it or stop the server.
+Send a message to start or resume a chat in the sidebar using that connection.
+Local mode uses Pi on the host by default. Sandboxed shared mode uses the
+configured Docker or Podman image.
 
 Ask the Agent to prepare a supported operation, giving the input path and
 scientific parameters. Review the resolved settings and output paths.
@@ -476,8 +478,8 @@ ambiguous alignment can pause the workflow for a shift decision.
 \subsection{Analyze a screenshot with the Agent}
 
 Under \emph{Agent connection} in \emph{Settings}, enter the model IDs for your endpoint and select
-the models that accept images under \emph{Image-capable models}. Start the
-session and choose one of those models in the composer. Paste or drop a
+the models that accept images under \emph{Image-capable models}. Connect the
+provider and choose one of those models in the composer. Paste or drop a
 screenshot onto the composer and ask what you want to inspect. The screenshot
 is sent to the selected endpoint when you send the message.
 

@@ -1,4 +1,4 @@
-"""Per-user pi RPC sessions with disposable credentials and sandbox launchers."""
+"""Per-account provider connections and isolated Pi conversations."""
 
 from __future__ import annotations
 
@@ -12,12 +12,13 @@ import threading
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from http.client import HTTPConnection, HTTPException, HTTPSConnection
 from importlib.resources import files
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .agent_history import AgentHistory
 from .paths import GENERATED_DIR
 
 API_FORMATS = {
@@ -45,7 +46,7 @@ class AgentRequest:
     config_root: Path
     base_url: str
     model: str
-    api_key: str
+    api_key: str = field(repr=False)
     api: str = "openai-completions"
     datasets: Path | None = None
     additional_models: tuple[str, ...] = ()
@@ -766,6 +767,15 @@ class AgentSession:
                                                  daemon=True)
             self._stop_thread.start()
 
+    def stop_for_switch(self) -> None:
+        with self._lock:
+            if self.active:
+                if self.status != "ready" or self._pending_model or self._pending_control:
+                    raise RuntimeError("Finish or stop the reply in the active chat before sending here.")
+                self._stop_requested.set()
+                self.status = "stopping"
+        self.stop()
+
     def stop(self) -> None:
         with self._stop_lock:
             with self._lock:
@@ -831,6 +841,8 @@ class AgentManager:
     def __init__(self, launcher=None):
         self.launcher = launcher
         self._sessions: dict[str, AgentSession] = {}
+        self._connections: dict[str, tuple[AgentRequest, bool, AgentHistory | None]] = {}
+        self._owners = {}
         self._lock = threading.Lock()
         self._stopping = False
 
@@ -844,6 +856,60 @@ class AgentManager:
     def start(self, request: AgentRequest, *, shared_mode: bool,
               history=None, chat_id=None, project_id=None) -> AgentSession:
         validate_request(request)
+        lock = self._owner_lock(request.owner)
+        if not lock.acquire(blocking=False):
+            raise RuntimeError("Stop the current agent session before starting another.")
+        try:
+            session = self._start(request, shared_mode=shared_mode, history=history,
+                                  chat_id=chat_id, project_id=project_id)
+            with self._lock:
+                if self._stopping:
+                    raise RuntimeError("The server is shutting down.")
+                self._connections[request.owner] = (request, shared_mode, history)
+            return session
+        finally:
+            lock.release()
+
+    def _owner_lock(self, owner):
+        with self._lock:
+            return self._owners.setdefault(owner, threading.Lock())
+
+    def connection(self, owner) -> AgentRequest | None:
+        with self._lock:
+            connection = self._connections.get(owner)
+            return replace(connection[0], api_key="") if connection is not None else None
+
+    def prompt_chat(self, owner, message, *, chat_id=None, project_id=None, model=None,
+                    **prompt_options) -> AgentSession:
+        with self._owner_lock(owner):
+            with self._lock:
+                connection = self._connections.get(owner)
+                if self._stopping:
+                    raise RuntimeError("The server is shutting down.")
+            if connection is None:
+                raise RuntimeError("Connect a provider in Settings before sending a message.")
+            request, shared_mode, history = connection
+            current = self.current(owner)
+            if chat_id is not None and current is not None and current.active and (
+                    current.chat is not None and current.chat.id == chat_id):
+                session = current
+            else:
+                if model is not None:
+                    if model not in request.model_ids:
+                        raise ValueError("Choose a model configured for this provider.")
+                    request = replace(request, model=model,
+                                      additional_models=tuple(item for item in request.model_ids if item != model))
+                if history is not None:
+                    project = history.chat(chat_id).project_id if chat_id is not None else project_id
+                    history.project_folder(project)
+                if current is not None and current.active:
+                    current.stop_for_switch()
+                session = self._start(request, shared_mode=shared_mode, history=history,
+                                      chat_id=chat_id, project_id=project_id)
+            session.prompt(message, **prompt_options)
+            return session
+
+    def _start(self, request, *, shared_mode, history, chat_id, project_id):
         with self._lock:
             if self._stopping:
                 raise RuntimeError("The server is shutting down.")
@@ -877,13 +943,18 @@ class AgentManager:
             return self._sessions.get(owner)
 
     def stop(self, owner: str) -> None:
-        session = self.current(owner)
-        if session is not None:
-            session.stop()
+        """Disconnect the account's provider and stop its active chat."""
+        with self._owner_lock(owner):
+            with self._lock:
+                self._connections.pop(owner, None)
+                session = self._sessions.get(owner)
+            if session is not None:
+                session.stop()
 
     def begin_shutdown(self) -> None:
         with self._lock:
             self._stopping = True
+            self._connections.clear()
             sessions = list(self._sessions.values())
         for session in sessions:
             if session.active:

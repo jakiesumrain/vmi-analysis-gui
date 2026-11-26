@@ -175,7 +175,6 @@ html, body {
 }
 .vmi-agent-project .q-expansion-item__content { padding-inline-start: var(--vmi-space-4); }
 .vmi-agent-project .q-item__section--main { overflow-wrap: anywhere; }
-.vmi-agent-resume { width: min(100%, var(--vmi-agent-reading-measure)); margin-inline: auto; }
 .vmi-sidebar-workbench > .vmi-sidebar-disclosure { padding-inline-start: var(--vmi-space-4); }
 .vmi-sidebar-toggle { color: var(--vmi-muted) !important; }
 .vmi-sidebar-toggle .q-icon { transform: scaleX(-1); }

@@ -122,10 +122,6 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
     history = shared.agent_history(account)
     with ui.element("h1").classes("vmi-agent-header w-full"):
         title = ui.label(_conversation_title(()))
-    with ui.row().classes("vmi-agent-resume w-full items-center") as connection_action:
-        connect_chat = ui.button("Resume chat", icon="play_arrow").props("flat no-caps")
-    connection_action.visible = False
-
     with connection_settings, ui.column().classes("vmi-agent-connection w-full"):
         with field_grid():
             base_url = ui.input("Base URL", placeholder="https://provider.example/v1") \
@@ -140,8 +136,13 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
         image_models = ui.select({}, label="Image-capable models", multiple=True).classes("w-full")
         image_models.props("outlined dense use-chips")
         image_models.tooltip("Select models whose endpoint accepts images before starting the session.")
-        ui.label("The key is used only for this session and is never saved or included in workflows. "
-                 "Stopping the session removes its temporary configuration.").classes("vmi-subtitle")
+        if provider := AGENTS.connection(owner):
+            base_url.value = provider.base_url
+            model.value = ", ".join(provider.model_ids)
+            api.value = provider.api
+            image_models.set_options({name: name for name in provider.model_ids}, value=list(provider.image_models))
+        ui.label("Connect once to use this provider in any chat. The key stays in memory until you "
+                 "disconnect the provider or stop the server.").classes("vmi-subtitle")
         if shared.SERVER:
             ui.label("The isolated agent can read Shared datasets and change files only in My workspace. "
                      "Prompts and data content are sent to the endpoint you choose.").classes("vmi-subtitle")
@@ -149,7 +150,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
             ui.label("Local development starts pi directly unless VMI_AGENT_BACKEND=container is set. "
                      "The agent can change files in this workspace.").classes("vmi-subtitle")
         with ui.row().classes("vmi-action-bar w-full items-center gap-2"):
-            session_button = theme.run_button("Start session")
+            session_button = theme.run_button("Connect provider")
             load_models_button = ui.button("Load models", icon="sync").props("flat")
             load_models_button.visible = not shared.SERVER and os.environ.get("VMI_AGENT_BACKEND") != "container"
             load_models_note = ui.label("").classes("vmi-caption").props('role="status"')
@@ -226,6 +227,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
     stop_visible = False
     loading_models = False
     connecting = False
+    sending = False
     uploading = 0
     upload_note = ""
     selected_chat = None
@@ -245,9 +247,11 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
         values = (model.value or "").split(",")
         return list(dict.fromkeys(value.strip() for value in values if value.strip()))
 
-    def update_models(snapshot, active, session_status):
+    def update_models(snapshot, provider):
         nonlocal updating_models
-        models = snapshot.get("models", ()) if active else configured_models()
+        active = snapshot is not None and snapshot["status"] in ("starting", "ready", "running", "stopping")
+        models = snapshot["models"] if active and "models" in snapshot else (
+            provider.model_ids if provider else configured_models())
         selected = snapshot.get("model") if active else model_select.value
         if selected not in models:
             selected = next(iter(models), None)
@@ -259,7 +263,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
                 model_select.set_options(options, value=selected)
             finally:
                 updating_models = False
-        model_select.set_enabled(not active or session_status == "ready" and not snapshot.get("model_pending"))
+        model_select.set_enabled(not active or snapshot["status"] == "ready" and not snapshot.get("model_pending"))
 
     def request_model_change(event):
         if updating_models or not event.value:
@@ -272,8 +276,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
 
     async def load_models():
         nonlocal loading_models
-        session = AGENTS.current(owner)
-        if container_mode() or loading_models or (session is not None and session.active):
+        if container_mode() or loading_models or AGENTS.connection(owner) is not None:
             return
         if api.value not in ("openai-completions", "openai-responses"):
             return
@@ -645,8 +648,8 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
 
     def select_conversation(chat=None, project=None):
         nonlocal selected_chat, selected_project, follow_current, view_context, linked_run
-        if connecting or uploading:
-            show_error("Wait for the current connection or upload before switching chats.")
+        if connecting or sending or uploading:
+            show_error("Wait for the current connection, message, or upload before switching chats.")
             return
         if approval is not None:
             show_error("Approve or decline the current draft before switching chats.")
@@ -762,6 +765,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
     def refresh():
         nonlocal diagnostics_cursor, stop_visible
         session = AGENTS.current(owner)
+        provider = AGENTS.connection(owner)
         visible = visible_session()
         live_snapshot = session.snapshot() if session is not None else None
         snapshot = live_snapshot if visible is session else (visible.snapshot() if visible else None)
@@ -779,24 +783,24 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
         elif session_status == "running":
             activity_text = "Waiting for approval…" if waiting_for_approval else "Working"
         activity_label.text = activity_text
-        activity_row.visible = visible is not None and bool(activity_text)
+        if sending and visible is None:
+            activity_label.text = "Opening chat…"
+        activity_row.visible = (visible is not None and bool(activity_text)) or (sending and visible is None)
         activity_spinner.visible = model_pending or (
-            session_status in ("starting", "running", "stopping") and not waiting_for_approval)
-        active = session_status in ("starting", "ready", "running", "stopping")
-        resuming = selected_chat is not None or (visible is not None and visible.chat is not None)
-        session_button.text = ("Starting…" if session_status == "starting" else
-                               "Stopping…" if session_status == "stopping" else
-                               "Stop session" if active else "Resume chat" if resuming else "Start session")
-        session_button.props("color=negative" if active else "color=primary")
-        session_button.set_enabled(not connecting and not loading_models and session_status not in ("starting", "stopping"))
-        load_models_button.set_enabled(not active and not loading_models
+            session_status in ("starting", "running", "stopping") and not waiting_for_approval) or sending
+        connected = provider is not None
+        session_button.text = ("Disconnect provider" if connected else "Connect provider")
+        session_button.props("color=negative" if connected else "color=primary")
+        session_button.set_enabled(not connecting and not sending and not loading_models
+                                   and session_status not in ("starting", "stopping"))
+        load_models_button.set_enabled(not connected and not loading_models
                                        and api.value in ("openai-completions", "openai-responses"))
         for field in (base_url, model, api, api_key, image_models):
-            field.set_enabled(not active)
+            field.set_enabled(not connected and not connecting)
         available = {name: name for name in configured_models()}
         if available != image_models.options:
             image_models.set_options(available, value=[value for value in image_models.value or [] if value in available])
-        update_models(live_snapshot, active, session_status)
+        update_models(snapshot, provider)
         stop_visible = visible is not None and session_status == "running"
         if stop_visible:
             send_button.props('icon=stop aria-label="Stop reply"')
@@ -805,12 +809,10 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
             send_button.props('icon=arrow_upward aria-label="Send"')
             send_button.classes(remove="vmi-agent-stop")
         send_tooltip.text = "Stop reply" if stop_visible else "Send (Enter)"
-        send_button.set_enabled(stop_visible or visible is not None and not uploading and session_status == "ready"
-                                and not (model_pending or control_pending))
-        connect_chat.text = ("Manage active session" if active and visible is None else
-                             "Resume chat" if resuming else "Start chat")
-        connection_action.visible = not (visible is not None and active) and (
-            not follow_current or visible is not None)
+        ready = visible is not None and session_status == "ready" and not (model_pending or control_pending)
+        can_open_chat = connected and (visible is None or not visible.active)
+        send_button.set_enabled(stop_visible or not connecting and not sending and not uploading
+                                and (ready or can_open_chat))
         if snapshot is None and selected_chat is not None:
             archive_id = f"saved:{selected_chat.id}"
             if rendered_session != archive_id:
@@ -863,15 +865,17 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
         clear_error()
         connection_error.visible = False
         session = AGENTS.current(owner)
-        if session is not None and session.active:
+        if AGENTS.connection(owner) is not None:
+            connecting = True
             session_button.set_enabled(False)
             try:
                 await asyncio.to_thread(AGENTS.stop, owner)
             except Exception as exc:
-                connection_error.text = f"Could not stop the agent cleanly: {exc}"
+                connection_error.text = f"Could not disconnect the provider cleanly: {exc}"
                 connection_error.visible = True
             finally:
                 api_key.value = ""
+                connecting = False
                 refresh()
             return
         models = configured_models()
@@ -929,7 +933,8 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
             if argument and session is not None and session.active:
                 await asyncio.to_thread(session.set_model, argument)
             elif argument:
-                if argument not in configured_models():
+                provider = AGENTS.connection(owner)
+                if argument not in (provider.model_ids if provider else configured_models()):
                     raise ValueError("Choose a model configured under Agent connection in Settings.")
                 model_select.value = argument
             else:
@@ -937,15 +942,18 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
             return True
         if name in SLASH_CONTROLS:
             if session is None or not session.active:
-                raise RuntimeError("Start an Agent session first.")
+                raise RuntimeError("Send a message to open this chat before using the command.")
             await asyncio.to_thread(session.run_slash_control, name, argument)
             return True
         return False
 
     async def send():
-        nonlocal linked_run
+        nonlocal linked_run, selected_chat, follow_current, sending
+        if sending or connecting:
+            return
         clear_error()
         session = visible_session()
+        provider = AGENTS.connection(owner)
         try:
             if uploading:
                 raise RuntimeError("Wait for the attachments to finish uploading.")
@@ -955,15 +963,21 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
                     prompt.value = ""
                 refresh()
                 return
-            if session is None:
-                raise RuntimeError("Start an agent session first.")
+            sending = True
+            use_live = session is not None and session.active
+            if not use_live and provider is None:
+                raise RuntimeError("Connect a provider in Settings before sending a message.")
             paths = tuple(attached_paths)
+            if not message.strip() and not (paths or linked_run):
+                return
             image_paths = [path for path in paths if path.suffix.lower() in IMAGE_SUFFIXES and path.is_file()]
             if len(image_paths) > MAX_PROMPT_IMAGES:
                 raise ValueError(f"Attach up to {MAX_PROMPT_IMAGES} images per message.")
             if image_paths:
-                snapshot = session.snapshot()
-                if snapshot.get("model") not in snapshot.get("image_models", ()):
+                snapshot = session.snapshot() if use_live else None
+                active_model = snapshot.get("model") if snapshot else (model_select.value or provider.model)
+                image_capable = snapshot.get("image_models", ()) if snapshot else provider.image_models
+                if active_model not in image_capable:
                     raise ValueError("Select an image-capable model. Configure image support under Agent connection "
                                      "in Settings before starting the session.")
             run = registry.evidence_run(jobs, linked_run.id) if linked_run is not None else None
@@ -997,8 +1011,20 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
                 )
             if run:
                 prompt_options["linked_run"] = f"Linked run · {run.name} · {run.id}"
-            await asyncio.to_thread(session.prompt, message, model_context=model_context, attachments=references,
-                                    **prompt_options)
+            prompt_options.update(model_context=model_context, attachments=references)
+            if use_live:
+                await asyncio.to_thread(session.prompt, message, **prompt_options)
+            else:
+                resume = selected_chat or (session.chat if session is not None else None)
+                refresh()
+                started = await asyncio.to_thread(
+                    AGENTS.prompt_chat, owner, message,
+                    chat_id=resume.id if resume is not None else None,
+                    project_id=selected_project.id if selected_project is not None else None,
+                    model=model_select.value, **prompt_options)
+                selected_chat = started.chat
+                follow_current = False
+                refresh_history()
             if prompt.value == message:
                 prompt.value = ""
             for path in paths:
@@ -1010,7 +1036,9 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
                 refresh_attachments()
         except (OSError, RuntimeError, ValueError) as exc:
             show_error(exc)
-        refresh()
+        finally:
+            sending = False
+            refresh()
 
     async def abort():
         clear_error()
@@ -1035,7 +1063,6 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
         await attach_path("dir")
 
     session_button.on_click(toggle_session)
-    connect_chat.on_click(open_connection_settings)
     attach_file.on_click(browse_file)
     attach_folder.on_click(browse_folder)
     model.on_value_change(lambda _: refresh())

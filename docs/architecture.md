@@ -42,14 +42,16 @@ The Agent's ordinary shell and file tools run inside its own session. A reviewed
 | Queue, job ownership, status, reservations, checkpoints | `JobManager` | Current server process |
 | Saved form settings | NiceGUI storage in local mode, account `settings.json` in shared mode | Disk |
 | Scientific output, calibration, workflow export, approved Python record | Workspace and account analysis storage | Disk |
-| Model API key | Agent session and child environment | Session lifetime |
+| Model API key | Account connection in memory and active child environment | Until provider disconnect or server shutdown |
 
 A reconnect can reattach to live jobs or an Agent session in the same process.
-After a restart, open a saved chat in the Agent sidebar and resume it with your
-model connection. VMI loads the displayed transcript and starts Pi with the
-chat's saved context. Projects associate chats with working directories inside
-the workspace. A resumed chat uses the current account's mounts and requests
-fresh approval for any new panel proposal.
+Open a saved chat in the Agent sidebar and send a message to resume it. VMI
+loads the displayed transcript and starts Pi with the chat's saved context.
+Projects associate chats with working directories inside the workspace. The
+account's provider connection follows the user across chats. After a server
+restart, connect the provider again or start the GUI from the desktop client.
+A resumed chat uses the current account's mounts and requests fresh approval
+for any new panel proposal.
 
 Saved results and records also reopen from disk. A portable workflow restores
 form values. Save a Trig Calibration session separately to preserve rings,

@@ -56,3 +56,41 @@ class AgentHistoryTests(TestCase):
         with self.assertRaisesRegex(ValueError, "inside your workspace"):
             self.history.create_project("Outside", self.root)
         self.assertFalse(self.history.session_dir(chat).is_relative_to(self.workspace))
+
+    def test_one_connection_starts_and_resumes_chats_in_different_projects(self):
+        manager = AgentManager()
+        supplied_keys = []
+
+        def launch(session):
+            supplied_keys.append(session.request.api_key)
+            session.status = "ready"
+            return session
+
+        with patch.object(AgentSession, "start", autospec=True, side_effect=launch), patch.object(
+                AgentSession, "prompt", autospec=True):
+            initial = manager.start(self.request, shared_mode=True, history=self.history)
+            self.assertEqual(manager.connection("alice").api_key, "")
+            self.assertIsNone(manager.connection("bob"))
+            project_chat = manager.prompt_chat("alice", "Check the fit", project_id=self.project.id)
+            self.assertFalse(initial.active)
+            self.assertEqual(initial.request.api_key, "")
+            self.assertEqual(project_chat.request.working_directory, self.folder)
+            resumed = manager.prompt_chat("alice", "Continue", chat_id=initial.chat.id)
+            self.assertFalse(project_chat.active)
+            self.assertEqual(resumed.chat.id, initial.chat.id)
+            self.assertEqual(resumed.request.session_dir, initial.request.session_dir)
+            self.assertEqual(supplied_keys, [self.request.api_key] * 3)
+            manager.stop("alice")
+            self.assertIsNone(manager.connection("alice"))
+            with self.assertRaisesRegex(RuntimeError, "Connect a provider"):
+                manager.prompt_chat("alice", "Try again", chat_id=initial.chat.id)
+
+    def test_a_running_reply_keeps_its_chat_when_another_chat_sends(self):
+        manager = AgentManager()
+        with patch.object(AgentSession, "start", autospec=True, side_effect=lambda session: session):
+            current = manager.start(self.request, shared_mode=True, history=self.history)
+            current.status = "running"
+            with self.assertRaisesRegex(RuntimeError, "Finish or stop the reply"):
+                manager.prompt_chat("alice", "Start another chat", project_id=self.project.id)
+            self.assertIs(manager.current("alice"), current)
+            self.assertEqual(len(self.history.chats()), 1)
