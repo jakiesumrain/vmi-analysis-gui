@@ -365,22 +365,22 @@ def index() -> None:
                                 "vmi-sidebar-primary") as agent_entry:
                             ui.label("Agent").classes("vmi-sidebar-agent-label")
                             ui.icon("smart_toy").classes("vmi-sidebar-agent-icon").props('aria-hidden="true"')
+                        with ui.element("button").props(
+                            'type="button" aria-label="Agent actions" aria-expanded="true"'
+                        ).classes("vmi-sidebar-agent-disclosure") as agent_disclosure:
+                            ui.icon("expand_more").props('aria-hidden="true"')
+                    with ui.column().classes("vmi-sidebar-agent-actions w-full gap-0") as agent_actions:
+                        history_navigation = ui.column().classes("vmi-agent-history w-full gap-0")
                         if analysis_history_enabled:
-                            with ui.element("button").props(
-                                'type="button" aria-label="Agent actions" aria-expanded="true"'
-                            ).classes("vmi-sidebar-agent-disclosure") as agent_disclosure:
-                                ui.icon("expand_more").props('aria-hidden="true"')
-                    if analysis_history_enabled:
-                        with ui.column().classes("vmi-sidebar-agent-actions w-full gap-0") as agent_actions:
                             ui.button("Analysis runs", icon="folder_open", on_click=lambda: analysis_runs.open_history(MANAGER)) \
                                 .props('flat no-caps aria-label="Analysis runs"').tooltip("Analysis runs")
-                        agent_disclosure.props(f'aria-controls="c{agent_actions.id}"')
+                    agent_disclosure.props(f'aria-controls="c{agent_actions.id}"')
 
-                        def set_agent_actions_visible(visible):
-                            agent_actions.visible = visible
-                            agent_disclosure.props(f'aria-expanded="{str(visible).lower()}"')
+                    def set_agent_actions_visible(visible):
+                        agent_actions.visible = visible
+                        agent_disclosure.props(f'aria-expanded="{str(visible).lower()}"')
 
-                        agent_disclosure.on("click", lambda: set_agent_actions_visible(not agent_actions.visible))
+                    agent_disclosure.on("click", lambda: set_agent_actions_visible(not agent_actions.visible))
             with ui.element("details").classes("vmi-sidebar-disclosure vmi-sidebar-workbench").props(
                     'open data-workspace-group="Workbench"'):
                 with ui.element("summary").classes("vmi-sidebar-primary"):
@@ -431,7 +431,8 @@ def index() -> None:
                                 ask_agent = module.build(MANAGER, registry=PANEL_OPERATIONS,
                                                          navigate=navigate,
                                                          settings_dialog=settings_dialog,
-                                                         connection_settings=connection_settings)
+                                                         connection_settings=connection_settings,
+                                                         history_navigation=history_navigation)
                             elif module in (ion_tof, ion_live):
                                 module.build(MANAGER, ask_agent=handoff_to_agent)
                             else:
@@ -441,7 +442,7 @@ def index() -> None:
         tabs.bind_value(panels)
     if agent_entry is not None:
         def open_agent(event):
-            if analysis_history_enabled and not event.args:
+            if not event.args:
                 set_agent_actions_visible(panels.value != "Agent" or not agent_actions.visible)
             panels.value = "Agent"
 

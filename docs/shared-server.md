@@ -209,14 +209,22 @@ session** stops the container, removes its temporary configuration, and clears
 the server's remaining key copies. Process exit and server shutdown perform
 the same cleanup.
 
-Each account has at most one agent session. It survives a browser reload or
-disconnect so the user can sign back in and continue. The container can read
-`/datasets` and write only `/workspace`, which map to Shared datasets and My
-workspace. It runs without Linux capabilities, with a read-only root filesystem,
-a 1 GiB memory limit, and one CPU. Prompts, file excerpts, command output, and
-other context may be sent to the chosen model endpoint. Users should select an
-endpoint they trust with the data they ask the agent to inspect. The endpoint
-and model must be compatible with the selected API format. Connection settings
+Each account has at most one live Agent session. It survives a browser reload
+or disconnect. Choose **New project** in the sidebar to group chats by a folder
+inside **My workspace**, or **New chat** to work from the workspace root. Open
+a saved chat to read it. To continue after a stop or server restart, choose
+**Resume chat** and supply the Agent connection. Stop the current session
+before resuming another chat.
+
+Chat history can contain prompts, attachments, file excerpts, and tool results.
+The service stores it beside the account's workspace in `.agent-history`.
+The Agent container can write to `/workspace` and the selected chat's history
+mount. It reads shared data from `/datasets` and runs without Linux capabilities,
+with a read-only root filesystem, a 1 GiB memory limit, and one CPU. Prompts,
+file excerpts, command output, and other context may be sent to the chosen
+model endpoint. Users should select an endpoint they trust with the data they
+ask the agent to inspect. The endpoint and model must be compatible with the
+selected API format. Connection settings
 start collapsed. Assistant replies render as Markdown. In the instruction box,
 **Enter** sends the instruction and **Shift+Enter** inserts a new line.
 

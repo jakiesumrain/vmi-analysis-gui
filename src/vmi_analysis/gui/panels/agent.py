@@ -5,7 +5,7 @@ from base64 import b64encode
 from importlib.resources import files
 import json
 import os
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import re
 from uuid import uuid4
 
@@ -13,6 +13,7 @@ from nicegui import ui
 
 from vmi_analysis.agent_backend import (AGENTS, API_FORMATS, SLASH_CONTROLS, AgentRequest, ContainerLauncher,
                                         list_provider_models)
+from vmi_analysis.agent_history import conversation_title as _conversation_title
 from vmi_analysis.paths import GENERATED_DIR
 
 from .. import shared, theme
@@ -63,13 +64,6 @@ def _render_review_value(value):
         ui.label("None" if value is None or isinstance(value, (dict, list, tuple)) else str(value))
 
 
-def _conversation_title(entries):
-    for entry in entries:
-        if entry["kind"] == "user" and (title := " ".join(entry["text"].split())):
-            return title if len(title) <= 72 else title[:71].rstrip() + "…"
-    return "New chat"
-
-
 def _workflow_card(jobs, name, targets, navigate):
     view = JobView(jobs, job_name=name)
     with theme.panel_card() as card:
@@ -115,17 +109,22 @@ def _attachment_reference(value, *, container):
     raise ValueError("Choose an attachment inside the Agent workspace.")
 
 
-def build(jobs, *, registry, navigate, settings_dialog, connection_settings):
+def build(jobs, *, registry, navigate, settings_dialog, connection_settings, history_navigation):
     with ui.column().classes("vmi-agent-page w-full gap-0"):
         return _build_page(jobs, registry=registry, navigate=navigate, settings_dialog=settings_dialog,
-                           connection_settings=connection_settings)
+                           connection_settings=connection_settings, history_navigation=history_navigation)
 
 
-def _build_page(jobs, *, registry, navigate, settings_dialog, connection_settings):
+def _build_page(jobs, *, registry, navigate, settings_dialog, connection_settings, history_navigation):
     account = shared.current_account()
     owner = account.name if account else "local"
+    workspace = shared.workspace_root()
+    history = shared.agent_history(account)
     with ui.element("h1").classes("vmi-agent-header w-full"):
         title = ui.label(_conversation_title(()))
+    with ui.row().classes("vmi-agent-resume w-full items-center") as connection_action:
+        connect_chat = ui.button("Resume chat", icon="play_arrow").props("flat no-caps")
+    connection_action.visible = False
 
     with connection_settings, ui.column().classes("vmi-agent-connection w-full"):
         with field_grid():
@@ -226,8 +225,21 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
     updating_models = False
     stop_visible = False
     loading_models = False
+    connecting = False
     uploading = 0
     upload_note = ""
+    selected_chat = None
+    selected_project = None
+    follow_current = True
+    navigation_state = None
+    expanded_projects = set()
+
+    def visible_session():
+        session = AGENTS.current(owner)
+        if session is not None and (follow_current or (
+                selected_chat is not None and session.chat is not None and session.chat.id == selected_chat.id)):
+            return session
+        return None
 
     def configured_models():
         values = (model.value or "").split(",")
@@ -255,7 +267,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
         if event.value == MODEL_SETTINGS:
             open_connection_settings()
             refresh()
-        elif (session := AGENTS.current(owner)) is not None and session.active:
+        elif (session := visible_session()) is not None and session.active:
             return change_model(session, event.value)
 
     async def load_models():
@@ -375,7 +387,9 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
     async def attach_path(mode):
         clear_error()
         try:
-            selected = await LocalFilePicker(start=shared.workspace_root(), mode=mode)
+            session = visible_session()
+            folder = session.request.working_directory if session is not None else None
+            selected = await LocalFilePicker(start=folder or workspace, mode=mode)
             if selected:
                 add_attachment(selected)
         except (OSError, RuntimeError, ValueError) as exc:
@@ -400,7 +414,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
                 items = []
         elif kind == "/":
             commands = dict(SLASH_BUILTINS)
-            session = AGENTS.current(owner)
+            session = visible_session()
             if session is not None and session.active:
                 try:
                     for name, detail in await asyncio.to_thread(session.slash_commands):
@@ -463,7 +477,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
                 except (OSError, TypeError, ValueError) as exc:
                     ui.notify(str(exc), type="warning")
                     return
-            if AGENTS.current(owner) is not session or not session.take_panel_request(key):
+            if visible_session() is not session or not session.take_panel_request(key):
                 show_error("This approval request is no longer pending.")
                 return
             approval = None
@@ -494,7 +508,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
 
     async def refresh_panel():
         nonlocal approval, active_review
-        session = AGENTS.current(owner)
+        session = visible_session()
         pending = session.panel_request() if session else None
         if pending is None:
             if approval is not None:
@@ -629,11 +643,129 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
                 element = ui.label(entry["text"]).classes("vmi-caption")
         rendered.append((entry["kind"], element))
 
+    def select_conversation(chat=None, project=None):
+        nonlocal selected_chat, selected_project, follow_current, view_context, linked_run
+        if connecting or uploading:
+            show_error("Wait for the current connection or upload before switching chats.")
+            return
+        if approval is not None:
+            show_error("Approve or decline the current draft before switching chats.")
+            return
+        current = visible_session()
+        if view_context is not None and current is not None and current.running:
+            show_error("Wait for the current Workbench request before switching chats.")
+            return
+        follow_current = False
+        selected_chat = chat
+        selected_project = project
+        if project is not None:
+            expanded_projects.add(project.id)
+        view_context = None
+        linked_run = None
+        context_note.visible = False
+        attached_paths.clear()
+        prompt.value = ""
+        refresh_attachments()
+        clear_error()
+        navigate("Agent")
+        refresh()
+        refresh_history()
+
+    def select_saved(chat, project):
+        try:
+            select_conversation(chat, project)
+        except (OSError, ValueError) as exc:
+            show_error(exc)
+
+    def project_dialog():
+        with ui.dialog() as dialog, ui.card().classes("w-[28rem] max-w-[92vw]"):
+            ui.label("New project").classes("vmi-subtitle")
+            name = ui.input("Project name").props("outlined dense maxlength=80").classes("w-full")
+            folder = workspace
+            folder_label = ui.label("My workspace").classes("vmi-caption break-all")
+            issue = ui.label("").classes("vmi-agent-error").props('role="alert"')
+
+            async def choose_folder():
+                nonlocal folder
+                if chosen := await LocalFilePicker(start=folder, mode="dir"):
+                    candidate = Path(chosen).resolve()
+                    if not candidate.is_relative_to(workspace.resolve()):
+                        issue.text = "Choose a folder inside your workspace."
+                        return
+                    issue.text = ""
+                    folder = candidate
+                    folder_label.text = candidate.relative_to(workspace.resolve()).as_posix()
+
+            def save_project():
+                try:
+                    project = history.create_project(name.value or "", folder)
+                except (OSError, ValueError) as exc:
+                    issue.text = str(exc)
+                    return
+                dialog.close()
+                select_conversation(project=project)
+
+            ui.button("Choose workspace folder", icon="folder_open", on_click=choose_folder).props("flat no-caps")
+            with ui.row().classes("w-full justify-end"):
+                ui.button("Cancel", on_click=dialog.close).props("flat no-caps")
+                ui.button("Create project", on_click=save_project).props("unelevated no-caps")
+        dialog.open()
+
+    def refresh_history():
+        nonlocal navigation_state
+        projects = history.projects()
+        chats = history.chats()
+        current = visible_session()
+        selected = current.chat if current is not None else selected_chat
+        active_id = selected.id if selected is not None else None
+        state = (projects, chats, active_id)
+        if state == navigation_state:
+            return
+        if navigation_state is None and selected is not None and selected.project_id is not None:
+            expanded_projects.add(selected.project_id)
+        navigation_state = state
+        chat_groups = {}
+        for chat in chats:
+            chat_groups.setdefault(chat.project_id, []).append(chat)
+
+        def chat_button(chat, project=None):
+            button = ui.button(chat.title, on_click=lambda: select_saved(chat, project)) \
+                .props("flat dense no-caps").classes("vmi-agent-history-chat").tooltip(chat.title)
+            if chat.id == active_id:
+                button.props('aria-current="true"')
+
+        def remember_expansion(event, project_id):
+            if event.value:
+                expanded_projects.add(project_id)
+            else:
+                expanded_projects.discard(project_id)
+
+        history_navigation.clear()
+        with history_navigation:
+            ui.button("New chat", icon="add", on_click=select_conversation).props("flat dense no-caps")
+            for chat in chat_groups.get(None, ()):
+                chat_button(chat)
+            with ui.row().classes("vmi-agent-project-heading w-full no-wrap items-center justify-between"):
+                ui.label("Projects").classes("vmi-caption")
+                ui.button(icon="create_new_folder", on_click=project_dialog).props(
+                    'flat dense round aria-label="New project"').tooltip("New project")
+            for project in projects:
+                with ui.expansion(project.name, icon="folder_open", value=project.id in expanded_projects,
+                                  on_value_change=lambda event, key=project.id: remember_expansion(event, key)) \
+                        .props("dense").classes("vmi-agent-project w-full"):
+                    ui.button("New project chat", icon="add",
+                              on_click=lambda project=project: select_conversation(project=project)) \
+                        .props("flat dense no-caps")
+                    for chat in chat_groups.get(project.id, ()):
+                        chat_button(chat, project)
+
     def refresh():
         nonlocal diagnostics_cursor, stop_visible
         session = AGENTS.current(owner)
-        snapshot = session.snapshot() if session is not None else None
-        session_status = snapshot["status"] if snapshot else "idle"
+        visible = visible_session()
+        live_snapshot = session.snapshot() if session is not None else None
+        snapshot = live_snapshot if visible is session else (visible.snapshot() if visible else None)
+        session_status = live_snapshot["status"] if live_snapshot else "idle"
         waiting_for_approval = session_status == "running" and approval is not None
         model_pending = bool(snapshot and snapshot.get("model_pending"))
         control_pending = bool(snapshot and snapshot.get("control_pending"))
@@ -647,15 +779,16 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
         elif session_status == "running":
             activity_text = "Waiting for approval…" if waiting_for_approval else "Working"
         activity_label.text = activity_text
-        activity_row.visible = bool(activity_text)
+        activity_row.visible = visible is not None and bool(activity_text)
         activity_spinner.visible = model_pending or (
             session_status in ("starting", "running", "stopping") and not waiting_for_approval)
         active = session_status in ("starting", "ready", "running", "stopping")
+        resuming = selected_chat is not None or (visible is not None and visible.chat is not None)
         session_button.text = ("Starting…" if session_status == "starting" else
                                "Stopping…" if session_status == "stopping" else
-                               "Stop session" if active else "Start session")
+                               "Stop session" if active else "Resume chat" if resuming else "Start session")
         session_button.props("color=negative" if active else "color=primary")
-        session_button.set_enabled(not loading_models and session_status not in ("starting", "stopping"))
+        session_button.set_enabled(not connecting and not loading_models and session_status not in ("starting", "stopping"))
         load_models_button.set_enabled(not active and not loading_models
                                        and api.value in ("openai-completions", "openai-responses"))
         for field in (base_url, model, api, api_key, image_models):
@@ -663,8 +796,8 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
         available = {name: name for name in configured_models()}
         if available != image_models.options:
             image_models.set_options(available, value=[value for value in image_models.value or [] if value in available])
-        update_models(snapshot, active, session_status)
-        stop_visible = session_status == "running"
+        update_models(live_snapshot, active, session_status)
+        stop_visible = visible is not None and session_status == "running"
         if stop_visible:
             send_button.props('icon=stop aria-label="Stop reply"')
             send_button.classes(add="vmi-agent-stop")
@@ -672,17 +805,39 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
             send_button.props('icon=arrow_upward aria-label="Send"')
             send_button.classes(remove="vmi-agent-stop")
         send_tooltip.text = "Stop reply" if stop_visible else "Send (Enter)"
-        send_button.set_enabled(stop_visible or not uploading and session_status == "ready"
+        send_button.set_enabled(stop_visible or visible is not None and not uploading and session_status == "ready"
                                 and not (model_pending or control_pending))
+        connect_chat.text = ("Manage active session" if active and visible is None else
+                             "Resume chat" if resuming else "Start chat")
+        connection_action.visible = not (visible is not None and active) and (
+            not follow_current or visible is not None)
+        if snapshot is None and selected_chat is not None:
+            archive_id = f"saved:{selected_chat.id}"
+            if rendered_session != archive_id:
+                reset_transcript(archive_id)
+                try:
+                    selected = history.chat(selected_chat.id)
+                    entries = history.entries(selected)
+                except (OSError, ValueError) as exc:
+                    show_error(exc)
+                    entries = []
+                    selected = selected_chat
+                title.text = selected.title
+                empty_state.visible = not entries
+                for entry in entries:
+                    add_entry(entry)
+            return
         if snapshot is None:
-            title.text = _conversation_title(())
+            title.text = selected_project.name if selected_project is not None else _conversation_title(())
             if rendered_session is not None:
                 reset_transcript(None)
             return
         transcript_id = snapshot.get("transcript_id", snapshot["id"])
         if transcript_id != rendered_session:
             reset_transcript(transcript_id)
-        title.text = _conversation_title(snapshot["entries"])
+        chat = visible.chat
+        title.text = (chat.title if chat is not None and chat.title != "New chat" else
+                      _conversation_title(snapshot["entries"]))
         empty_state.visible = not snapshot["entries"]
         for index, entry in enumerate(snapshot["entries"]):
             if index >= len(rendered):
@@ -704,6 +859,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
             diagnostics_cursor += 1
 
     async def toggle_session():
+        nonlocal selected_chat, follow_current, connecting
         clear_error()
         connection_error.visible = False
         session = AGENTS.current(owner)
@@ -733,9 +889,16 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
             api_key=api_key.value or "",
             api=api.value,
         )
+        connecting = True
         session_button.set_enabled(False)
         try:
-            await asyncio.to_thread(AGENTS.start, request, shared_mode=shared.SERVER is not None)
+            resume = selected_chat or (session.chat if session is not None and follow_current else None)
+            started = await asyncio.to_thread(
+                AGENTS.start, request, shared_mode=shared.SERVER is not None, history=history,
+                chat_id=resume.id if resume is not None else None,
+                project_id=selected_project.id if selected_project is not None else None)
+            selected_chat = started.chat
+            follow_current = False
             api_key.value = ""
             clear_error()
         except (OSError, RuntimeError, ValueError) as exc:
@@ -743,7 +906,9 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
             connection_error.text = f"Could not start the session: {exc}"
             connection_error.visible = True
         finally:
+            connecting = False
             refresh()
+            refresh_history()
 
     async def run_slash(message, session):
         token, _, argument = message.strip().partition(" ")
@@ -751,6 +916,14 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
         argument = argument.strip()
         if name == "settings":
             open_connection_settings()
+            return True
+        if name == "new":
+            if argument:
+                raise ValueError("/new takes no argument.")
+            current = visible_session()
+            chat = current.chat if current is not None else selected_chat
+            project = history.project(chat.project_id) if chat and chat.project_id else selected_project
+            select_conversation(project=project)
             return True
         if name == "model":
             if argument and session is not None and session.active:
@@ -772,7 +945,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
     async def send():
         nonlocal linked_run
         clear_error()
-        session = AGENTS.current(owner)
+        session = visible_session()
         try:
             if uploading:
                 raise RuntimeError("Wait for the attachments to finish uploading.")
@@ -841,7 +1014,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
 
     async def abort():
         clear_error()
-        session = AGENTS.current(owner)
+        session = visible_session()
         try:
             if session is not None:
                 await asyncio.to_thread(session.abort)
@@ -862,6 +1035,7 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
         await attach_path("dir")
 
     session_button.on_click(toggle_session)
+    connect_chat.on_click(open_connection_settings)
     attach_file.on_click(browse_file)
     attach_folder.on_click(browse_folder)
     model.on_value_change(lambda _: refresh())
@@ -879,6 +1053,8 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
     ui.context.client.on_connect(lambda: ui.run_javascript(AGENT_CHAT_JS.read_text(encoding="utf-8")))
     reset_transcript(None)
     refresh()
+    refresh_history()
     shared.workspace_timer(0.4, refresh)
     shared.workspace_timer(0.4, refresh_panel)
+    shared.workspace_timer(2.0, refresh_history)
     return open_view_context

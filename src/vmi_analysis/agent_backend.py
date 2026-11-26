@@ -51,6 +51,8 @@ class AgentRequest:
     additional_models: tuple[str, ...] = ()
     image_models: tuple[str, ...] = ()
     analysis: Path | None = None
+    session_dir: Path | None = None
+    working_directory: Path | None = None
 
     @property
     def model_ids(self) -> tuple[str, ...]:
@@ -157,8 +159,9 @@ def write_models_config(config_dir: Path, request: AgentRequest) -> Path:
     return path
 
 
-def agent_arguments(model: str, extension: str) -> list[str]:
-    return ["--mode", "rpc", "--no-session", "--no-extensions", "--extension", extension,
+def agent_arguments(model: str, extension: str, session_dir=None) -> list[str]:
+    storage = ["--no-session"] if session_dir is None else ["--session-dir", str(session_dir), "--continue"]
+    return ["--mode", "rpc", *storage, "--no-extensions", "--extension", extension,
             "--provider", PROVIDER, "--model", model]
 
 
@@ -184,8 +187,8 @@ class SubprocessLauncher:
         env["PI_CODING_AGENT_DIR"] = str(config_dir)
         try:
             return subprocess.Popen(
-                [executable, *agent_arguments(request.model, str(PANEL_EXTENSION))],
-                cwd=request.workspace,
+                [executable, *agent_arguments(request.model, str(PANEL_EXTENSION), request.session_dir)],
+                cwd=request.working_directory or request.workspace,
                 env=env,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -232,18 +235,26 @@ class ContainerLauncher:
             command.extend(["--volume", f"{request.datasets}:/datasets:ro"])
         if request.analysis is not None:
             command.extend(["--volume", f"{request.analysis}:/analysis:ro"])
+        if request.session_dir is not None:
+            command.extend(["--volume", f"{request.session_dir}:/history:rw"])
         if rootless and Path(self.runtime).stem == "podman":
             command.append("--userns=keep-id")
         elif not rootless and sys.platform != "win32" and hasattr(os, "getuid"):
             command.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
+        workdir = "/workspace"
+        if request.working_directory is not None and request.working_directory != request.workspace:
+            workdir += "/" + request.working_directory.relative_to(request.workspace).as_posix()
         command.extend([
-            "--workdir", "/workspace",
+            "--workdir", workdir,
             self.image,
-            *agent_arguments(request.model, "/opt/vmi-agent/src/vmi_analysis/gui/assets/agent_panels.js"),
+            *agent_arguments(request.model, "/agent/agent_panels.js",
+                             "/history" if request.session_dir is not None else None),
         ])
         return command
 
     def launch(self, request: AgentRequest, config_dir: Path, session_id: str) -> subprocess.Popen:
+        # Keep the extension and its history redaction in sync with the server.
+        (config_dir / "agent_panels.js").write_bytes(PANEL_EXTENSION.read_bytes())
         env = os.environ.copy()
         env["VMI_AGENT_API_KEY"] = request.api_key
         try:
@@ -312,7 +323,7 @@ def terminate_process_tree(process: subprocess.Popen) -> None:
 
 
 class AgentSession:
-    def __init__(self, request: AgentRequest, launcher, *, clock=time.monotonic):
+    def __init__(self, request: AgentRequest, launcher, *, clock=time.monotonic, history=None, chat=None):
         validate_request(request)
         self.id = uuid.uuid4().hex
         self.request = request
@@ -321,7 +332,9 @@ class AgentSession:
         self.status = "starting"
         self.error = ""
         self.created = time.time()
-        self.entries = deque(maxlen=1000)
+        self.history = history
+        self.chat = chat
+        self.entries = deque(history.entries(chat) if chat is not None else (), maxlen=1000)
         self.diagnostics = deque(maxlen=500)
         self.process: subprocess.Popen | None = None
         self.config_dir = request.config_root / self.id
@@ -404,7 +417,8 @@ class AgentSession:
                     or len(self.entries) == self.entries.maxlen):
                 self.entries.append({"kind": "assistant", "text": "", "detail": ""})
                 self._assistant_index = len(self.entries) - 1
-            self.entries[self._assistant_index]["text"] += self._redact(delta)
+            entry = self.entries[self._assistant_index]
+            entry["text"] = self._redact(entry["text"] + delta)
 
     def slash_commands(self):
         with self._lock:
@@ -416,6 +430,8 @@ class AgentSession:
             return self._commands
 
     def run_slash_control(self, name: str, argument: str):
+        if name == "new" and self.chat is not None:
+            raise ValueError("Use New chat in the sidebar to keep this conversation in history.")
         command, _ = SLASH_CONTROLS[name]
         payload = {"type": command}
         if argument:
@@ -468,7 +484,7 @@ class AgentSession:
         if attachments:
             context += ("\n\n[Files and folders selected by the user. These paths are available to the Agent.]\n"
                         + json.dumps(attachments, ensure_ascii=False))
-        command = {"type": "prompt", "message": message + context}
+        command = {"type": "prompt", "message": self._redact(message + context)}
         if images:
             command["images"] = images
         with self._lock:
@@ -620,6 +636,7 @@ class AgentSession:
                 self._panel_requests.clear()
                 self._active_tools.clear()
                 self._activity = ""
+                self._save_transcript()
                 if not self._stop_requested.is_set():
                     self.status = "ready"
             self._assistant_index = None
@@ -708,6 +725,16 @@ class AgentSession:
             if self._finalized:
                 self._discard_credentials()
 
+    def _save_transcript(self):
+        if self.chat is None:
+            return
+        try:
+            entries = [dict(entry, text=self._redact(entry["text"]), detail=self._redact(entry["detail"]))
+                       for entry in self.entries]
+            self.chat = self.history.save_entries(self.chat, entries)
+        except OSError:
+            self._append("error", "Could not save the Agent transcript.")
+
     def _finalize(self, status: str, error: str = "") -> None:
         with self._lock:
             if self._finalized:
@@ -720,6 +747,7 @@ class AgentSession:
             self._panel_requests.clear()
             self.error = self._redact(error)
             self._assistant_index = None
+            self._save_transcript()
         if error:
             self._append("error", error)
         if self._stderr_done.is_set():
@@ -813,15 +841,25 @@ class AgentManager:
             return ContainerLauncher()
         return SubprocessLauncher()
 
-    def start(self, request: AgentRequest, *, shared_mode: bool) -> AgentSession:
+    def start(self, request: AgentRequest, *, shared_mode: bool,
+              history=None, chat_id=None, project_id=None) -> AgentSession:
         validate_request(request)
-        session = AgentSession(request, self._launcher(shared_mode))
         with self._lock:
             if self._stopping:
                 raise RuntimeError("The server is shutting down.")
             current = self._sessions.get(request.owner)
             if current is not None and current.active:
                 raise RuntimeError("Stop the current agent session before starting another.")
+            chat = None
+            if history is not None:
+                if history.workspace != request.workspace.resolve():
+                    raise ValueError("Agent history belongs to a different workspace.")
+                chat = history.chat(chat_id) if chat_id is not None else history.create_chat(project_id)
+                directory = history.session_dir(chat)
+                directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+                request = replace(request, workspace=history.workspace, session_dir=directory,
+                                  working_directory=history.project_folder(chat.project_id))
+            session = AgentSession(request, self._launcher(shared_mode), history=history, chat=chat)
             self._sessions[request.owner] = session
         try:
             session.start()

@@ -37,13 +37,23 @@ The Agent's ordinary shell and file tools run inside its own session. A reviewed
 | State | Owner | Lifetime |
 | --- | --- | --- |
 | Active view, plot selection, contextual Agent request | Browser tab and its server-side view | Current view session |
-| Agent session, transcript, pending proposals | `AgentManager` / `AgentSession` | Current server process, with bounded history |
+| Live Agent process and pending proposals | `AgentManager` / `AgentSession` | Current server process |
+| Agent projects, saved chats, Pi context | `AgentHistory` and Pi | Account-local disk |
 | Queue, job ownership, status, reservations, checkpoints | `JobManager` | Current server process |
 | Saved form settings | NiceGUI storage in local mode, account `settings.json` in shared mode | Disk |
 | Scientific output, calibration, workflow export, approved Python record | Workspace and account analysis storage | Disk |
 | Model API key | Agent session and child environment | Session lifetime |
 
-A reconnect can reattach to live jobs or an Agent session in the same process. After a restart, reopen saved results and records from disk. A portable workflow restores form values. Save a Trig Calibration session separately to preserve rings, masks, and fits.
+A reconnect can reattach to live jobs or an Agent session in the same process.
+After a restart, open a saved chat in the Agent sidebar and resume it with your
+model connection. VMI loads the displayed transcript and starts Pi with the
+chat's saved context. Projects associate chats with working directories inside
+the workspace. A resumed chat uses the current account's mounts and requests
+fresh approval for any new panel proposal.
+
+Saved results and records also reopen from disk. A portable workflow restores
+form values. Save a Trig Calibration session separately to preserve rings,
+masks, and fits.
 
 `vmi_analysis.paths` resolves the workspace. A checkout defaults to the repository root and an installed copy uses its startup directory. `VMI_WORKSPACE_DIR` overrides the default. Local generated previews live under `.cache/vmi-analysis/` by default. In shared mode the account supplies the workspace and cache roots. `centroiding/options.py` owns its option defaults and CLI serialization. `gui/settings.py` owns GUI persistence and read-only migration from older settings.
 
@@ -55,7 +65,7 @@ A reconnect can reattach to live jobs or an Agent session in the same process. A
 | Manual-only shared | Host process under the shared Linux service account | Disabled | Disabled |
 | Sandboxed shared | Bubblewrap per subprocess, including workflow stages | Docker or Podman per active account session | A fresh Docker or Podman worker per run |
 
-A shared server authenticates HTTP and Socket.IO requests, scopes the queue to the account, and binds to loopback. Shared panel jobs in Bubblewrap see the account's writable workspace, read-only shared datasets and analysis records, and the required runtime files. The Agent container has a writable workspace and read-only input mounts. The reviewed Python container has read-only inputs and a writable run-output folder, with networking disabled. Browser file downloads use protected file handles. See the [deployment guide](shared-server.md#security-boundary).
+A shared server authenticates HTTP and Socket.IO requests, scopes the queue to the account, and binds to loopback. Shared panel jobs in Bubblewrap see the account's writable workspace, read-only shared datasets and analysis records, and the required runtime files. The Agent container has a writable workspace, a writable history mount for its current chat, and read-only input mounts. The reviewed Python container has read-only inputs and a writable run-output folder, with networking disabled. Browser file downloads use protected file handles. See the [deployment guide](shared-server.md#security-boundary).
 
 Manual-only shared mode keeps application-level path checks and ownership. All panel jobs inherit the service account's permissions, so cross-account reads and writes remain possible. Linux permissions still govern access to host files and shared datasets. The [manual-only setup](shared-server.md#manual-only-shared-mode) explains the required trust and service-account setup.
 
