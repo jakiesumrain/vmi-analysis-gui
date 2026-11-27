@@ -20,6 +20,8 @@ class PanelOperation:
     workflow_panels: tuple[str, ...] = ()
     measure_result: Callable[[object, Job, dict], dict] | None = None
     render_review: Callable[[Job], None] | None = None
+    # Additional proposal schemas can share an existing job's status and review.
+    proposal_job_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,8 @@ class PanelRegistry:
         if operation.id in self._operations or any(
                 name in self._job_operations for name in operation.job_names):
             raise ValueError(f"Duplicate panel operation or job name for {operation.id}.")
+        if any(name not in self._job_operations for name in operation.proposal_job_names):
+            raise ValueError(f"Register the job before adding proposals for {operation.id}.")
         self._operations[operation.id] = operation
         self._job_operations.update(dict.fromkeys(operation.job_names, operation))
 
@@ -116,7 +120,7 @@ class PanelRegistry:
         if spec.prepare is None:
             raise ValueError("Open the panel's Ask Agent control to propose this operation.")
         job, summary = spec.prepare(jobs, params, **options)
-        if job.name not in spec.job_names:
+        if job.name not in spec.job_names and job.name not in spec.proposal_job_names:
             raise ValueError(f"Job {job.name} is not registered for {operation}.")
         for key in spec.outputs:
             if key in job.extra:

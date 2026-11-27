@@ -26,9 +26,14 @@ from __future__ import annotations
 import os
 import sys
 import glob
+from itertools import groupby, islice
+from operator import itemgetter
+from pathlib import Path
 from random import randrange
+from tempfile import TemporaryDirectory
 import pandas as pd
 import numpy as np
+from vmi_analysis.centroiding.frame_roster import FAILED, PROCESSED, ROSTER, SKIPPED, write_frame_roster
 from vmi_analysis.imaging.centering import brightest_pixel
 from vmi_analysis.paths import CENTROID_DIR
 
@@ -332,7 +337,7 @@ def _camera_info():
         'Qe': CAMERA_QE,
     }
 
-def _run_picasso_batch(movie, box_size, min_net_gradient):
+def _run_picasso_batch(movie, box_size, min_net_gradient, *, strict=False):
     """Run identify + fit on a multi-frame movie in one batch call.
 
     Fitting method (controlled by config fitting_method):
@@ -351,34 +356,24 @@ def _run_picasso_batch(movie, box_size, min_net_gradient):
         # picassosr >= 0.11 returns (locs, info) by default (return_info=True)
         if isinstance(ids, tuple):
             ids = ids[0]
-    except Exception:
-        return None
-    if len(ids) == 0:
-        return None
-
-    # 2. Extract spot patches + convert to photons
-    try:
+        if len(ids) == 0:
+            return None
+        # Extract spot patches and convert to photons.
         spots = localize.get_spots(movie, ids, box_size, _camera_info())
-    except Exception:
-        return None
-
-    # 3. Fitting (LQ or MLE)
-    if FITTING_METHOD == "lq":
-        try:
+        if FITTING_METHOD == "lq":
             theta = gausslq.fit_spots(spots)
             locs = gausslq.locs_from_fits(ids, theta, box_size, em=False)
-        except Exception:
-            return None
-    else:
-        try:
+        else:
             theta, CRLBs, likelihoods, iterations = gaussmle.gaussmle(
                 spots, MLE_CONVERGENCE, MLE_MAX_ITERATIONS, method=MLE_METHOD
             )
             locs = gaussmle.locs_from_fits(
                 ids, theta, CRLBs, likelihoods, iterations, box_size
             )
-        except Exception:
-            return None
+    except Exception:
+        if strict:
+            raise
+        return None
 
     # 4. Filter degenerate fits (sx or sy near zero -- failed convergence)
     #    (LQ is less prone to this, but guard anyway)
@@ -443,50 +438,38 @@ def process_h5_file_batch(args):
                box_size, min_net_gradient)
 
     Returns:
-        DataFrame with all detections from this file, or None.
+        Processing outcome and a DataFrame of detections, if any.
     """
     h5_path, base_frame_idx, stop, dark_frame, flat_field_normalized, box_size, min_net_gradient = args
 
     try:
         with h5py.File(h5_path, 'r') as hf:
             data = hf[H5_DATASET][:stop]  # (N, H, W) uint16
-    except Exception as e:
-        if FRAME_LIMIT:
-            raise
-        print(f"[Warning] Failed to read {h5_path}: {e}")
-        return None
-
-    # --- Apply corrections to ALL frames at once (vectorized where possible) ---
-    if dark_frame is not None:
-        # Single vectorized subtraction: (N, H, W) - (H, W) broadcasts
-        corrected = data.astype(np.float64) - dark_frame
-    else:
+        if len(data) != stop:
+            raise ValueError(f"Expected {stop} frames, read {len(data)}")
         corrected = data.astype(np.float64)
-        if ENABLE_MEDIAN_SUBTRACTION:
+        if dark_frame is not None:
+            corrected -= dark_frame
+        elif ENABLE_MEDIAN_SUBTRACTION:
             for frame in corrected:
                 _, median_bkg, _ = sigma_clipped_stats(frame, sigma=3.0)
                 frame -= median_bkg
+        if flat_field_normalized is not None:
+            corrected = corrected / flat_field_normalized
 
-    if flat_field_normalized is not None:
-        corrected = corrected / flat_field_normalized
-
-    # Pass directly as float64 — Picasso converts to float32 internally.
-    # No clamping: preserving negative values gives correct zero-centered
-    # background statistics for the MLE/LQ fit.
-    # No uint16 round-trip: removes unnecessary precision loss.
-    locs = _run_picasso_batch(corrected, box_size, min_net_gradient)
-    if locs is None or len(locs) == 0:
-        return None
-
-    # --- Convert to trackpy format with global frame numbers ---
-    features = _batch_to_trackpy(locs, base_frame_idx)
-    return features
+        # Keep negative values for zero-centered fitted background statistics.
+        locs = _run_picasso_batch(corrected, box_size, min_net_gradient, strict=True)
+        features = _batch_to_trackpy(locs, base_frame_idx)
+    except Exception as e:
+        print(f"[Warning] Failed to process {h5_path}: {e}")
+        return FAILED, None
+    return PROCESSED, features
 
 # ==============================================================================
 # BATCH PROCESSING (HDF5 files)
 # ==============================================================================
 
-def run_batch_processing_picasso(h5_files, total_frames, dark_frame, flat_field_normalized):
+def run_batch_processing_picasso(frame_info, total_frames, dark_frame, flat_field_normalized):
     """Run Picasso localization, one HDF5 file per task (batch mode).
 
     Streams per-file results directly to an HDF5 checkpoint to avoid holding
@@ -495,7 +478,7 @@ def run_batch_processing_picasso(h5_files, total_frames, dark_frame, flat_field_
     (#files × per-file result) + concatenated copy.
 
     Args:
-        h5_files: sorted list of HDF5 file paths
+        frame_info: acquisition-order (source file, frame within file) pairs
         total_frames: number of leading frames to process
         dark_frame: dark frame array or None
         flat_field_normalized: flat field array or None
@@ -513,60 +496,64 @@ def run_batch_processing_picasso(h5_files, total_frames, dark_frame, flat_field_
     # Build batch arguments -- one per HDF5 file
     h5_batch_args = []
     idx = 0
-    for h5_path in h5_files:
-        if idx >= total_frames:
-            break
-        with h5py.File(h5_path, 'r') as hf:
-            n = hf[H5_DATASET].shape[0]
-        if n:
-            stop = min(n, total_frames - idx)
-            h5_batch_args.append((h5_path, idx, stop, dark_frame, flat_field_normalized,
-                                  BOX_SIZE, MIN_NET_GRADIENT))
-        idx += n
+    for h5_path, frames in groupby(islice(frame_info, total_frames), key=itemgetter(0)):
+        stop = sum(1 for _ in frames)
+        h5_batch_args.append((h5_path, idx, stop, dark_frame, flat_field_normalized,
+                              BOX_SIZE, MIN_NET_GRADIENT))
+        idx += stop
 
     n_files = len(h5_batch_args)
     print(f"[Batch] Processing {n_files} HDF5 files ({total_frames} frames) "
           f"with Picasso batch mode (MLE + Net Gradient)...")
 
-    checkpoint_path = os.path.join(OUTPUT_DIR, CHECKPOINT_FILE)
-    if os.path.exists(checkpoint_path):
-        os.remove(checkpoint_path)
+    checkpoint_path = Path(OUTPUT_DIR) / CHECKPOINT_FILE
 
     # Stream results directly to HDF5 — never accumulate a list of DataFrames.
     # Each per-file result is freed as soon as it's written to disk.
     n_total = 0
     files_with_detections = 0
+    outcomes = np.full(len(frame_info), SKIPPED, dtype=np.uint8)
 
-    with pd.HDFStore(checkpoint_path, mode='w', complevel=1) as store:
-        store.get_node("/")._v_attrs.background_subtraction = _background_mode(dark_frame)
-        if FRAME_LIMIT:
-            store.get_node("/")._v_attrs.frame_limit = FRAME_LIMIT
-        if ENABLE_PARALLEL:
-            with Pool(min(n_cores, n_files)) as pool:
-                for result in tqdm(
-                    pool.imap(process_h5_file_batch, h5_batch_args),
-                    total=n_files,
-                    desc="Processing HDF5 files",
-                ):
-                    if result is not None:
-                        store.append("localizations", result, index=False)
-                        n_total += len(result)
-                        files_with_detections += 1
-        else:
-            for args in tqdm(h5_batch_args):
-                result = process_h5_file_batch(args)
-                if result is not None:
-                    store.append("localizations", result, index=False)
-                    n_total += len(result)
-                    files_with_detections += 1
-        if FRAME_LIMIT and n_total:
-            store.get_node("/")._v_attrs.limited_frames_processed = total_frames
+    def save_results(store, results):
+        nonlocal n_total, files_with_detections
+        for args, (status, result) in zip(h5_batch_args, results, strict=True):
+            first, count = args[1:3]
+            outcomes[first:first + count] = status
+            if result is not None:
+                store.append("localizations", result, index=False)
+                n_total += len(result)
+                files_with_detections += 1
 
-    if n_total == 0:
-        print("[ERROR] No events detected!")
-        sys.exit(1)
+    with TemporaryDirectory(dir=checkpoint_path.parent, prefix=".centroiding-") as directory:
+        staged = Path(directory) / "checkpoint.h5"
+        with pd.HDFStore(staged, mode="w", complevel=1) as store:
+            attrs = store.root._v_attrs
+            attrs.background_subtraction = _background_mode(dark_frame)
+            if FRAME_LIMIT:
+                attrs.frame_limit = FRAME_LIMIT
+            if ENABLE_PARALLEL:
+                with Pool(min(n_cores, n_files)) as pool:
+                    save_results(store, tqdm(pool.imap(process_h5_file_batch, h5_batch_args),
+                                             total=n_files, desc="Processing HDF5 files"))
+            else:
+                save_results(store, map(process_h5_file_batch, tqdm(h5_batch_args)))
+            if FRAME_LIMIT:
+                attrs.limited_frames_attempted = total_frames
+                attrs.limited_frames_processed = int(np.count_nonzero(outcomes == PROCESSED))
+            if not n_total:
+                # An empty append does not create a PyTables table. Keep the
+                # existing table schema available for downstream raw readers.
+                columns = ("x", "y", "mass", "size", "ecc", "signal", "frame", "net_gradient")
+                seed = pd.DataFrame({key: np.zeros(1, dtype=np.uint32 if key == "frame" else np.float32)
+                                     for key in columns})
+                store.append("localizations", seed, index=False)
+                store.remove("localizations", start=0, stop=1)
+        with h5py.File(staged, "r+") as checkpoint:
+            write_frame_roster(checkpoint, frame_info, outcomes)
+        staged.replace(checkpoint_path)
 
     print(f"[Batch] Total detections: {n_total} events")
+    print(f"[Batch] Failed frames: {np.count_nonzero(outcomes == FAILED)}")
     print(f"[Batch] Events/frame: {n_total / total_frames:.1f} avg")
     print(f"[Batch] Files with detections: {files_with_detections}/{n_files}")
 
@@ -832,6 +819,8 @@ def plot_final_summary(vmi_2d, vmi_3d, n_events, n_frames, energy=None, pes=None
 
     def _mesh_axes(ax, data, title):
         vmax = data.max()
+        if not np.isfinite(vmax) or vmax <= 0:
+            vmax = 1.0
         # 1D edge arrays shifted by -0.5 so pixel centers land on integer indices
         im = ax.pcolormesh(np.arange(data.shape[1] + 1) - 0.5,
                            np.arange(data.shape[0] + 1) - 0.5,
@@ -847,7 +836,7 @@ def plot_final_summary(vmi_2d, vmi_3d, n_events, n_frames, energy=None, pes=None
 
     ax1 = plt.subplot(2, 2, 1)
     # Use the same geometry as the Abel transform when displaying both images.
-    raw_disp = center_and_rotate(vmi_2d, verbose=False) if abel_available else vmi_2d
+    raw_disp = center_and_rotate(vmi_2d, verbose=False) if abel_available and n_events else vmi_2d
     save_plot_data(os.path.join(OUTPUT_DIR, SUMMARY_DATA), {
         "n_events": int(n_events), "n_frames": int(n_frames),
         "box_size": BOX_SIZE, "min_net_gradient": MIN_NET_GRADIENT,
@@ -1076,7 +1065,7 @@ def main():
     print("=" * 80)
 
     dark_frame = load_dark_frame() if ENABLE_DARK_SUBTRACTION else None
-    h5_files, frame_info, img_shape, n_total_frames = load_frames_and_metadata()
+    _, frame_info, img_shape, n_total_frames = load_frames_and_metadata()
     if dark_frame is not None and dark_frame.shape != img_shape:
         raise SystemExit(f"[Dark] Dark frame shape {dark_frame.shape} does not match camera frame shape {img_shape}.")
     create_output_dir()
@@ -1113,7 +1102,8 @@ def main():
     if os.path.exists(checkpoint_path):
         with h5py.File(checkpoint_path, "r") as checkpoint:
             saved_limit = checkpoint.attrs.get("frame_limit", 0)
-            saved_frames = checkpoint.attrs.get("limited_frames_processed")
+            saved_frames = checkpoint.attrs.get("limited_frames_attempted",
+                                                checkpoint.attrs.get("limited_frames_processed"))
             saved_background = checkpoint.attrs.get("background_subtraction")
         if isinstance(saved_background, bytes):
             saved_background = saved_background.decode("utf-8")
@@ -1126,8 +1116,11 @@ def main():
                              "filename or clear the existing checkpoint.")
         print(f"\n[Resume] Found checkpoint: {checkpoint_path}")
     else:
-        run_batch_processing_picasso(h5_files, total_frames, dark_frame,
+        run_batch_processing_picasso(frame_info, total_frames, dark_frame,
                                      flat_field_normalized)
+    with h5py.File(checkpoint_path, "r") as checkpoint:
+        if ROSTER in checkpoint and not np.any(checkpoint[f"{ROSTER}/status"][:] == PROCESSED):
+            raise SystemExit("[Error] No camera frames were successfully processed.")
     # The checkpoint exists on disk — downstream steps read it in chunks.
 
     # ========================================================================
@@ -1171,7 +1164,7 @@ def main():
     )
 
     # Abel transform
-    vmi_3d, energy, pes = perform_abel_transform(vmi_2d)
+    vmi_3d, energy, pes = perform_abel_transform(vmi_2d) if n_events else (None, None, None)
 
     # Save results
     save_results(vmi_2d, vmi_3d)
