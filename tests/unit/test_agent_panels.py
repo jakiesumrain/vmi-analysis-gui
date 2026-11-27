@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 
 import h5py
 import numpy as np
+import pandas as pd
 from nicegui import Client, ui
 
 from vmi_analysis.agent_backend import AgentRequest, AgentSession, ContainerLauncher, PANEL_REQUEST_TITLE
@@ -539,6 +540,61 @@ class AgentPanelTests(unittest.TestCase):
         source.owner = "other"
         with self.assertRaisesRegex(ValueError, "your workspace"):
             self.registry.prepare(self.jobs, "circularize", params)
+
+    def test_circularize_checkpoint_is_discoverable_and_returns_both_artifacts(self):
+        checkpoint = self.datasets / "localizations.h5"
+        pd.DataFrame({"x": [1.5, 1.5], "y": [2.5, 2.5], "frame": [0, 3]}).to_hdf(
+            checkpoint, key="localizations", format="table")
+        calibration_file = self.datasets / "extracted.txt"
+        calibration_file.write_text(
+            '"Parameter" "Value" "+-" "Uncertainty (1 std dev)"\n'
+            '"Gaussian Centre" 10 +- 0.1\n', encoding="utf-8")
+        source = Job("Centroiding", status="done", owner=self.account.name,
+                     extra={"checkpoint": str(checkpoint)})
+        self.jobs._jobs[source.id] = source
+        operation = "circularize_checkpoint"
+        description = self.registry.describe()[operation]
+        self.assertEqual(description["panel"], "Circularize")
+        self.assertEqual(description["outputs"], ["corrected_checkpoint", "counts_output"])
+        self.assertNotIn("interp_order", description["parameters"])
+        params = {
+            "source_job_id": source.id, "shape_y": 6, "shape_x": 6, "center_x": 2, "center_y": 2,
+            "corrected_checkpoint": "/workspace/corrected.h5", "counts_output": "/workspace/counts.npy",
+        }
+        with self.assertRaisesRegex(ValueError, "Missing center_x"):
+            self.registry.prepare(self.jobs, operation, {key: value for key, value in params.items()
+                                                         if key != "center_x"})
+        with self.assertRaisesRegex(ValueError, "read-only"):
+            self.registry.prepare(self.jobs, operation, params | {"counts_output": "/datasets/counts.npy"})
+        job, summary = self.registry.prepare(self.jobs, operation, params)
+        self.assertIsNone(self.jobs.get(job.id))
+        self.assertEqual(summary["Center (X, Y)"], [2, 2])
+        self.assertEqual(job_access(job).reads, {checkpoint, calibration_file})
+        self.assertEqual(job_access(job).writes, {self.workspace / "corrected.h5", self.workspace / "counts.npy"})
+        explicit, _ = self.registry.prepare(self.jobs, operation, {
+            **{key: value for key, value in params.items() if key != "source_job_id"},
+            "input": "/datasets/localizations.h5",
+        })
+        self.assertEqual(explicit.cmd, job.cmd)
+        with patch.object(shared, "current_account", return_value=SimpleNamespace(name="other")):
+            with self.assertRaisesRegex(ValueError, "your workspace"):
+                self.registry.prepare(self.jobs, operation, params)
+
+        self.addCleanup(self.jobs.shutdown)
+        self.jobs.submit(job)
+        deadline = time.monotonic() + 20
+        while job.status in ("queued", "running") and time.monotonic() < deadline:
+            time.sleep(0.04)
+        self.assertEqual(job.status, "done", "\n".join(job.log))
+        self.assertEqual(self.registry.status(self.jobs, job.id)["files"], {
+            "corrected_checkpoint": "/workspace/corrected.h5", "counts_output": "/workspace/counts.npy",
+        })
+        self.assertEqual(adopt_agent_form(job, "circularize")["inp"], str(checkpoint))
+        np.testing.assert_array_equal(pd.read_hdf(self.workspace / "corrected.h5", "localizations")["frame"], [0, 3])
+        counts = np.load(self.workspace / "counts.npy")
+        self.assertEqual(counts.dtype, np.int64)
+        self.assertEqual(counts[2, 1], 2)
+        self.assertEqual(counts.sum(), 2)
 
     def test_pes_agent_generation_and_contextual_fit_use_resolved_spectra(self):
         first = self.workspace / "vmi.npy"

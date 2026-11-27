@@ -2,6 +2,7 @@
 
 import re
 import sys
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +29,9 @@ CIRC_DIR = REPO_ROOT / "circularization"
 
 
 JOB_NAME = "Circularize"
+CHECKPOINT_OPERATION = "circularize_checkpoint"
+CHECKPOINT_OUTPUTS = ("corrected_checkpoint", "counts_output")
+CHECKPOINT_GEOMETRY = ("shape_y", "shape_x", "center_x", "center_y")
 DEFAULTS = {
     "shape_y": 1023, "shape_x": 1023, "center_x": 511.0, "center_y": 511.0,
     "brightest_center": True, "radial_model": "interp", "poly_order": 2,
@@ -146,13 +150,17 @@ def circularize_job(extracted, *, inp="", out="", reassign="", plot_dir=None,
     return job
 
 
-def _prepare_agent(jobs, params):
+def _prepare_agent(jobs, params, *, checkpoint_only=False):
     inputs = dict(params)
+    if checkpoint_only:
+        missing = [key for key in (*CHECKPOINT_GEOMETRY, *CHECKPOINT_OUTPUTS) if inputs.get(key) is None]
+        if missing:
+            raise ValueError(f"Supply the checkpoint geometry and both output paths. Missing {', '.join(missing)}.")
     summary_only = boolean(inputs.get("summary_only", False))
     source_id = inputs.pop("source_job_id", None)
     bin_index = inputs.pop("bin_index", None)
     source = inputs.pop("input", "")
-    event_outputs = bool(inputs.get("corrected_checkpoint") or inputs.get("counts_output"))
+    event_outputs = checkpoint_only or any(inputs.get(key) for key in CHECKPOINT_OUTPUTS)
     if source_id is not None:
         if source:
             raise ValueError("Supply either input or source_job_id.")
@@ -269,9 +277,29 @@ def agent_operations():
         parameters[key] = {"type": types[type(value)], "default": value, "description": help_text[key]}
     parameters["radial_model"]["choices"] = list(RADIAL_MODELS)
     description = {"panel": JOB_NAME, "manual": JOB_NAME, "parameters": parameters,
-                   "summary": "Correct radial distortion in a VMI image or build integer counts from corrected centroids."}
-    return (PanelOperation("circularize", description, _prepare_agent, (JOB_NAME,),
-                           outputs=("output", "polar_preview", "corrected_checkpoint", "counts_output")),)
+                   "summary": "Correct radial distortion in a VMI image. Use circularize_checkpoint for individual centroids."}
+    checkpoint_parameters = {
+        key: dict(parameters[key])
+        for key in ("input", "source_job_id", "extracted", "reassign_file", *CHECKPOINT_GEOMETRY,
+                    "polar_dr", "resolution_factor", "max_trig_n", "radial_model", "poly_order",
+                    *CHECKPOINT_OUTPUTS)
+    }
+    checkpoint_parameters["input"]["description"] = "Centroiding localization checkpoint (.h5 or .hdf5). Supply this or source_job_id."
+    checkpoint_parameters["source_job_id"]["description"] = "Completed Centroiding job whose checkpoint to use."
+    checkpoint_parameters["extracted"]["description"] = "Trig-fit file. Defaults to extracted.txt beside the checkpoint."
+    for key in (*CHECKPOINT_GEOMETRY, *CHECKPOINT_OUTPUTS):
+        checkpoint_parameters[key].pop("default", None)
+        checkpoint_parameters[key]["required"] = True
+    checkpoint = {
+        "panel": JOB_NAME, "manual": JOB_NAME, "parameters": checkpoint_parameters,
+        "summary": "Correct each electron centroid, preserve frame IDs, and build an unweighted integer histogram for pbasex_counts.",
+    }
+    return (
+        PanelOperation("circularize", description, _prepare_agent, (JOB_NAME,),
+                       outputs=("output", "polar_preview", *CHECKPOINT_OUTPUTS)),
+        PanelOperation(CHECKPOINT_OPERATION, checkpoint, partial(_prepare_agent, checkpoint_only=True), (),
+                       outputs=CHECKPOINT_OUTPUTS, proposal_job_names=(JOB_NAME,)),
+    )
 
 
 def build(jobs: JobManager):

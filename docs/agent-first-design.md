@@ -24,7 +24,7 @@ The table describes the registered actions in the current application. The Agent
 | Centroiding | `centroiding` | Prepare localization and spectrum processing with the panel's settings. |
 | Binning | `binning` | Prepare GMD-weighted binning. |
 | Trig Calibration | `trig_calibration_fit` | Review and fit a selected ring from the panel's **Ask Agent** control. |
-| Circularize | `circularize` | Prepare image correction with a calibration file. |
+| Circularize | `circularize`, `circularize_checkpoint` | Prepare image correction, or correct individual centroids and return a checkpoint with frame IDs and an integer histogram. |
 | PES | `pes`, `pes_fit` | Prepare spectra and anisotropy. Measure yield, bin-average intensity, and β in a uniform-grid bin of a completed run. Review a peak fit from the panel's **Ask Agent** control. |
 | TPX3 Dump | `tpx3_dump` | Prepare the LUNA dump. Apply timewalk correction manually in the panel. |
 | Ion TOF | `ion_tof`, `ion_tof_gate`, `ion_tof_fit` | Prepare spectra, GMD2 gating with optional per-shot weighting, and Gaussian fits. Inspect linked completed spectra and saved fits through registered measurements. |
