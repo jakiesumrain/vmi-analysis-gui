@@ -147,7 +147,7 @@ class PanelRegistry:
                     step = self.status(jobs, stage.result.id)
                     step.pop("log_tail")
                 result["steps"].append(step)
-        elif job.status == "done":
+        if job.status == "done" and (not spec.workflow_panels or spec.outputs or spec.artifacts):
             if "gmd_shift_source" in job.extra:
                 result["alignment"] = {"shift": job.extra["gmd_shift"],
                                        "source": job.extra["gmd_shift_source"]}

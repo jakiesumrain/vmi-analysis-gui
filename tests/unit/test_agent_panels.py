@@ -1050,6 +1050,73 @@ class AgentPanelTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "your workspace"):
             self.registry.status(self.jobs, dump.id)
 
+    def test_timewalk_workflow_chains_calibration_seeds_and_reserves_target_collections(self):
+        for name in ("first", "second", "target"):
+            (self.datasets / f"{name}.tpx3").touch()
+        params = {
+            "recordings": ["/datasets/first.tpx3", "/datasets/second.tpx3"],
+            "output": "/workspace/master.h5",
+            "target": {"input": "/datasets/target.tpx3", "dump_output": "/workspace/target.h5"},
+            "options": {"ctot-cut": 300},
+        }
+        workflow, summary = self.registry.prepare(self.jobs, "tpx3_timewalk_calibration", params)
+        first, final, target, corrected = workflow.stages
+        self.assertNotIn("--timewalk-file", first.cmd)
+        self.assertIn("--timewalk-calibration", first.cmd)
+        self.assertNotIn("--split-acquisitions", first.cmd)
+        self.assertEqual(final.cmd[final.cmd.index("--timewalk-file") + 1], first.result.extra["output"])
+        self.assertEqual(target.cmd[target.cmd.index("--timewalk-file") + 1], final.result.extra["output"])
+        self.assertEqual(corrected.cmd[corrected.cmd.index("--input") + 1],
+                         str(self.workspace / "target.segments.json"))
+        self.assertEqual(corrected.cmd[corrected.cmd.index("--ctot-cut") + 1], "300")
+        self.assertEqual(summary["Calibration 1"]["output"], str(self.workspace / "master_step_001.h5"))
+        access = job_access(workflow)
+        self.assertTrue({self.workspace / name for name in (
+            "master.h5", "master_step_001.h5", "master_metadata.h5", "target.segments.json", "target_segments",
+            "target_corrected.segments.json", "target_corrected_segments",
+        )} <= access.writes)
+        self.assertEqual(self.jobs.jobs(), [])
+        for change, error in (
+            ({"recordings": ["/datasets", "/datasets/first.tpx3"]}, "more than once"),
+            ({"target": params["target"] | {"input": "/datasets/first.tpx3"}}, "more than once"),
+            ({"options": {"disable-clustering": True}}, "requires clustering"),
+            ({"target": params["target"] | {"dump_output": "/workspace/master.h5"}}, "different output"),
+            ({"target": params["target"] | {"output": "/workspace/master_step_001.h5"}}, "distinct output"),
+        ):
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, error):
+                self.registry.prepare(self.jobs, "tpx3_timewalk_calibration", params | change)
+
+        def finish_stage(_job, _cmd, _cwd, *, prefix, stage_result):
+            path = stage_result.extra.get("collection", stage_result.extra["output"])
+            if stage_result is target.result:
+                path = str(self.workspace / "target.segments.json")
+                stage_result.extra["collection"] = path
+            Path(path).touch()
+            return 0
+
+        self.addCleanup(self.jobs.shutdown)
+        with patch.object(self.jobs, "_run_cmd", side_effect=finish_stage):
+            self.jobs.submit(workflow)
+            deadline = time.monotonic() + 5
+            while workflow.status in ("queued", "running") and time.monotonic() < deadline:
+                time.sleep(.01)
+        outcome = self.registry.status(self.jobs, workflow.id)
+        self.assertEqual(outcome["status"], "done")
+        self.assertEqual(outcome["files"], {"master_calibration": "/workspace/master.h5"})
+        self.assertEqual(outcome["steps"][-1]["files"],
+                         {"collection": "/workspace/target_corrected.segments.json"})
+
+        failed, _ = self.registry.prepare(self.jobs, "tpx3_timewalk_calibration",
+                                          params | {"output": "/workspace/retry.h5", "prefixed": False})
+        with patch.object(self.jobs, "_run_cmd", side_effect=[0, 1]) as run:
+            self.jobs.submit(failed)
+            deadline = time.monotonic() + 5
+            while failed.status in ("queued", "running") and time.monotonic() < deadline:
+                time.sleep(.01)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(failed.status, "failed")
+        self.assertEqual([stage.status for stage in failed.stages], ["done", "failed", "cancelled", "cancelled"])
+
     def test_workflow_reserves_the_future_collection_and_stops_after_dump_failure(self):
         (self.datasets / "sample.tpx3").touch()
         workflow, summary = self.registry.prepare(self.jobs, "ion_dump_to_tof", {

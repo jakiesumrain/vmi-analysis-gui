@@ -26,7 +26,7 @@ The table describes the registered actions in the current application. The Agent
 | Trig Calibration | `trig_calibration_fit` | Review and fit a selected ring from the panel's **Ask Agent** control. Inspect the fit before choosing **Accept ring** in the panel. |
 | Circularize | `circularize`, `circularize_checkpoint` | Correct an image, or export measured or circularized centroids with a shot roster and an integer histogram. |
 | PES | `pes`, `pes_fit` | Prepare spectra and anisotropy. Measure yield, bin-average intensity, and β in a uniform-grid bin of a completed run. Review a peak fit from the panel's **Ask Agent** control. |
-| TPX3 Dump | `tpx3_dump`, `tpx3_timewalk` | Prepare the LUNA dump and reviewed timewalk correction of an HDF5 file or acquisition collection. |
+| TPX3 Dump | `tpx3_dump`, `tpx3_timewalk`, `tpx3_timewalk_calibration` | Prepare a LUNA dump, correct a dump or collection, or build a master timewalk calibration from ordered recordings and optionally correct a separate target. |
 | Ion TOF | `ion_tof`, `ion_tof_gate`, `ion_tof_fit` | Prepare spectra, GMD2 gating with optional per-shot weighting, and Gaussian fits. Inspect linked completed spectra and saved fits through registered measurements. |
 | Ion momenta | `ion_momenta`, `ion_momenta_gate`, `ion_momenta_fit`, `ion_momenta_species`, `ion_momenta_reconstruct` | Prepare linked histograms, then review position and TOF gates, Gaussian fits, species assignments, and momentum reconstruction in the originating result view. |
 | Ion Pipeline | `ion_pipeline` | Prepare the delay-scan yield analysis with optional scan-wide GMD2 weighting. |
@@ -41,6 +41,12 @@ without a calibration file. With `circularize`, the default, the operation uses
 the same radial continuation as image correction. The HDF5 output includes
 successfully processed zero-hit shots. The NumPy output contains unweighted
 integer counts. See [Circularize in the user manual](manual.pdf).
+
+`tpx3_timewalk_calibration` takes the calibration recordings in the requested
+order and an output path for the master HDF5. It uses the same dump options
+for each recording. The review shows the exact seed and output for each
+stage. An optional target is dumped with the master as its seed and corrected
+using the LUT in that target dump, which includes the target's statistics.
 
 ## Review and inspect a run
 

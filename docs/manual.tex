@@ -2323,6 +2323,18 @@ changing it.
 \subsubsection{Build a common timewalk calibration across recordings}
 \label{sec:timewalk-accumulation}
 
+\paragraph{Use the Agent.}
+Ask the Agent to build a master timewalk calibration from your recordings in
+the stated order. Give it a destination HDF5 and specify the input format
+and any shared dump options. Review the input, seed, and output for each
+stage, then approve the workflow. It keeps the intermediate HDF5 files and
+reports the master when complete. For prefixed input, a detected restart
+stops a calibration stage. For Serval input, select uninterrupted
+recordings yourself.
+To correct a separate target in the same workflow, also give the Agent
+the target input and an uncorrected dump path. The Agent presents the
+corrected output path for review. The target's LUT includes its own statistics.
+
 LUNA can accumulate timewalk statistics across similar experiments.
 See ASI's \href{https://amsterdam-scientific-instruments.github.io/luna-docs/3_examples/ex15_accumulate_timewalk_statistics.html}{accumulation example}
 and \href{https://amsterdam-scientific-instruments.github.io/luna-docs/3_examples/ex14_apply_timewalk_correction.html}{correction example}.
