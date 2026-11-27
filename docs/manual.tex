@@ -1559,8 +1559,11 @@ File & Written when & Contents \\
 \endfoot
 \code{vmi\_\allowbreak{}results\_\allowbreak{}raw.h5} & full batch, kept on resume & Localisation
 checkpoint and archive: one row per event with position, photons, size,
-eccentricity, signal, net gradient and global frame index. Downstream binning
-reads this file. \\
+eccentricity, signal, net gradient and global frame index. The
+\code{/frame\_roster} group records the acquisition order, source file,
+zero-based index within the file, and processing status for every frame
+(0 for skipped, 1 for processed, and 2 for failed). Processed frames include
+zero-hit frames. Binning reads the localisation table in this file. \\
 \addlinespace
 \code{vmi\_\allowbreak{}2d\_\allowbreak{}raw.npy} & full batch & 2D VMI histogram (weighted if GMD
 weighting is on). \\
@@ -1938,11 +1941,13 @@ Circularize sorts the saved rings by radius before it builds the radial model.
 \subsection{Circularize}
 \label{sec:circularize}
 
-\textbf{Purpose.} Correct radial distortion in one VMI image as a function
-of angle. Use a Gascooke trig-fit calibration. The panel launches
+\textbf{Purpose.} Correct radial distortion in a VMI image or export
+individual electron centroids and an integer count image. The panel launches
 \code{vmi\_\allowbreak{}analysis.circularization.circularization} with working
-directory \code{circularization/\allowbreak{}}. It is a standalone tool for inspecting
-the calibration. Add the corrected image to PES to generate its spectrum.
+directory \code{circularization/\allowbreak{}}. Add the corrected text image
+or integer NumPy image to PES to generate its spectrum.
+
+\subsubsection*{Image input}
 
 For a raw detector-grid calibration, open the same \code{vmi\_2d\_raw.npy}
 in Trig Calibration and Circularize. Use the same origin in both panels.
@@ -1961,7 +1966,7 @@ Field & Type and default & Saved key & CLI flag & Meaning \\
 \endhead
 \bottomrule
 \endfoot
-\code{Input image (.npy or .txt)} & file, Centroiding raw image &
+\code{VMI image or localization checkpoint} & file, Centroiding raw image &
 \emph{circularize.inp} & \code{-\allowbreak{}-\allowbreak{}input} & NumPy detector array or legacy text image. \\
 \addlinespace
 \code{Output image (.txt)} & save, \code{circularization/\allowbreak{}image\_\allowbreak{}circularized.\allowbreak{}txt} &
@@ -2057,6 +2062,83 @@ Circularize checks the combined warp for invalid radii and folds on the output
 grid before resampling. \emph{Clear outputs} lists the selected corrected image,
 the diagnostic plots in the plot output directory, and any matching polar
 preview cache from this server session. The script does not print percentages.
+
+\subsubsection*{Checkpoint input}
+
+\begin{enumerate}
+  \item Choose a raw Centroiding \code{.h5} or \code{.hdf5} checkpoint in
+        \emph{VMI image or localization checkpoint}. It needs the frame roster
+        written by a fresh batch run. If the roster is missing, rerun
+        Centroiding with a new checkpoint filename.
+  \item Set \emph{Coordinate correction}. \emph{Apply circularization}
+        uses the extracted trig-fit file and optional radial reassignment.
+        \emph{Keep measured coordinates} exports the measured positions
+        without a calibration file.
+  \item Enter the grid shape, zero-based center, and \emph{Histogram bins
+        per detector pixel}. For circularization, use the geometry of the
+        image that was used for Trig Calibration. Choose the corrected HDF5
+        and integer histogram output files, then select \emph{Run}.
+\end{enumerate}
+
+Checkpoint correction inverts the same angle-dependent map used for image
+input. The \code{interp} radial model holds each trig coefficient at its last
+fitted value beyond its fitted range. Radial reassignment continues with the
+final offset. The checkpoint inverse follows this continuation to the
+histogram boundary and requires a strictly increasing radial map. Each
+retained electron contributes exactly one count to the histogram. The
+\emph{No Jacobian} setting applies to image input. Moving and binning
+individual electrons accounts for the change in area in checkpoint mode.
+
+The default outputs are \code{localizations\_\allowbreak{}circularized.h5}
+and \code{image\_\allowbreak{}circularized\_\allowbreak{}counts.npy}. The
+NumPy image is an unweighted \code{int64} array with shape
+\code{(NY, NX)}. The preview area shows both polar images for circularized
+coordinates and one for measured coordinates. When adding the NumPy image
+to PES, use the center and resolution factor from the histogram settings.
+Use the NumPy image as input to \code{pbasex\_counts} when you need integer
+counts.
+
+\begin{center}
+\footnotesize
+\begin{longtable}{@{}L{5.1cm}L{10.4cm}@{}}
+\toprule
+HDF5 path & Contents \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{/events/shot\_id}\newline
+\code{/events/x\_corrected}\newline
+\code{/events/y\_corrected}
+& Chunked \code{int64}, \code{float64}, and \code{float64} vectors with one
+entry per counted electron. In measured mode, the coordinates are the
+original retained positions. \\
+\addlinespace
+\code{/shots/id}
+& \code{int64} IDs of successfully processed shots in acquisition order,
+including zero-hit shots. \\
+\addlinespace
+\code{/geometry/x\_edges}\newline
+\code{/geometry/y\_edges}
+& Exact bin edges in detector pixels. The last bin includes its final
+edge. Geometry attributes give the center in those same units,
+the resolution factor, and the axis directions (right and down). \\
+\addlinespace
+Root attributes
+& Schema version, raw checkpoint path, coordinate correction mode, and a
+calibration identifier when correction is applied. Provenance also records
+counts by exclusion reason. \\
+\end{longtable}
+\end{center}
+
+Keep the raw checkpoint for original detections, fit diagnostics, and
+processing outcomes. The Agent operation
+\code{circularize\_\allowbreak{}checkpoint} exposes both coordinate modes.
+For a standalone run, use \code{-{}-checkpoint}, \code{-{}-shape},
+\code{-{}-center}, \code{-{}-resolution-factor}, \code{-{}-corrected-checkpoint},
+and \code{-{}-counts-output}. Set \code{-{}-coordinate-correction none} to
+keep measured coordinates. The default \code{circularize} mode uses
+\code{-{}-extracted} and accepts an optional \code{-{}-reassign-file}.
 
 \subsection{PES}
 \label{sec:pes}
@@ -2412,9 +2494,11 @@ Dark Frame & \code{dark\_\allowbreak{}mean.\allowbreak{}npy} or \code{dark\_\all
 Accumulate & \code{<output>.\allowbreak{}txt}, \code{<output>.\allowbreak{}png} & Accumulated matrix
 and its log-scale figure. \\
 \addlinespace
-Circularize & \code{image\_\allowbreak{}circularized.\allowbreak{}txt}, diagnostic PNGs &
-Corrected text image; the plot directory also receives a reassignment map
-figure when a reassignment file is used. \\
+Circularize & \code{image\_\allowbreak{}circularized.\allowbreak{}txt}, diagnostic PNGs,
+\code{localizations\_\allowbreak{}circularized.h5},
+\code{image\_\allowbreak{}circularized\_\allowbreak{}counts.npy} &
+Image input writes the corrected text matrix. Checkpoint input writes the
+shot-resolved HDF5 and the integer histogram. \\
 \addlinespace
 Movie & \code{<dataset>.\allowbreak{}mp4} or \code{.\allowbreak{}gif}, dumped frame PNGs &
 The movie file goes to the selected folder; dumped frames are disposable
@@ -2552,7 +2636,8 @@ Picasso localisation and histogram; \code{-\allowbreak{}-\allowbreak{}h5-\allowb
 \code{-\allowbreak{}-\allowbreak{}thresholds}, \code{-\allowbreak{}-\allowbreak{}weight-\allowbreak{}mode}, \code{-\allowbreak{}-\allowbreak{}weight-\allowbreak{}power}. \\
 \addlinespace
 \code{vmi\_\allowbreak{}analysis.circularization.circularization} & Distortion correction
-of one image; \code{-\allowbreak{}-\allowbreak{}input}, \code{-\allowbreak{}-\allowbreak{}output}, \code{-\allowbreak{}-\allowbreak{}shape}, \code{-\allowbreak{}-\allowbreak{}center},
+of an image or centroid checkpoint (Section~\ref{sec:circularize}). Image options include
+\code{-\allowbreak{}-\allowbreak{}input}, \code{-\allowbreak{}-\allowbreak{}output}, \code{-\allowbreak{}-\allowbreak{}shape}, \code{-\allowbreak{}-\allowbreak{}center},
 \code{-\allowbreak{}-\allowbreak{}extracted}, \code{-\allowbreak{}-\allowbreak{}reassign-\allowbreak{}file}, \code{-\allowbreak{}-\allowbreak{}no-\allowbreak{}jacobian}. \\
 \addlinespace
 \code{vmi\_\allowbreak{}analysis.circularization.process\_\allowbreak{}gmd\_\allowbreak{}bins} & Standalone GMD-bin batch

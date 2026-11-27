@@ -34,6 +34,14 @@ The table describes the registered actions in the current application. The Agent
 
 The **TPX3 Dump → Ion TOF** workflow (`ion_dump_to_tof`) passes the exact planned output to the TOF stage and can pause for a GMD2 alignment decision. **Analysis runs** (`analysis_python`) supports reviewed scripts and saved analysis forms. The **Ion → Fallback** tools remain manual. Access by external agents through MCP or a general Agent CLI is deferred. Scientific CLI modules remain available.
 
+`circularize_checkpoint` takes a raw Centroiding checkpoint path or a completed
+Centroiding job ID. It requires the histogram shape, center, and both output
+paths. Set `coordinate_correction` to `none` to keep measured coordinates
+without a calibration file. With `circularize`, the default, the operation uses
+the same radial continuation as image correction. The HDF5 output includes
+successfully processed zero-hit shots. The NumPy output contains unweighted
+integer counts. See [Circularize in the user manual](manual.pdf).
+
 ## Review and inspect a run
 
 The Agent presents an Ion TOF proposal. The user can check the input, trigger, bin width, and output before submitting.
