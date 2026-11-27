@@ -963,7 +963,7 @@ def parse_args():
             parser.error("Checkpoint shape and resolution factor must be positive, and center must be finite.")
         ny, nx = args.shape
         xc, yc = args.center
-        if not (0 <= xc < nx and 0 <= yc < ny):
+        if not (0 <= xc <= nx - 0.5 and 0 <= yc <= ny - 0.5):
             parser.error("Checkpoint center must lie inside the calibration grid.")
     elif args.corrected_checkpoint is not None or args.counts_output is not None or args.coordinate_correction == "none":
         parser.error("Checkpoint output and coordinate correction options require --checkpoint.")
@@ -996,8 +996,8 @@ def _fit_event_warp(args):
         circ, fixed = parse_reassignment_file(args.reassign_file)
         reassignment = build_reassignment_interpolator(circ, fixed)
         pairs = np.column_stack((circ, fixed)).tolist()
-    warp = EventWarp(fit_params, args.max_trig_n, reassignment, args.polar_dr, float(np.max(dataset["radii"])))
-    print(f"Correcting centroids through radius {warp.radius:g} calibration-grid pixels.", flush=True)
+    warp = EventWarp(fit_params, args.max_trig_n, reassignment, args.polar_dr, args.shape, args.center)
+    print("Correcting centroids across the histogram grid using the raster radial continuation.", flush=True)
     settings = {
         "calibration_text": calibration_text, "reassignment_pairs": pairs, "radial_model": args.radial_model,
         "poly_order": args.poly_order if args.radial_model == "poly" else None,

@@ -29,11 +29,11 @@ class CircularizeCheckpointTests(unittest.TestCase):
         self.reassign = self.root / "reassign.txt"
         self.reassign.write_text("0 0\n3 2\n", encoding="utf-8")
         self.events = pd.DataFrame({
-            "x": [2.75, 4.25, 2.75, 10, np.nan],
-            "y": [4.625, 2.75, 2.75, 10, 2],
-            "frame": [0, 0, 2, 2, 2],
-            "mass": [4, 7, 13, 9, 15],
-        }, index=[0, 1, 0, 1, 2])
+            "x": [2.75, 4.25, 2.75, 10, np.nan, 6.25, 2.75, 2.75],
+            "y": [4.625, 2.75, 2.75, 10, 2, 2.75, 7, 7.75],
+            "frame": [0, 0, 2, 2, 2, 2, 2, 2],
+            "mass": [4, 7, 13, 9, 15, 8, 12, 7],
+        }, index=[0, 1, 0, 1, 2, 3, 4, 5])
         self.events.to_hdf(self.source, key="localizations", format="table")
         with h5py.File(self.source, "r+") as store:
             write_frame_roster(store, [("camera.h5", index) for index in range(5)],
@@ -62,7 +62,7 @@ class CircularizeCheckpointTests(unittest.TestCase):
         self.assertEqual(counts.dtype, np.int64)
         np.testing.assert_array_equal(rebuilt, counts)
 
-    def test_inverts_combined_map_and_exports_only_counted_events(self):
+    def test_inverts_combined_map_past_last_ring_and_reassignment(self):
         preview = self.root / "polar.npz"
         self.args += ["--polar-preview", str(preview)]
         with patch("builtins.print"):
@@ -70,6 +70,7 @@ class CircularizeCheckpointTests(unittest.TestCase):
         pd.testing.assert_frame_equal(pd.read_hdf(self.source, "localizations"), self.events)
         expected = np.zeros((12, 12), dtype=np.int64)
         expected[7, 5] = expected[5, 7] = expected[5, 5] = 1
+        expected[5, 10] = expected[10, 5] = expected[11, 5] = 1
         histogram = np.load(self.counts)
         self.assertEqual(histogram.dtype, np.int64)
         np.testing.assert_array_equal(histogram, expected)
@@ -91,15 +92,20 @@ class CircularizeCheckpointTests(unittest.TestCase):
             self.assertEqual(events["y_corrected"].dtype, np.dtype("float64"))
             self.assertTrue(all(column.chunks for column in events.values()))
             np.testing.assert_array_equal(store["shots/id"][:], [0, 2, 3])
-            np.testing.assert_array_equal(events["shot_id"][:], [0, 0, 2])
-            np.testing.assert_allclose(events["x_corrected"][:], [2.75, 3.75, 2.75])
-            np.testing.assert_allclose(events["y_corrected"][:], [3.75, 2.75, 2.75])
+            np.testing.assert_array_equal(events["shot_id"][:], [0, 0, 2, 2, 2, 2])
+            np.testing.assert_allclose(events["x_corrected"][:], [2.75, 3.75, 2.75, 5.25, 2.75, 2.75])
+            np.testing.assert_allclose(events["y_corrected"][:], [3.75, 2.75, 2.75, 2.75, 5.25, 6])
             np.testing.assert_array_equal(store["geometry"].attrs["center_xy"], [2.75, 2.75])
             self.verify_histogram(store)
             metadata = json.loads(store.attrs["circularization"])
         self.assertEqual(metadata["event_totals"],
-                         {"counted": 3, "invalid_input": 1, "outside_calibration": 1, "outside_histogram": 0})
-        self.assertEqual(metadata["max_corrected_radius_grid_pixels"], 4.0)
+                         {"counted": 6, "invalid_input": 1, "outside_calibration": 0, "outside_histogram": 1})
+        self.assertAlmostEqual(metadata["max_corrected_radius_grid_pixels"], np.hypot(6.5, 6.5))
+
+    def test_rejects_polynomial_that_folds_before_detector_edge(self):
+        with self.assertRaisesRegex(ValueError, "strictly increasing radial map"):
+            checkpoint.EventWarp({"A1": {"kind": "poly", "coeffs": [0.1, 0]}},
+                                 1, {"kind": "identity"}, 1.0, (16, 16), (7, 7))
 
     def test_measured_export_uses_exact_edges_and_one_preview(self):
         edge = 1 / 3

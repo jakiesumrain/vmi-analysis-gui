@@ -103,7 +103,7 @@ def circularize_job(extracted="", *, inp="", out="", reassign="", plot_dir=None,
             checked_path(counts_output, write=True, cwd=cwd), cwd=cwd)
         ny, nx = [_whole(options[key], 1, f"Shape {key[-1].upper()}") for key in ("shape_y", "shape_x")]
         xc, yc = [number(options[key]) for key in ("center_x", "center_y")]
-        if not (0 <= xc < nx and 0 <= yc < ny):
+        if not (0 <= xc <= nx - 0.5 and 0 <= yc <= ny - 0.5):
             raise ValueError("Center must lie inside the calibration grid.")
         factor = _whole(options["resolution_factor"], 1, "Histogram resolution factor")
         cmd += ["--checkpoint", str(source), "--corrected-checkpoint", str(corrected),

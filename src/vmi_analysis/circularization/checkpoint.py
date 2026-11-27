@@ -8,7 +8,6 @@ from tempfile import TemporaryDirectory
 import h5py
 import numpy as np
 import pandas as pd
-from scipy.optimize import brentq
 
 from vmi_analysis.centroiding.frame_roster import successful_shots
 from vmi_analysis.paths import validate_distinct_output
@@ -45,60 +44,62 @@ def _slope_bound(model, radius):
 
 
 class EventWarp:
-    """Invert the image sampling map over the supported radial interval."""
+    """Invert the image sampling map up to the edges of the histogram grid."""
 
-    def __init__(self, fit_params, max_trig_n, reassignment, polar_dr, outer_ring):
-        if not np.isfinite([polar_dr, outer_ring]).all() or min(polar_dr, outer_ring) <= 0:
-            raise ValueError("Polar radial step and outer fitted radius must be finite and positive.")
+    def __init__(self, fit_params, max_trig_n, reassignment, polar_dr, shape, center):
+        if not np.isfinite(polar_dr) or polar_dr <= 0:
+            raise ValueError("Polar radial step must be finite and positive.")
         self.map_args = fit_params, max_trig_n, reassignment, polar_dr
-        outer_fixed = outer_ring
-        supported = outer_ring
-        if reassignment["kind"] != "identity":
-            outer_fixed = reassignment["r_max"]
-
-            def target(r):
-                return eval_reassignment_model(reassignment, r)[0]
-
-            supported = min(supported, float(target(outer_fixed)))
-            if target(outer_fixed) > supported:
-                outer_fixed = brentq(lambda r: target(r) - supported, 0, outer_fixed)
+        self.shape, self.center = shape, center
+        ny, nx = shape
+        xc, yc = center
+        # Include the half-pixel edges of the histogram, not just pixel centers.
+        self.left, self.right = xc + 0.5, nx - xc - 0.5
+        self.top, self.bottom = yc + 0.5, ny - yc - 0.5
+        self.radius = float(np.hypot(max(self.left, self.right), max(self.top, self.bottom)))
+        outer_target, _ = eval_reassignment_model(reassignment, self.radius / polar_dr)
 
         # Reassignment is strictly increasing by construction. Bound the remaining
-        # derivative for every angle, including between detector pixel centers.
-        bound = sum(_slope_bound(model, supported) for model in fit_params.values())
+        # derivative over the full grid, including the continued radial model.
+        bound = sum(_slope_bound(model, outer_target) for model in fit_params.values())
         if not np.isfinite(bound) or bound >= 1:
             raise ValueError("Cannot verify a strictly increasing radial map for all angles. "
                              "Check the fitted trig terms and radial model.")
-        self.radius = polar_dr * outer_fixed
-        if not np.isfinite(self.radius) or self.radius <= 0:
-            raise ValueError("The supported corrected radius must be finite and positive.")
         self.identity = bound == 0 and reassignment["kind"] == "identity"
         self.iterations = max(1, int(np.ceil(np.log2(self.radius) - np.log2(1e-8))))
 
-    def correct(self, x, y, center, resolution):
+    def correct(self, x, y, resolution):
         # Centroiding bins detector coordinates from edge zero. Image index 0
         # denotes the center of its first bin on the calibration grid.
-        dx = x * resolution - 0.5 - center[0]
-        dy = y * resolution - 0.5 - center[1]
+        dx = x * resolution - 0.5 - self.center[0]
+        dy = y * resolution - 0.5 - self.center[1]
         radius = np.hypot(dx, dy)
         status = np.full(len(x), STATUS["invalid_input"], dtype=np.uint8)
         finite = np.isfinite(radius)
-        status[finite] = STATUS["outside_calibration"]
-        corrected_x, corrected_y = np.full_like(x, np.nan), np.full_like(y, np.nan)
-        theta = np.arctan2(dy[finite], dx[finite])
         if self.identity:
-            upper = self.radius
-        else:
-            upper, _ = source_radius(self.radius, theta, *self.map_args)
-        valid = np.flatnonzero(finite)[radius[finite] <= upper]
-        status[valid] = STATUS["counted"]
-        if self.identity:
-            corrected_x[valid], corrected_y[valid] = x[valid], y[valid]
-            return corrected_x, corrected_y, status
+            status[finite] = STATUS["counted"]
+            return x, y, status
 
-        theta = np.arctan2(dy[valid], dx[valid])
-        radius = radius[valid]
-        lo, hi = np.zeros_like(radius), np.full_like(radius, self.radius)
+        status[finite] = STATUS["outside_histogram"]
+        corrected_x, corrected_y = np.full_like(x, np.nan), np.full_like(y, np.nan)
+        measured_radius = radius[finite]
+        dx, dy = dx[finite], dy[finite]
+        theta = np.arctan2(dy, dx)
+        # Intersect each ray with the output rectangle to bracket the inverse.
+        x_edge = np.where(dx < 0, self.left, self.right)
+        y_edge = np.where(dy < 0, self.top, self.bottom)
+        x_limit = np.divide(x_edge * measured_radius, np.abs(dx),
+                            out=np.full_like(dx, self.radius), where=dx != 0)
+        y_limit = np.divide(y_edge * measured_radius, np.abs(dy),
+                            out=np.full_like(dy, self.radius), where=dy != 0)
+        limit = np.minimum(x_limit, y_limit)
+        upper, _ = source_radius(limit, theta, *self.map_args)
+        keep = measured_radius <= upper
+        valid = np.flatnonzero(finite)[keep]
+        status[valid] = STATUS["counted"]
+
+        theta, radius = theta[keep], measured_radius[keep]
+        lo, hi = np.zeros_like(radius), limit[keep]
         for _ in range(self.iterations):
             mid = (lo + hi) / 2
             measured, _ = source_radius(mid, theta, *self.map_args)
@@ -106,8 +107,10 @@ class EventWarp:
             lo, hi = np.where(below, mid, lo), np.where(below, hi, mid)
         corrected = (lo + hi) / 2
         scale = np.divide(corrected, radius, out=np.ones_like(radius), where=radius > 0)
-        corrected_x[valid] = x[valid] + dx[valid] * (scale - 1) / resolution
-        corrected_y[valid] = y[valid] + dy[valid] * (scale - 1) / resolution
+        # The bracket guarantees these coordinates are in the grid. Clip only
+        # floating-point roundoff at the rectangular boundaries.
+        corrected_x[valid] = np.clip(x[valid] + dx[keep] * (scale - 1) / resolution, 0, self.shape[1] / resolution)
+        corrected_y[valid] = np.clip(y[valid] + dy[keep] * (scale - 1) / resolution, 0, self.shape[0] / resolution)
         return corrected_x, corrected_y, status
 
 
@@ -172,7 +175,7 @@ def correct_checkpoint(checkpoint, corrected, counts, *, shape, center, resoluti
                     x, y = raw_x, raw_y
                     status = np.where(np.isfinite(x) & np.isfinite(y), STATUS["counted"], STATUS["invalid_input"])
                 else:
-                    x, y, status = warp.correct(raw_x, raw_y, center, resolution)
+                    x, y, status = warp.correct(raw_x, raw_y, resolution)
                 if raw_histogram is not None:
                     _bin_events(raw_histogram, raw_x, raw_y, x_edges, y_edges)
                 valid = status == STATUS["counted"]
