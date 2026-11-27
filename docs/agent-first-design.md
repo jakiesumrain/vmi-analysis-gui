@@ -23,16 +23,24 @@ The table describes the registered actions in the current application. The Agent
 | Accumulate | `accumulate` | Prepare image accumulation. |
 | Centroiding | `centroiding` | Prepare localization and spectrum processing with the panel's settings. |
 | Binning | `binning` | Prepare GMD-weighted binning. |
-| Trig Calibration | `trig_calibration_fit` | Review and fit a selected ring from the panel's **Ask Agent** control, with optional acceptance into the extracted calibration file. |
-| Circularize | `circularize` | Prepare image correction with a calibration file. |
-| PES | `pes`, `pes_fit` | Prepare spectra and anisotropy. Review a peak fit from the panel's **Ask Agent** control. |
+| Trig Calibration | `trig_calibration_fit` | Review and fit a selected ring from the panel's **Ask Agent** control. Inspect the fit before choosing **Accept ring** in the panel. |
+| Circularize | `circularize`, `circularize_checkpoint` | Correct an image, or export measured or circularized centroids with a shot roster and an integer histogram. |
+| PES | `pes`, `pes_fit` | Prepare spectra and anisotropy. Measure yield, bin-average intensity, and β in a uniform-grid bin of a completed run. Review a peak fit from the panel's **Ask Agent** control. |
 | TPX3 Dump | `tpx3_dump`, `tpx3_timewalk` | Prepare the LUNA dump and reviewed timewalk correction of an HDF5 file or acquisition collection. |
-| Ion TOF | `ion_tof`, `ion_tof_gate`, `ion_tof_fit` | Prepare spectra, GMD2 gating, and Gaussian fits. Inspect linked completed spectra and saved fits through registered measurements. |
-| Ion momenta | `ion_momenta`, `ion_momenta_gate`, `ion_momenta_fit`, `ion_momenta_species`, `ion_momenta_reconstruct` | Prepare linked histograms, then review position/TOF gates, Gaussian fits, species assignments, and momentum reconstruction in the originating result view. |
-| Ion Pipeline | `ion_pipeline` | Prepare the delay-scan yield analysis. |
+| Ion TOF | `ion_tof`, `ion_tof_gate`, `ion_tof_fit` | Prepare spectra, GMD2 gating with optional per-shot weighting, and Gaussian fits. Inspect linked completed spectra and saved fits through registered measurements. |
+| Ion momenta | `ion_momenta`, `ion_momenta_gate`, `ion_momenta_fit`, `ion_momenta_species`, `ion_momenta_reconstruct` | Prepare linked histograms, then review position and TOF gates, Gaussian fits, species assignments, and momentum reconstruction in the originating result view. |
+| Ion Pipeline | `ion_pipeline` | Prepare the delay-scan yield analysis with optional scan-wide GMD2 weighting. |
 | Live TPX3 | `live_tpx3`, `live_tpx3_control` | Inspect the preview and review start, stop, or reset in the originating tab. |
 
 The **TPX3 Dump → Ion TOF** workflow (`ion_dump_to_tof`) passes the exact planned output to the TOF stage and can pause for a GMD2 alignment decision. **Analysis runs** (`analysis_python`) supports reviewed scripts and saved analysis forms. The **Ion → Fallback** tools remain manual. Access by external agents through MCP or a general Agent CLI is deferred. Scientific CLI modules remain available.
+
+`circularize_checkpoint` takes a raw Centroiding checkpoint path or a completed
+Centroiding job ID. It requires the histogram shape, center, and both output
+paths. Set `coordinate_correction` to `none` to keep measured coordinates
+without a calibration file. With `circularize`, the default, the operation uses
+the same radial continuation as image correction. The HDF5 output includes
+successfully processed zero-hit shots. The NumPy output contains unweighted
+integer counts. See [Circularize in the user manual](manual.pdf).
 
 ## Review and inspect a run
 

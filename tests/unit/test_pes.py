@@ -9,10 +9,25 @@ from scipy.special import voigt_profile
 
 from vmi_analysis.centroiding.plot_data import load_plot_data
 from vmi_analysis.pes import (ABEL_METHODS, Geometry, PeakGuess, anisotropy_values, average_anisotropy,
-                              evaluate_fit_for_plot, extract_spectrum, fit_peaks, main, parse_quadrants)
+                              evaluate_fit_for_plot, extract_spectrum, fit_peaks, integrate_spectral_bins,
+                              main, parse_quadrants)
 
 
 class SpectrumTests(unittest.TestCase):
+    def test_uniform_bins_preserve_area_with_interpolated_edges(self):
+        x = np.array([0, 1, 4, 9])
+        intensity = np.array([0, 2, 5, 0])
+        edges = np.arange(-2, 16, 4)
+        yields = integrate_spectral_bins(x, intensity, edges)
+        np.testing.assert_allclose(yields, [3.5, 16, 4.5, np.nan])
+        self.assertAlmostEqual(np.nansum(yields), np.trapezoid(intensity, x))
+
+    def test_binned_beta_uses_integrated_moments_and_leaves_gaps(self):
+        x = [0, 1, 2, 3, 4, 5]
+        moments = [[1, 9, 9, np.nan, -1, -1], [2, 0, 0, np.nan, 3, 3]]
+        integrated = integrate_spectral_bins(x, moments, [0, 1, 2, 3, 4, 5])
+        np.testing.assert_allclose(anisotropy_values(integrated), [[0.2, 0, np.nan, np.nan, np.nan]])
+
     def test_supported_inverse_methods(self):
         y, x = np.indices((45, 45)) - 22
         image = np.exp(-(x * x + y * y) / 80)

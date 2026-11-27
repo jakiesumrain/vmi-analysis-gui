@@ -286,13 +286,16 @@ one Run/Stop control. See Section~\ref{sec:panels} for the panel-specific fields
 \subsection{Window layout and tabs}
 \label{sec:tabs}
 
-Use the left sidebar to select a panel. Expand or collapse \emph{Electron}
-and \emph{Ion} independently. Both start collapsed. The browser remembers
-which groups you open.
-On desktop, use the arrow beside \emph{Workspace} to collapse the sidebar
-to icons. Hover over an icon to see its tool name. Use the arrow again to
-expand the sidebar. The browser remembers the sidebar width.
-Open \emph{Settings} at the bottom of the sidebar for workspace and server controls.
+Open \emph{Workbench} in the left sidebar to select a panel. Expand or
+collapse \emph{Electron} and \emph{Ion} independently. Both start collapsed.
+The browser remembers which groups you open.
+On desktop, use the sidebar button beside the application title to collapse
+or expand the sidebar. Hover over a tool icon to see its name. Drag the right
+edge to resize the expanded sidebar, or focus the divider and use the left
+and right arrow keys. The browser remembers the sidebar width.
+Open the \emph{Settings} icon at the bottom right of the sidebar for workspace
+and server controls. In shared mode, the account name appears to its left
+when the sidebar is expanded.
 On narrow windows, scroll the tool rows above the panel.
 In \emph{Electron}, \emph{Acquire} groups \emph{GMD Map}, \emph{Movie},
 \emph{Dark Frame}, and \emph{Accumulate}. \emph{Analyze} groups
@@ -301,7 +304,8 @@ In \emph{Electron}, \emph{Acquire} groups \emph{GMD Map}, \emph{Movie},
 \emph{Ion} contains \emph{TPX3 Dump}, \emph{Ion TOF}, \emph{Ion momenta},
 \emph{Ion Pipeline}, and \emph{Live TPX3}. The folded \emph{Fallback} group
 contains three manual comparison tools. \emph{Agent} appears above
-\emph{Settings} when the deployment enables it.
+\emph{Workbench} when enabled. Use its chevron in the expanded sidebar to
+show or hide \emph{Analysis runs}.
 
 The footer shows running and queued jobs, the job limit, and the server's
 disconnect mode. Open \emph{Settings} to change the limit or disconnect mode,
@@ -451,21 +455,23 @@ selected band, masks, and fitted rings.
 
 \subsection{Run a panel with the Agent}
 
-Open \emph{Agent} and expand \emph{Connection}. Enter the model endpoint,
-model ID, API format, and API key. Choose \emph{Start session}.
-Use an endpoint you trust with the prompts and data you send. The server
-keeps the key only for the session. Local mode uses Pi on the host by
-default. Sandboxed shared mode uses the configured Docker or Podman image.
+Open \emph{Settings} and expand \emph{Agent connection}. Enter the model endpoint,
+model ID, API format, and API key. Choose \emph{Connect provider}.
+Use an endpoint you trust with the prompts and data you send. The provider
+connection stays in memory until you disconnect it or stop the server.
+Send a message to start or resume a chat in the sidebar using that connection.
+Local mode uses Pi on the host by default. Sandboxed shared mode uses the
+configured Docker or Podman image.
 
 Ask the Agent to prepare a supported operation, giving the input path and
 scientific parameters. Review the resolved settings and output paths.
 Choose \emph{Approve and run} to queue the job or \emph{Decline} to dismiss
 it. Return to the ordinary panel to check its form, console, and results.
 For a fit tied to a plot, use the panel's \emph{Ask Agent} control and
-review the selection in that panel. Trig Calibration can also accept the
-fitted ring into a selected extracted \code{.txt} calibration file after
-review. TPX3 Dump supports reviewed timewalk correction of an HDF5 file or
-acquisition collection.
+review the selection in that panel. In Trig Calibration, inspect the fitted
+ridge and residuals, then choose \emph{Accept ring} to append the fit to the
+selected extracted \code{.txt} calibration file. TPX3 Dump supports reviewed
+timewalk correction of an HDF5 file or acquisition collection.
 
 In Ion momenta, the result view's \emph{Ask Agent} controls apply or clear
 position and TOF gates, fit the current position-filtered spectrum, append
@@ -481,17 +487,15 @@ ambiguous alignment can pause the workflow for a shift decision.
 
 \subsection{Analyze a screenshot with the Agent}
 
-Open \emph{Connection}, enter the model IDs for your endpoint, and select
-the models that accept images under \emph{Image-capable models}. Start the
-session and choose one of those models in the composer. Paste or drop a
+Under \emph{Agent connection} in \emph{Settings}, enter the model IDs for your endpoint and select
+the models that accept images under \emph{Image-capable models}. Connect the
+provider and choose one of those models in the composer. Paste or drop a
 screenshot onto the composer and ask what you want to inspect. The screenshot
 is sent to the selected endpoint when you send the message.
 
-To check a measurement against the saved data, use \emph{+}
-$\rightarrow$ \emph{Link a run} and choose a completed Ion TOF spectrum,
-GMD2-filtered spectrum, or peak fit. In Ion TOF, \emph{Capture plot for Agent}
-takes a PNG of the displayed plot, including its zoom, and links the source
-run. Review both attachments before sending. Use the close button on either
+In Ion TOF, \emph{Capture plot for Agent} takes a PNG of the displayed plot,
+including its zoom, and links the source run so the Agent can check the saved
+data. Review both attachments before sending. Use the close button on either
 attachment to remove it from the draft.
 
 The Agent can report features visible in a screenshot by itself. When a run
@@ -507,7 +511,7 @@ Read the script, inputs, and parameters in the review before choosing
 and account running VMI Analysis. A shared Linux server uses the bundled
 Agent image in a separate container with networking disabled.
 
-Open \emph{Analysis runs} in the Agent header to follow the log, cancel a
+Open \emph{Analysis runs} under \emph{Agent} in the sidebar to follow the log, cancel a
 run, or download the approved script, run record, log, and output files.
 The script receives the run record path as its first argument. The record
 contains named input paths and JSON parameters. Write result files directly
@@ -689,6 +693,14 @@ The Linux host reads the datasets and runs the analysis. You need the
 Linux host's LAN address and an authorized SSH account. To give each person
 separate settings, files, and jobs, set up a shared server as described in
 Section~\ref{sec:shared-accounts}, then use the same tunnels below.
+
+On Windows, the optional
+\href{https://github.com/jakiesumrain/vmi-analysis-client}{VMI Analysis Client}
+can open the SSH tunnel and browser. To sign in automatically, save your VMI
+username and password under \emph{VMI account and Agent} in the client.
+Add model settings and an API key to start the Agent in sandboxed mode.
+The client keeps the password and key in the OS keychain. In manual-only
+mode, it opens the Workbench after sign-in.
 
 \begin{enumerate}
   \item For single-user mode, start the web server on the loopback interface
@@ -1557,8 +1569,11 @@ File & Written when & Contents \\
 \endfoot
 \code{vmi\_\allowbreak{}results\_\allowbreak{}raw.h5} & full batch, kept on resume & Localisation
 checkpoint and archive: one row per event with position, photons, size,
-eccentricity, signal, net gradient and global frame index. Downstream binning
-reads this file. \\
+eccentricity, signal, net gradient and global frame index. The
+\code{/frame\_roster} group records the acquisition order, source file,
+zero-based index within the file, and processing status for every frame
+(0 for skipped, 1 for processed, and 2 for failed). Processed frames include
+zero-hit frames. Binning reads the localisation table in this file. \\
 \addlinespace
 \code{vmi\_\allowbreak{}2d\_\allowbreak{}raw.npy} & full batch & 2D VMI histogram (weighted if GMD
 weighting is on). \\
@@ -1936,11 +1951,13 @@ Circularize sorts the saved rings by radius before it builds the radial model.
 \subsection{Circularize}
 \label{sec:circularize}
 
-\textbf{Purpose.} Correct radial distortion in one VMI image as a function
-of angle. Use a Gascooke trig-fit calibration. The panel launches
+\textbf{Purpose.} Correct radial distortion in a VMI image or export
+individual electron centroids and an integer count image. The panel launches
 \code{vmi\_\allowbreak{}analysis.circularization.circularization} with working
-directory \code{circularization/\allowbreak{}}. It is a standalone tool for inspecting
-the calibration. Add the corrected image to PES to generate its spectrum.
+directory \code{circularization/\allowbreak{}}. Add the corrected text image
+or integer NumPy image to PES to generate its spectrum.
+
+\subsubsection*{Image input}
 
 For a raw detector-grid calibration, open the same \code{vmi\_2d\_raw.npy}
 in Trig Calibration and Circularize. Use the same origin in both panels.
@@ -1959,7 +1976,7 @@ Field & Type and default & Saved key & CLI flag & Meaning \\
 \endhead
 \bottomrule
 \endfoot
-\code{Input image (.npy or .txt)} & file, Centroiding raw image &
+\code{VMI image or localization checkpoint} & file, Centroiding raw image &
 \emph{circularize.inp} & \code{-\allowbreak{}-\allowbreak{}input} & NumPy detector array or legacy text image. \\
 \addlinespace
 \code{Output image (.txt)} & save, \code{circularization/\allowbreak{}image\_\allowbreak{}circularized.\allowbreak{}txt} &
@@ -2056,6 +2073,83 @@ grid before resampling. \emph{Clear outputs} lists the selected corrected image,
 the diagnostic plots in the plot output directory, and any matching polar
 preview cache from this server session. The script does not print percentages.
 
+\subsubsection*{Checkpoint input}
+
+\begin{enumerate}
+  \item Choose a raw Centroiding \code{.h5} or \code{.hdf5} checkpoint in
+        \emph{VMI image or localization checkpoint}. It needs the frame roster
+        written by a fresh batch run. If the roster is missing, rerun
+        Centroiding with a new checkpoint filename.
+  \item Set \emph{Coordinate correction}. \emph{Apply circularization}
+        uses the extracted trig-fit file and optional radial reassignment.
+        \emph{Keep measured coordinates} exports the measured positions
+        without a calibration file.
+  \item Enter the grid shape, zero-based center, and \emph{Histogram bins
+        per detector pixel}. For circularization, use the geometry of the
+        image that was used for Trig Calibration. Choose the corrected HDF5
+        and integer histogram output files, then select \emph{Run}.
+\end{enumerate}
+
+Checkpoint correction inverts the same angle-dependent map used for image
+input. The \code{interp} radial model holds each trig coefficient at its last
+fitted value beyond its fitted range. Radial reassignment continues with the
+final offset. The checkpoint inverse follows this continuation to the
+histogram boundary and requires a strictly increasing radial map. Each
+retained electron contributes exactly one count to the histogram. The
+\emph{No Jacobian} setting applies to image input. Moving and binning
+individual electrons accounts for the change in area in checkpoint mode.
+
+The default outputs are \code{localizations\_\allowbreak{}circularized.h5}
+and \code{image\_\allowbreak{}circularized\_\allowbreak{}counts.npy}. The
+NumPy image is an unweighted \code{int64} array with shape
+\code{(NY, NX)}. The preview area shows both polar images for circularized
+coordinates and one for measured coordinates. When adding the NumPy image
+to PES, use the center and resolution factor from the histogram settings.
+Use the NumPy image as input to \code{pbasex\_counts} when you need integer
+counts.
+
+\begin{center}
+\footnotesize
+\begin{longtable}{@{}L{5.1cm}L{10.4cm}@{}}
+\toprule
+HDF5 path & Contents \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{/events/shot\_id}\newline
+\code{/events/x\_corrected}\newline
+\code{/events/y\_corrected}
+& Chunked \code{int64}, \code{float64}, and \code{float64} vectors with one
+entry per counted electron. In measured mode, the coordinates are the
+original retained positions. \\
+\addlinespace
+\code{/shots/id}
+& \code{int64} IDs of successfully processed shots in acquisition order,
+including zero-hit shots. \\
+\addlinespace
+\code{/geometry/x\_edges}\newline
+\code{/geometry/y\_edges}
+& Exact bin edges in detector pixels. The last bin includes its final
+edge. Geometry attributes give the center in those same units,
+the resolution factor, and the axis directions (right and down). \\
+\addlinespace
+Root attributes
+& Schema version, raw checkpoint path, coordinate correction mode, and a
+calibration identifier when correction is applied. Provenance also records
+counts by exclusion reason. \\
+\end{longtable}
+\end{center}
+
+Keep the raw checkpoint for original detections, fit diagnostics, and
+processing outcomes. The Agent operation
+\code{circularize\_\allowbreak{}checkpoint} exposes both coordinate modes.
+For a standalone run, use \code{-{}-checkpoint}, \code{-{}-shape},
+\code{-{}-center}, \code{-{}-resolution-factor}, \code{-{}-corrected-checkpoint},
+and \code{-{}-counts-output}. Set \code{-{}-coordinate-correction none} to
+keep measured coordinates. The default \code{circularize} mode uses
+\code{-{}-extracted} and accepts an optional \code{-{}-reassign-file}.
+
 \subsection{PES}
 \label{sec:pes}
 
@@ -2097,16 +2191,31 @@ images. Fit one or more peaks in a selected interval.
 \end{enumerate}
 
 \textbf{Angular anisotropy.} When enabled, the $\beta$ plot appears directly
-below the spectrum. Use \emph{$\beta$ spectrum} to select an image and
-\emph{$\beta$ plot axes} to set its limits independently. The plot shows
+below the spectrum. Use \emph{$\beta$ spectrum} to select an image.
+\emph{Spectrum axes} sets the shared X limits, and \emph{$\beta$ plot axes}
+sets individual Y limits for each order. The plot shows
 $\beta_L(E)=I_L(E)/I_0(E)$, where
 $I_L$ is the Legendre component of the measured angular distribution.
 The coefficients assume cylindrical symmetry about the vertical axis
 and use even orders. The plot omits bins with nonpositive isotropic
 intensity. Higher orders and weak-signal regions can be noisy. When
-multiple orders are selected, each $\beta_L$ is shown in its own panel
-with a shared horizontal axis and an independent vertical scale; explicit
-$\beta$ plot Y limits apply to every panel.
+multiple orders are selected, they are overlaid on one plot. Each order
+has its own color-matched vertical axis on the left. The $\beta$ ranges may
+extend beyond the entered limits to align zero across all orders.
+Open \emph{Uniform-grid spectra} below the native plots to see the spectrum
+and $\beta$ on the same equal-width bins. Expand \emph{Plot settings} to set
+the bin width, X limits, and individual Y limits for intensity and each
+$\beta$ order, then click
+\emph{Apply plot settings}.
+
+\textbf{Measure a uniform-grid bin with the Agent.} Ask about a completed
+PES run the Agent started, or include the completed run ID in your message.
+For example, ``Using 0.1 eV bins, what are the yield and $\beta_2$ in the
+bin containing 25 eV?'' Supply the spectrum
+number when the run contains multiple spectra. Include the bin width to
+match edited plot settings. The measurement reports the bin edges, the
+measured interval, the integrated yield, the bin-average intensity, and
+the available $\beta$ values. Uncalibrated runs use detector pixel squared.
 
 \textbf{Abel inversion options.} The folded \emph{Abel inversion options}
 section selects the detector quadrants used by the inversion: upper right
@@ -2286,10 +2395,18 @@ $j+d$ within the same acquisition. Select an inclusive GMD2 interval by
 dragging on the histogram or entering its limits. A blank limit uses the
 corresponding data extreme.
 
+Before choosing \emph{Apply GMD2 range}, enable \emph{Weight by GMD2} to
+normalize each included shot to the mean GMD2 of the aligned, selected
+shots. Each arrival receives the mean divided by its shot's GMD2. Weighted
+runs include only finite positive GMD2 values. The weighted TOF shows the
+reference GMD2 and the weighted sum per bin.
+
 Select a fit interval on the gated or unfiltered spectrum and fit Gaussian
 peaks. The fitted windows can use either spectrum. Counting uses individual
-arrivals in the GMD2-selected frames, and normalization divides by the number
-of selected frames. Overlapping peak windows can count the same arrival.
+arrivals in the GMD2-selected frames and uses the gate's saved weights when
+enabled. Yield divides the raw or weighted count by the number of selected
+frames, including those with zero hits. Overlapping peak windows can count
+the same arrival.
 Use \emph{Capture plot for Agent} to attach an image and link a supported run
 for measurement.
 
@@ -2303,8 +2420,8 @@ reference. Save or load species assignments as JSON.
 
 Enter the detector center, detector scale, and species parameters before
 plotting momenta. Choose the reconstruction model that matches your
-calibration. The Agent can prepare the initial histograms. Set gates,
-assign species, and reconstruct in the panel.
+calibration. The Agent can prepare the initial histograms. Use \emph{Ask Agent}
+in the result view to review gates, fits, species assignments, or reconstruction.
 
 \subsection{Ion Pipeline}
 
@@ -2313,9 +2430,18 @@ output directory. Set the LUNA and trigger options, the number of parallel
 delay positions, and whether to keep intermediate HDF5 dumps. Check the
 GMD2 pairing shift in Ion TOF before applying the same shift to the scan.
 
+Enable \emph{Weight by GMD2} to use one reference for the scan. The reference
+is the mean GMD2 across all aligned, selected shots with finite positive
+GMD2, including shots with zero arrivals. Each arrival is weighted by the
+scan reference divided by the GMD2 of its shot. The results record the
+reference in nA. The weighted counting error is the square root of the sum
+of squared arrival weights divided by the number of selected shots.
+
 Enter separate fit intervals for the peaks. Choose gated or ungated TOF
-for the fits. The pipeline fits each peak separately, counts individual
-arrivals in its fitted window, and divides by the selected frame count.
+for the fits. The gated fit uses the weighted TOF when weighting is enabled.
+Both fit sources use the selected shots for the final count, summing arrival
+weights in each fitted window when enabled. Yield divides the result by the
+selected shot count at each delay.
 The output includes a yield CSV and plot. Use the result controls to
 choose two peaks, view their ratio, and switch between linear and log
 scales. Delay-line position is in mm, with a displayed conversion of
@@ -2330,7 +2456,8 @@ GMD histogram limits and bin widths, then start the preview. The receiver
 accumulates the detector map, TOF histogram, and GMD histograms. The GMD
 time plot follows a rolling window. Frames with ambiguous trigger data
 remain visible in the receiver's diagnostic counts. The Agent can inspect
-the current tab's live snapshot after you start it.
+the current tab's live snapshot and propose starting, stopping, or resetting
+the preview. Approved start settings also appear in the Live TPX3 form.
 
 The \emph{Ion} $\rightarrow$ \emph{Fallback} group contains TPX3 Dump,
 Ion TOF, and Ion Pipeline variants for comparison with the standalone
@@ -2378,9 +2505,11 @@ Dark Frame & \code{dark\_\allowbreak{}mean.\allowbreak{}npy} or \code{dark\_\all
 Accumulate & \code{<output>.\allowbreak{}txt}, \code{<output>.\allowbreak{}png} & Accumulated matrix
 and its log-scale figure. \\
 \addlinespace
-Circularize & \code{image\_\allowbreak{}circularized.\allowbreak{}txt}, diagnostic PNGs &
-Corrected text image; the plot directory also receives a reassignment map
-figure when a reassignment file is used. \\
+Circularize & \code{image\_\allowbreak{}circularized.\allowbreak{}txt}, diagnostic PNGs,
+\code{localizations\_\allowbreak{}circularized.h5},
+\code{image\_\allowbreak{}circularized\_\allowbreak{}counts.npy} &
+Image input writes the corrected text matrix. Checkpoint input writes the
+shot-resolved HDF5 and the integer histogram. \\
 \addlinespace
 Movie & \code{<dataset>.\allowbreak{}mp4} or \code{.\allowbreak{}gif}, dumped frame PNGs &
 The movie file goes to the selected folder; dumped frames are disposable
@@ -2518,7 +2647,8 @@ Picasso localisation and histogram; \code{-\allowbreak{}-\allowbreak{}h5-\allowb
 \code{-\allowbreak{}-\allowbreak{}thresholds}, \code{-\allowbreak{}-\allowbreak{}weight-\allowbreak{}mode}, \code{-\allowbreak{}-\allowbreak{}weight-\allowbreak{}power}. \\
 \addlinespace
 \code{vmi\_\allowbreak{}analysis.circularization.circularization} & Distortion correction
-of one image; \code{-\allowbreak{}-\allowbreak{}input}, \code{-\allowbreak{}-\allowbreak{}output}, \code{-\allowbreak{}-\allowbreak{}shape}, \code{-\allowbreak{}-\allowbreak{}center},
+of an image or centroid checkpoint (Section~\ref{sec:circularize}). Image options include
+\code{-\allowbreak{}-\allowbreak{}input}, \code{-\allowbreak{}-\allowbreak{}output}, \code{-\allowbreak{}-\allowbreak{}shape}, \code{-\allowbreak{}-\allowbreak{}center},
 \code{-\allowbreak{}-\allowbreak{}extracted}, \code{-\allowbreak{}-\allowbreak{}reassign-\allowbreak{}file}, \code{-\allowbreak{}-\allowbreak{}no-\allowbreak{}jacobian}. \\
 \addlinespace
 \code{vmi\_\allowbreak{}analysis.circularization.process\_\allowbreak{}gmd\_\allowbreak{}bins} & Standalone GMD-bin batch

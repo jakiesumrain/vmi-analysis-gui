@@ -123,6 +123,13 @@ class PackageLayoutTests(unittest.TestCase):
             checkpoint = output / "vmi_results_raw.h5"
             localizations = pd.read_hdf(checkpoint, "localizations")
             np.testing.assert_array_equal(localizations["frame"], [0, 1, 2])
+            with h5py.File(checkpoint) as store:
+                roster = store["frame_roster"]
+                np.testing.assert_array_equal(roster["id"][:], [0, 1, 2, 3, 4])
+                np.testing.assert_array_equal(roster["frame_in_file"][:], [0, 1, 0, 1, 2])
+                np.testing.assert_array_equal(roster["status"][:], [1, 1, 1, 0, 0])
+                self.assertEqual([Path(path).name for path in roster["source_file"].asstr()[:]],
+                                 ["RAW-a.h5", "RAW-a.h5", "RAW-b.h5", "RAW-b.h5", "RAW-b.h5"])
             result = self.run_command([*command, "--frame-limit", "3", "--require-new-checkpoint"], folder, returncode=1)
             self.assertIn("already exists", result.stderr)
             pd.testing.assert_frame_equal(pd.read_hdf(checkpoint, "localizations"), localizations)
@@ -137,6 +144,28 @@ class PackageLayoutTests(unittest.TestCase):
                               "--tuning-frame-index", "4"], folder)
             metadata, _ = load_plot_data(output / TUNING_DATA)
             self.assertEqual(metadata["frame_index"], 4)
+
+    def test_zero_hit_centroid_run_exports_all_processed_shots(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            with h5py.File(folder / "RAW-empty.h5", "w") as store:
+                store.create_dataset("raw/data", data=np.full((3, 32, 32), 100, dtype=np.uint16))
+            output = folder / "results"
+            self.run_command(["-m", "vmi_analysis.centroiding.process_andor_vmi_PICASSO_v5_h5_batch",
+                              "--h5-dir", str(folder), "--output-dir", str(output), "--no-parallel",
+                              "--min-net-gradient", "1000", "--fitting-method", "lq"], folder)
+            checkpoint = output / "vmi_results_raw.h5"
+            self.assertTrue(pd.read_hdf(checkpoint, "localizations").empty)
+            self.assertEqual(np.load(output / "vmi_2d_raw.npy").sum(), 0)
+            corrected, counts = output / "shots.h5", output / "counts.npy"
+            self.run_command(["-m", "vmi_analysis.circularization.circularization",
+                              "--checkpoint", str(checkpoint), "--coordinate-correction", "none",
+                              "--shape", "32", "32", "--center", "16", "16",
+                              "--corrected-checkpoint", str(corrected), "--counts-output", str(counts)], folder)
+            with h5py.File(corrected) as store:
+                np.testing.assert_array_equal(store["shots/id"][:], [0, 1, 2])
+                self.assertTrue(all(not len(column) for column in store["events"].values()))
+            np.testing.assert_array_equal(np.load(counts), np.zeros((32, 32), dtype=np.int64))
 
     def test_centroid_dark_subtraction_requires_precomputed_numpy_file(self):
         with tempfile.TemporaryDirectory() as folder:

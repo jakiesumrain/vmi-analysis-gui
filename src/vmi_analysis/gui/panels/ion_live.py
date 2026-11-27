@@ -15,7 +15,8 @@ from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS, tof_bin_edges
 from .. import shared, theme
 from ..agent_panels import PanelInspection, PanelOperation, PanelView
 from ..centroid_plots import SERIES_COLORS, _style, plot_options
-from .common import field_grid, num_input
+from ..workflow import register_value
+from .common import field_grid, num_input, persist
 
 
 JOB_NAME = "Live TPX3"
@@ -41,6 +42,17 @@ def _endpoint(value):
     return value.strip()
 
 
+def _valid_endpoint_setting(value):
+    if not isinstance(value, str):
+        return False
+    try:
+        if value.strip():
+            _endpoint(value)
+    except ValueError:
+        return False
+    return True
+
+
 def agent_operations():
     inspection = PanelOperation(INSPECT_OPERATION, {
         "panel": JOB_NAME, "manual": JOB_NAME, "parameters": {}, "action": "inspect",
@@ -53,11 +65,12 @@ def agent_operations():
                    "Open Ask Agent to control preview in Live TPX3.",
         "parameters": {
             "action": {"type": "string", "choices": ["start", "stop", "reset"]},
-            "endpoint": {"type": "string", "description": "tcp://host:port; fixed by the server in shared mode"},
-            "minimum_ns": {"type": "number", "default": 0},
-            "maximum_ns": {"type": "number", "default": 15_000},
-            "bin_size_ns": {"type": "number", "default": DEFAULT_BIN_SIZE_NS},
-            "gmd": {"type": "object", "description": "GMD1 and GMD2 [minimum, maximum, bin size]; null values use automatic limits"},
+            "endpoint": {"type": "string", "description": "Start only. TCP publisher fixed by the server in shared mode."},
+            "minimum_ns": {"type": "number", "default": 0, "description": "Start only."},
+            "maximum_ns": {"type": "number", "default": 15_000, "description": "Start only."},
+            "bin_size_ns": {"type": "number", "default": DEFAULT_BIN_SIZE_NS, "description": "Start only."},
+            "gmd": {"type": "object", "description": "Start only. GMD1 and GMD2 [minimum, maximum, bin size]. "
+                                                    "Use null for automatic limits or bin size."},
         },
     }, None, ())
     return inspection, control
@@ -137,6 +150,9 @@ def build(_jobs, *, ask_agent=None):
         ui.label("Ask the server administrator to configure VMI_TPX3_LIVE_ENDPOINT.").classes("vmi-subtitle")
         return
 
+    def number(label, key, value=None):
+        return persist(num_input(label, value, step="any"), f"ion_live.{key}")
+
     receiver = None
     previous = None
     revision = 0
@@ -155,22 +171,22 @@ def build(_jobs, *, ask_agent=None):
 
     def control_form():
         return {
-            "action": "stop" if receiver is not None else "start",
+            "action": "start",
             "endpoint": configured_endpoint if shared.SERVER else endpoint.value,
             "minimum_ns": minimum.value, "maximum_ns": maximum.value, "bin_size_ns": tof_width.value,
             "gmd": {name: [control.value for control in fields] for name, fields in gmd_fields.items()},
         }
 
     def open_control():
-        initial = control_form()
         selected = receiver
+        initial = {"action": "stop"} if selected is not None else control_form()
         opened_revision = revision
 
         def bind(parameters):
             if receiver is not selected or revision != opened_revision:
                 raise ValueError("The live preview changed. Ask the Agent again from this panel.")
             if not isinstance(parameters, dict) or parameters.keys() - initial.keys():
-                raise ValueError("Use the live preview controls listed for this operation.")
+                raise ValueError("Use only the settings shown for this preview action.")
             draft = initial | parameters
             if draft["action"] not in ("start", "stop", "reset"):
                 raise ValueError("Choose start, stop, or reset.")
@@ -187,22 +203,35 @@ def build(_jobs, *, ask_agent=None):
         def review(_job, draft, approve, decline):
             with control_review, theme.panel_card():
                 theme.form_section("Agent live preview control")
-                action = ui.select(["start", "stop", "reset"], value=draft["action"], label="Action") \
-                    .props("outlined dense")
-                address = ui.input("Acquisition publisher", value=draft["endpoint"]).props("outlined dense")
-                if shared.SERVER:
-                    address.disable()
-                with field_grid(3):
-                    low = num_input("TOF minimum (ns)", draft["minimum_ns"], step="any")
-                    high = num_input("TOF maximum (ns)", draft["maximum_ns"], step="any")
-                    width = num_input("TOF bin size (ns)", draft["bin_size_ns"], step="any")
-                for name, values in draft["gmd"].items():
-                    ui.label(f"{name} histogram limits and bin size: {values}").classes("vmi-caption")
-                ui.label("Starting or resetting clears accumulated counts.").classes("vmi-subtitle")
+                if draft["action"] == "start":
+                    address = ui.input("Acquisition publisher", value=draft["endpoint"]).props("outlined dense")
+                    if shared.SERVER:
+                        address.disable()
+                    with field_grid(3):
+                        low = num_input("TOF minimum (ns)", draft["minimum_ns"], step="any")
+                        high = num_input("TOF maximum (ns)", draft["maximum_ns"], step="any")
+                        width = num_input("TOF bin size (ns)", draft["bin_size_ns"], step="any")
+                    review_gmd = {}
+                    with ui.expansion("GMD histogram settings").classes("w-full"):
+                        for name, values in draft["gmd"].items():
+                            with field_grid(3):
+                                review_gmd[name] = [
+                                    num_input(f"{name} {label} (nA)", value, step="any")
+                                    for label, value in zip(("minimum", "maximum", "bin size"), values, strict=True)
+                                ]
+                    ui.label("Starting clears accumulated counts.").classes("vmi-subtitle")
+                else:
+                    action = ui.select({"stop": "Stop preview", "reset": "Reset counts"}, value=draft["action"],
+                                       label="Action").props("outlined dense")
+                    ui.label("Resetting clears accumulated counts.").classes("vmi-subtitle")
 
                 async def confirm():
-                    edits = {"action": action.value, "endpoint": address.value, "minimum_ns": low.value,
-                             "maximum_ns": high.value, "bin_size_ns": width.value}
+                    if draft["action"] == "start":
+                        edits = {"endpoint": address.value, "minimum_ns": low.value, "maximum_ns": high.value,
+                                 "bin_size_ns": width.value,
+                                 "gmd": {name: [field.value for field in fields] for name, fields in review_gmd.items()}}
+                    else:
+                        edits = {"action": action.value}
                     try:
                         bind(draft | edits)
                     except (TypeError, ValueError) as exc:
@@ -287,6 +316,8 @@ def build(_jobs, *, ask_agent=None):
         reset_button.disable()
         for control in bin_controls:
             control.enable()
+        if not shared.SERVER:
+            endpoint.enable()
         status.set_text("Preview stopped.")
         return read_preview()
 
@@ -306,7 +337,9 @@ def build(_jobs, *, ask_agent=None):
             raise ValueError("The preview is already running.")
         if find_spec("zmq") is None:
             raise ValueError("Install live monitoring with uv sync --extra live, then restart the server.")
-        address, edges, limits = _preview_configuration(settings or control_form())
+        if settings is None:
+            settings = control_form()
+        address, edges, limits = _preview_configuration(settings)
         if charts is None:
             with output:
                 with ui.element("div").classes("vmi-live-detector-row"):
@@ -315,10 +348,19 @@ def build(_jobs, *, ask_agent=None):
                 with field_grid():
                     histograms = [ui.plotly(plot_options(go.Figure())).classes("w-full min-w-0") for _ in range(2)]
                 charts = (*plots, timeline, *histograms)
+        preview = LivePreview(address, edges)
+        preview.start()
+        receiver = preview
         gmd_limits.update(limits)
+        if not shared.SERVER:
+            endpoint.value = address
+            endpoint.disable()
+        minimum.value, maximum.value, tof_width.value = (
+            settings["minimum_ns"], settings["maximum_ns"], settings["bin_size_ns"])
+        for name, values in limits.items():
+            for field, value in zip(gmd_fields[name], values, strict=True):
+                field.value = value
         last_error = None
-        receiver = LivePreview(address, edges)
-        receiver.start()
         start_button.disable()
         stop_button.enable()
         reset_button.enable()
@@ -340,18 +382,35 @@ def build(_jobs, *, ask_agent=None):
                             placeholder="tcp://acquisition-host:5556").props("outlined dense").classes("w-full")
         if shared.SERVER:
             endpoint.disable()
+        else:
+            store = shared.settings_store()
+            endpoint_key = "ion_live.endpoint"
+            default_endpoint = configured_endpoint if _valid_endpoint_setting(configured_endpoint) else ""
+
+            def saved_endpoint():
+                value = store.get(endpoint_key, default_endpoint)
+                return value if _valid_endpoint_setting(value) else default_endpoint
+
+            def save_endpoint(event):
+                if _valid_endpoint_setting(event.value):
+                    store[endpoint_key] = event.value.strip()
+
+            endpoint.value = saved_endpoint()
+            endpoint.on_value_change(save_endpoint)
+            register_value(endpoint_key, saved_endpoint, _valid_endpoint_setting)
         with field_grid(3):
-            minimum = num_input("TOF minimum (ns)", 0, step="any")
-            maximum = num_input("TOF maximum (ns)", 15_000, step="any")
-            tof_width = num_input("TOF bin size (ns)", DEFAULT_BIN_SIZE_NS, step="any")
+            minimum = number("TOF minimum (ns)", "tof_min", 0)
+            maximum = number("TOF maximum (ns)", "tof_max", 15_000)
+            tof_width = number("TOF bin size (ns)", "tof_bin_width", DEFAULT_BIN_SIZE_NS)
         gmd_fields = {}
         with ui.expansion("GMD histogram settings", icon="bar_chart").classes("w-full"):
             ui.label("Leave a limit blank to use the data range. Leave bin size blank for 40 bins. "
                      "These settings apply only to the GMD histograms.").classes("vmi-subtitle")
             for name in ("GMD1", "GMD2"):
                 with field_grid(3):
-                    gmd_fields[name] = tuple(num_input(f"{name} {label} (nA)", None, step="any")
-                                             for label in ("minimum", "maximum", "bin size"))
+                    gmd_fields[name] = tuple(number(f"{name} {label} (nA)", f"{name.lower()}_{key}")
+                                             for label, key in (("minimum", "min"), ("maximum", "max"),
+                                                                ("bin size", "bin_width")))
         bin_controls = [minimum, maximum, tof_width, *(control for fields in gmd_fields.values() for control in fields)]
         with ui.row():
             start_button = ui.button("Start preview", icon="play_arrow", on_click=lambda: control_clicked("start"))

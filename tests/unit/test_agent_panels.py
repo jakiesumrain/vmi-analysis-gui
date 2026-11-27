@@ -8,13 +8,16 @@ from threading import Event
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import h5py
 import numpy as np
+import pandas as pd
 from nicegui import Client, ui
 
 from vmi_analysis.agent_backend import AgentRequest, AgentSession, ContainerLauncher, PANEL_REQUEST_TITLE
+from vmi_analysis.centroiding.frame_roster import FAILED, PROCESSED, write_frame_roster
+from vmi_analysis.centroiding.plot_data import save_plot_data
 from vmi_analysis.gui import shared
 from vmi_analysis.gui.agent_completion import path_completions
 from vmi_analysis.gui.panel_operations import build_registry
@@ -123,16 +126,33 @@ class AgentPanelTests(unittest.TestCase):
             buttons["Ask Agent to control preview"]()
             start_view = views[-1]
             self.assertEqual(start_view.operation, ion_live.CONTROL_OPERATION)
-            draft = start_view.bind({})
+            with self.assertRaisesRegex(ValueError, "administrator fixes"):
+                start_view.bind({"endpoint": "tcp://another-host:5556"})
+            draft = start_view.bind({"maximum_ns": 50, "bin_size_ns": 5,
+                                     "gmd": {"GMD1": [None, None, None], "GMD2": [1, 3, 1]}})
             self.assertEqual(draft["action"], "start")
-            start_view.render_review(None, draft, Mock(), Mock())
+            approve = AsyncMock()
+            start_view.render_review(None, draft, approve, Mock())
+            asyncio.run(buttons["Approve preview control"]())
+            approve.assert_awaited_once()
+            draft = start_view.bind(draft | approve.call_args.args[0])
             outcome = asyncio.run(start_view.run_interactive(draft))
             self.assertEqual(outcome["preview"]["status"], "waiting for frames")
+            self.assertEqual(outcome["preview"]["tof"]["bins"], 10)
+            self.assertEqual(self.account.settings["ion_live.tof_max"], 50)
+            self.assertEqual(self.account.settings["ion_live.tof_bin_width"], 5)
+            self.assertEqual(self.account.settings["ion_live.gmd2_bin_width"], 1)
             start.assert_called_once_with()
 
             buttons["Ask Agent to control preview"]()
             reset_view = views[-1]
+            with self.assertRaisesRegex(ValueError, "settings shown"):
+                reset_view.bind({"action": "reset", "gmd": None})
             reset_draft = reset_view.bind({"action": "reset"})
+            approve = AsyncMock()
+            reset_view.render_review(None, reset_draft, approve, Mock())
+            asyncio.run(buttons["Approve preview control"]())
+            approve.assert_awaited_once_with({"action": "reset"})
             self.assertEqual(asyncio.run(reset_view.run_interactive(reset_draft))["action"], "reset")
             self.assertEqual(reset.call_count, 2)
 
@@ -141,6 +161,8 @@ class AgentPanelTests(unittest.TestCase):
             stop_draft = stop_view.bind({"action": "stop"})
             self.assertEqual(asyncio.run(stop_view.run_interactive(stop_draft))["preview"]["status"], "stopped")
             stop.assert_called_once_with()
+            buttons["Ask Agent to control preview"]()
+            self.assertEqual(views[-1].bind({}), draft)
             with self.assertRaisesRegex(ValueError, "preview changed"):
                 reset_view.bind({})
 
@@ -165,9 +187,71 @@ class AgentPanelTests(unittest.TestCase):
         })
         self.assertEqual(result["selected_triggers"], 12)
         self.assertEqual(self.registry.measure(self.jobs, fit.id, params)["peaks"], [row])
+        np.savez(histogram, edges=np.array([10490, 10495, 10500, 10505, 10510]),
+                 pixels=np.array([0., .2, .75, .4]), selected_triggers=12, gmd2_reference_na=3.)
+        weighted = self.registry.measure(self.jobs, spectrum.id, params)
+        self.assertEqual(weighted["strongest_bin"]["counts"], .75)
+        self.assertEqual(weighted["gmd2_reference_na"], 3.)
         with patch.object(shared, "current_account", return_value=SimpleNamespace(name="other")):
             with self.assertRaisesRegex(ValueError, "in your workspace"):
                 self.registry.measure(self.jobs, spectrum.id, params)
+
+    def test_pes_measurement_reads_owned_uniform_bins_and_reports_coverage(self):
+        path = self.workspace / "pes.npz"
+        x = np.array([1., 4., 9.])
+        save_plot_data(path, {"alpha": 0.5, "beta_order": 4,
+                              "images": [{"path": "first.npy"}, {"path": "second.npy"}]},
+                       x_0=x, y_0=[2., 4., 9.], beta_x_0=x,
+                       moments_0=[[1., 2., 7.], [0., 0., 10.], [1., 1., np.nan]],
+                       x_1=x[1:], y_1=[8., 8.], beta_x_1=x[1:],
+                       moments_1=[[0., 0.], [1., 1.], [1., 1.]])
+        job = Job(pes.JOB_NAME, status="done", owner=self.account.name, extra={"pes_spectra": str(path)})
+        with self.jobs._lock:
+            self.jobs._jobs[job.id] = job
+        self.assertEqual(self.registry.measurement_context(job)["operation"], "pes")
+        self.assertIn("bin_width", self.registry.describe("pes")["measurements"])
+        params = {"coordinate": 4, "bin_width": 3, "unit": "eV"}
+        with self.assertRaisesRegex(ValueError, "2. second.npy"):
+            self.registry.measure(self.jobs, job.id, params)
+        params["spectrum"] = 1
+        measured = self.registry.measure(self.jobs, job.id, params)
+        self.assertEqual(measured["spectrum"], "1. first.npy")
+        self.assertEqual(measured["unit"], "eV")
+        self.assertEqual(measured["bin_edges"], [4., 7.])
+        self.assertEqual(measured["bin_center"], 5.5)
+        self.assertEqual(measured["integrated_yield"], 16.5)
+        self.assertEqual(measured["bin_average_intensity"], 5.5)
+        self.assertAlmostEqual(measured["beta"]["beta_2"], 6 / 7)
+        self.assertIsNone(measured["beta"]["beta_4"])
+
+        partial = self.registry.measure(self.jobs, job.id, params | {"coordinate": 10})
+        self.assertEqual(partial["bin_edges"], [7., 10.])
+        self.assertEqual(partial["measured_interval"], [7., 9.])
+        self.assertAlmostEqual(partial["bin_average_intensity"], 16 / 3)
+        uncovered = self.registry.measure(self.jobs, job.id, params | {"coordinate": 2, "spectrum": 2})
+        self.assertIsNone(uncovered["measured_interval"])
+        self.assertIsNone(uncovered["bin_average_intensity"])
+        second = self.registry.measure(self.jobs, job.id, params | {"spectrum": 2})
+        self.assertIsNone(second["beta"]["beta_2"])
+        for invalid in ({"coordinate": 11}, {"bin_width": 0}, {"bin_width": 0.0001}, {"unit": "pixel²"}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.registry.measure(self.jobs, job.id, params | invalid)
+        with patch.object(shared, "current_account", return_value=SimpleNamespace(name="other")):
+            with self.assertRaisesRegex(ValueError, "in your workspace"):
+                self.registry.measure(self.jobs, job.id, params)
+
+    def test_pes_measurement_defaults_to_the_panel_grid_and_uses_saved_units(self):
+        path = self.workspace / "uncalibrated.npz"
+        save_plot_data(path, {"alpha": None, "images": [{"path": "only.npy"}]}, x_0=[1., 9.], y_0=[2., 2.])
+        job = Job(pes.JOB_NAME, status="done", owner=self.account.name, extra={"pes_spectra": str(path)})
+        with self.jobs._lock:
+            self.jobs._jobs[job.id] = job
+        measured = self.registry.measure(self.jobs, job.id, {"coordinate": 1})
+        self.assertEqual(measured["unit"], "pixel²")
+        self.assertEqual(measured["bin_width"], 0.04)
+        self.assertEqual(measured["bin_edges"], [1., 1.04])
+        self.assertAlmostEqual(measured["bin_average_intensity"], 2.)
+        self.assertEqual(measured["beta"], {})
 
     def test_dark_frame_registration_validates_and_reserves_paths(self):
         raw = self.datasets / "dark"
@@ -377,6 +461,22 @@ class AgentPanelTests(unittest.TestCase):
                 "input": "/workspace/dump.segments.json", "output": "/workspace/dump.h5",
             })
 
+    def test_timewalk_agent_job_opens_the_correction_form(self):
+        source = self.workspace / "stats.h5"
+        source.touch()
+        job, _ = self.registry.prepare(self.jobs, "tpx3_timewalk", {"input": "/workspace/stats.h5"})
+        job.owner = self.account.name
+        job.status = "queued"
+        self.jobs._jobs[job.id] = job
+        client = Client(ui.page("/_test_timewalk_agent_form"))
+        self.addCleanup(client.delete)
+        with client, patch.object(shared, "workspace_timer"):
+            ion_luna.build(self.jobs)
+            stage = next(element for element in client.elements.values()
+                         if isinstance(element, ui.toggle) and ion_luna.CORRECT in element.options)
+            self.assertEqual(stage.value, ion_luna.CORRECT)
+            self.assertEqual(self.account.settings["ion_luna.correction_input"], str(source))
+
     def test_discovery_exposes_typed_inputs_and_rejects_internal_builder_options(self):
         spectrum = self.registry.describe("ion_tof")
         self.assertEqual(spectrum["parameters"]["bin_size_ns"]["unit"], "ns")
@@ -541,14 +641,10 @@ class AgentPanelTests(unittest.TestCase):
         self.assertEqual(self.registry.describe(operation)["panel"], "Trig Calibration")
         with self.assertRaisesRegex(ValueError, "Ask Agent"):
             self.registry.prepare(self.jobs, operation, params)
-        self.assertEqual(calibration._fit_parameters(params, max_radius=15),
-                         {**params, "accept": False, "output": ""})
-        accepted = calibration._fit_parameters(params | {"accept": True, "output": "/workspace/extracted.txt"},
-                                               max_radius=15)
-        self.assertEqual(accepted["output"], str(self.workspace / "extracted.txt"))
-        with self.assertRaisesRegex(ValueError, "trig-fit .txt"):
-            calibration._fit_parameters(params | {"accept": True, "output": "/workspace/extracted.json"},
-                                        max_radius=15)
+        self.assertEqual(calibration._fit_parameters(params, max_radius=15), params)
+        for automatic_save in ({"accept": True}, {"output": "/workspace/extracted.txt"}):
+            with self.subTest(automatic_save=automatic_save), self.assertRaisesRegex(ValueError, "fit options"):
+                calibration._fit_parameters(params | automatic_save, max_radius=15)
         with self.assertRaisesRegex(ValueError, "inside the loaded"):
             calibration._fit_parameters(params | {"band": [4, 16, 0, 360]}, max_radius=15)
         with self.assertRaisesRegex(ValueError, "finite numeric"):
@@ -591,6 +687,78 @@ class AgentPanelTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "your workspace"):
             self.registry.prepare(self.jobs, "circularize", params)
 
+    def test_circularize_checkpoint_is_discoverable_and_returns_both_artifacts(self):
+        checkpoint = self.datasets / "localizations.h5"
+        pd.DataFrame({"x": [1.5, 1.5], "y": [2.5, 2.5], "frame": [0, 3]}).to_hdf(
+            checkpoint, key="localizations", format="table")
+        with h5py.File(checkpoint, "r+") as store:
+            write_frame_roster(store, [("camera.h5", i) for i in range(4)],
+                               [PROCESSED, FAILED, PROCESSED, PROCESSED])
+        source = Job("Centroiding", status="done", owner=self.account.name,
+                     extra={"checkpoint": str(checkpoint)})
+        self.jobs._jobs[source.id] = source
+        operation = "circularize_checkpoint"
+        description = self.registry.describe()[operation]
+        self.assertEqual(description["panel"], "Circularize")
+        self.assertEqual(description["outputs"], ["corrected_checkpoint", "counts_output"])
+        self.assertNotIn("interp_order", description["parameters"])
+        params = {
+            "source_job_id": source.id, "shape_y": 6, "shape_x": 6, "center_x": 2, "center_y": 2,
+            "coordinate_correction": "none",
+            "corrected_checkpoint": "/workspace/corrected.h5", "counts_output": "/workspace/counts.npy",
+        }
+        with self.assertRaisesRegex(ValueError, "Missing center_x"):
+            self.registry.prepare(self.jobs, operation, {key: value for key, value in params.items()
+                                                         if key != "center_x"})
+        with self.assertRaisesRegex(ValueError, "read-only"):
+            self.registry.prepare(self.jobs, operation, params | {"counts_output": "/datasets/counts.npy"})
+        job, summary = self.registry.prepare(self.jobs, operation, params)
+        self.assertIsNone(self.jobs.get(job.id))
+        self.assertEqual(summary["Center (X, Y)"], [2, 2])
+        self.assertEqual(summary["Mode"], "Keep measured coordinates")
+        self.assertEqual(job_access(job).reads, {checkpoint})
+        preview = Path(job.extra["polar_preview"])
+        self.assertEqual(job_access(job).writes,
+                         {self.workspace / "corrected.h5", self.workspace / "counts.npy", preview})
+        explicit, _ = self.registry.prepare(self.jobs, operation, {
+            **{key: value for key, value in params.items() if key != "source_job_id"},
+            "input": "/datasets/localizations.h5",
+        })
+        self.assertEqual(explicit.cmd[:-2], job.cmd[:-2])
+        with patch.object(shared, "current_account", return_value=SimpleNamespace(name="other")):
+            with self.assertRaisesRegex(ValueError, "your workspace"):
+                self.registry.prepare(self.jobs, operation, params)
+
+        self.addCleanup(self.jobs.shutdown)
+        self.jobs.submit(job)
+        deadline = time.monotonic() + 20
+        while job.status in ("queued", "running") and time.monotonic() < deadline:
+            time.sleep(0.04)
+        self.assertEqual(job.status, "done", "\n".join(job.log))
+        self.assertEqual(self.registry.status(self.jobs, job.id)["files"], {
+            "corrected_checkpoint": "/workspace/corrected.h5", "counts_output": "/workspace/counts.npy",
+        })
+        self.assertEqual(adopt_agent_form(job, "circularize")["inp"], str(checkpoint))
+        with h5py.File(self.workspace / "corrected.h5") as store:
+            np.testing.assert_array_equal(store["events/shot_id"][:], [0, 3])
+            np.testing.assert_array_equal(store["shots/id"][:], [0, 2, 3])
+        counts = np.load(self.workspace / "counts.npy")
+        self.assertEqual(counts.dtype, np.int64)
+        self.assertEqual(counts[2, 1], 2)
+        self.assertEqual(counts.sum(), 2)
+        with np.load(preview) as polar:
+            self.assertEqual(set(polar.files), {"raw", "dr"})
+
+        client = Client(ui.page("/_test_circularize_checkpoint_polar"))
+        self.addCleanup(client.delete)
+        with (client, patch.object(shared, "workspace_timer"),
+              patch.object(circularize, "set_polar_view", wraps=circularize.set_polar_view) as displayed,
+              patch.object(circularize, "set_polar_source", wraps=circularize.set_polar_source) as rendered):
+            circularize.build(self.jobs)
+            displayed.assert_called_once()
+            self.assertTrue(displayed.call_args.args[0].visible)
+            rendered.assert_called_once()
+
     def test_pes_agent_generation_and_contextual_fit_use_resolved_spectra(self):
         first = self.workspace / "vmi.npy"
         second = self.datasets / "other.txt"
@@ -630,7 +798,7 @@ class AgentPanelTests(unittest.TestCase):
         point.mkdir(parents=True)
         params = {
             "input": "/datasets/scan", "output": "/workspace/ion-results",
-            "source": "clusters", "fit_tof": "ungated", "gmd_shift": -2,
+            "source": "clusters", "fit_tof": "ungated", "gmd_shift": -2, "weight_by_gmd2": True,
             "peaks": [{"name": " A ", "low": 10150, "high": 11050, "center": 10545},
                       {"name": "B", "low": 8800, "high": 9600, "center": 9155}],
         }
@@ -644,6 +812,7 @@ class AgentPanelTests(unittest.TestCase):
         self.assertEqual(proposed.extra["settings"], manual.extra["settings"])
         self.assertEqual(proposed.extra["settings"]["wsl_executable"], "")
         self.assertEqual(proposed.extra["panel_form"]["gate"], True)
+        self.assertTrue(proposed.extra["panel_form"]["weight_by_gmd2"])
         self.assertEqual(summary["Ratio CSV peak pair"], ["A", "B"])
         self.assertEqual(proposed.reads, [str(point)])
         self.assertEqual(self.jobs.jobs(), [])
@@ -653,6 +822,7 @@ class AgentPanelTests(unittest.TestCase):
         for change, message in (
             ({"output": "/datasets/output"}, "read-only"),
             ({"fit_bins": True}, "finite numeric"),
+            ({"gate_gmd": False}, "enabled GMD2 gate"),
             ({"disable_clustering": True}, "Enable clustering"),
             ({"wsl_executable": "custom"}, "listed by describe"),
             ({"peaks": [params["peaks"][0]] * 2}, "distinct name"),
@@ -755,9 +925,11 @@ class AgentPanelTests(unittest.TestCase):
             buttons["Ask Agent about X/Y gate"]()
             gate = views[-1]
             self.assertEqual(gate.operation, ion_momenta.GATE_OPERATION)
+            x_min = next(element for element in client.elements.values() if element._props.get("label") == "X min (px)")
             gate_draft = gate.bind({"bounds": [0, 1, 0, 1]})
             gate.render_review(None, gate_draft, Mock(), Mock())
             self.assertEqual(asyncio.run(gate.run_interactive(gate_draft))["arrivals"], 3)
+            self.assertEqual(x_min.value, 0)
             with self.assertRaisesRegex(ValueError, "gate changed"):
                 gate.bind({})
 
@@ -774,12 +946,23 @@ class AgentPanelTests(unittest.TestCase):
             buttons["Ask Agent about species"]()
             assignment = views[-1]
             assignment_draft = assignment.bind({"output": "/workspace/agent-species.json"})
-            assignment.render_review(None, assignment_draft, Mock(), Mock())
+            approve = AsyncMock()
+            assignment.render_review(None, assignment_draft, approve, Mock())
+            charge = [element for element in client.elements.values() if element._props.get("label") == "Charge (e)"][-1]
+            charge.value = 2.5
+            asyncio.run(buttons["Approve and append assignment"]())
+            approve.assert_not_awaited()
+            charge.value = -2.0
+            asyncio.run(buttons["Approve and append assignment"]())
+            approve.assert_awaited_once()
+            assignment_draft = assignment.bind(assignment_draft | approve.call_args.args[0])
             saved = asyncio.run(assignment.run_interactive(assignment_draft))
             self.assertEqual(saved["status"], "done")
             document = json.loads((self.workspace / "agent-species.json").read_text(encoding="utf-8"))
             self.assertEqual(document["schema"], ion_momenta.SPECIES_SCHEMA)
             self.assertEqual(document["species"][0]["formula"], "Xe")
+            self.assertEqual(document["species"][0]["charge"], -2)
+            self.assertIs(type(document["species"][0]["charge"]), int)
 
             buttons["Ask Agent about reconstruction"]()
             reconstruction = views[-1]
@@ -788,6 +971,11 @@ class AgentPanelTests(unittest.TestCase):
             result = asyncio.run(reconstruction.run_interactive(reconstruction_draft))
             self.assertEqual(result["status"], "done")
             self.assertEqual(result["results"][0]["formula"], "Xe")
+
+            buttons["Ask Agent about X/Y gate"]()
+            clear_gate = views[-1]
+            self.assertIsNone(asyncio.run(clear_gate.run_interactive(clear_gate.bind({"bounds": None})))["bounds"])
+            self.assertIsNone(x_min.value)
 
     def test_folder_dump_proposal_marks_the_folder_input_mode(self):
         self.datasets.joinpath("frames").mkdir()
@@ -842,6 +1030,12 @@ class AgentPanelTests(unittest.TestCase):
         })
         self.assertEqual(options["Alignment shift d (frames)"], -1)
         self.assertEqual(gate.extra["metadata"], str(metadata))
+        self.assertNotIn("--weight-by-gmd2", gate.cmd)
+        weighted_gate, weighted_options = self.registry.prepare(self.jobs, "ion_tof_gate", {
+            "tof_job_id": spectrum.id, "gmd_min_na": 2, "gmd_max_na": 8, "shift": -1, "weight_by_gmd2": True,
+        })
+        self.assertIn("--weight-by-gmd2", weighted_gate.cmd)
+        self.assertEqual(weighted_options["Weight by GMD2"], "Yes")
         gate.status = "done"
         gate.owner = self.account.name
         self.jobs._jobs[gate.id] = gate
@@ -1013,6 +1207,18 @@ class AgentPanelTests(unittest.TestCase):
         clock[0] = 301
         self.assertFalse(session.take_panel_request("test-id"))
 
+    def test_approval_details_render_paths_and_nested_settings_as_plain_text(self):
+        client = Client(ui.page("/_test_agent_approval_details"))
+        self.addCleanup(client.delete)
+        image = r"E:\data\scientist's <sample>.txt"
+        with client:
+            agent._render_review_details({"VMI images": [image, "second.txt"],
+                                          "Shared geometry": {"center": (476, 473), "rotation (degrees)": 90},
+                                          "Quadrants": ["ur", "ul", "ll", "lr"]})
+        labels = [element.text for element in client.elements.values() if isinstance(element, ui.label)]
+        self.assertEqual(labels, ["VMI images", image, "second.txt", "Shared geometry", "center",
+                                  "476, 473", "rotation (degrees)", "90", "Quadrants", "ur, ul, ll, lr"])
+
     def test_at_completion_matches_nested_paths_and_stays_within_the_workspace(self):
         folder = self.workspace / "Results"
         folder.mkdir()
@@ -1053,6 +1259,7 @@ class AgentPanelTests(unittest.TestCase):
         jobs.submit.side_effect = lambda job: job
 
         session = Mock(id="session", status="ready")
+        session.chat = None
         session.snapshot.return_value = {
             "id": session.id, "status": "ready", "activity": "", "entries": [], "diagnostics": [],
         }
@@ -1083,7 +1290,11 @@ class AgentPanelTests(unittest.TestCase):
                 timers.setdefault(callback.__name__, callback)
 
             with client, patch.object(shared, "workspace_timer", timer), patch.object(ui, "button", button):
-                ask_agent = agent.build(jobs, registry=self.registry, navigate=navigate)
+                with ui.dialog() as settings_dialog:
+                    connection_settings = ui.expansion("Agent connection")
+                ask_agent = agent.build(jobs, registry=self.registry, navigate=navigate,
+                                        settings_dialog=settings_dialog, connection_settings=connection_settings,
+                                        history_navigation=ui.column())
                 ion_tof._peak_fitting(jobs, gated, np.arange(11), {"pixels": np.ones(10)}, ask_agent=ask_agent)
             return timers, buttons, navigate
 

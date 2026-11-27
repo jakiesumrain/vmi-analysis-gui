@@ -62,6 +62,9 @@ def _measure_tof(jobs, job, parameters):
                   "spectrum": ("GMD2-gated" if job.name in (FILTER_JOB_NAME, FIT_JOB_NAME) else "ungated")}
         if "selected_triggers" in data:
             result["selected_triggers"] = int(data["selected_triggers"])
+        weighted = "gmd2_reference_na" in data
+        if weighted:
+            result.update(count_mode="GMD2-weighted", gmd2_reference_na=float(data["gmd2_reference_na"]))
         if fitted:
             peaks = json.loads(data[f"{source}_peaks"].item())
             result.update(method="Saved Gaussian fit", peaks=[
@@ -75,12 +78,12 @@ def _measure_tof(jobs, job, parameters):
         indices = np.flatnonzero((centers >= low) & (centers <= high))
         result.update(method="Highest histogram bin with its center inside the requested interval",
                       strongest_bin=None)
-        if indices.size and (maximum := int(counts[indices].max())) > 0:
+        if indices.size and (maximum := counts[indices].max()) > 0:
             maxima = indices[counts[indices] == maximum]
             index = maxima[0]
             result["strongest_bin"] = {
                 "center_ns": float(centers[index]), "edges_ns": edges[index:index + 2].tolist(),
-                "counts": maximum, "bins_tied_for_maximum": len(maxima),
+                "counts": float(maximum) if weighted else int(maximum), "bins_tied_for_maximum": len(maxima),
             }
         return result
 
@@ -136,6 +139,8 @@ def agent_operations():
             "gmd_min_na": {"type": "number", "unit": "nA"},
             "gmd_max_na": {"type": "number", "unit": "nA"},
             "shift": {"type": "integer", "unit": "frames", "choices": list(GMD_SHIFTS)},
+            "weight_by_gmd2": {"type": "boolean", "default": False,
+                               "description": "Weight each arrival by the mean selected GMD2 divided by its frame's GMD2."},
         },
     }
     fit = {
@@ -200,9 +205,11 @@ def _gate(jobs, params):
         metadata = parent.extra["source_file"]
     low, high = number(params["gmd_min_na"]), number(params["gmd_max_na"])
     shift = params["shift"]
-    job = filtered_job(parent, resolve_path(metadata), low, high, shift)
+    weighted = boolean(params.get("weight_by_gmd2", False))
+    job = filtered_job(parent, resolve_path(metadata), low, high, shift, weight_by_gmd2=weighted)
     return job, {"TOF job": parent.id, "Metadata": job.extra["metadata"], "GMD2 minimum (nA)": low,
-                 "GMD2 maximum (nA)": high, "Alignment shift d (frames)": shift}
+                 "GMD2 maximum (nA)": high, "Alignment shift d (frames)": shift,
+                 "Weight by GMD2": "Yes" if weighted else "No"}
 
 
 def _fit(jobs, params):
@@ -228,7 +235,7 @@ def _fit(jobs, params):
     return job, {"Gated TOF job": parent.id, "Spectra": targets, "Fit range (ns)": region,
                  "Peak estimates (ns)": parsed or "Automatic", "Baseline": baseline,
                  "Fit spectrum": "Unfiltered" if original else "GMD2-gated",
-                 "Counting and normalization": "GMD2-gated"}
+                 "Counting and normalization": "GMD2-gated and weighted" if parent.extra.get("weight_by_gmd2") else "GMD2-gated"}
 
 
 def _gmd_histogram(label, values):
@@ -437,18 +444,20 @@ def _mark_interval(fig, low, high, selecting):
                       selectionrevision=f"{low}:{high}")
 
 
-def _tof_figure(edges, spectra, title, *, selecting=False):
+def _tof_figure(edges, spectra, title, *, selecting=False, weighted=False):
     fig = make_subplots(rows=len(spectra), cols=1, shared_xaxes=True,
                         subplot_titles=[SOURCES[source] for source in spectra])
     for row, (source, counts) in enumerate(spectra.items(), start=1):
         # An invisible bin-center trace enables selection without shifting the step histogram.
+        hover = "Weighted count %{y:.6g}" if weighted else "Count %{y:,}"
         fig.add_scatter(x=edges, y=np.r_[counts, 0], mode="lines", line_shape="hv",
-                        name=SOURCES[source], hovertemplate="TOF %{x:.4~g} ns<br>Count %{y:,}<extra></extra>",
+                        name=SOURCES[source], hovertemplate=f"TOF %{{x:.4~g}} ns<br>{hover}<extra></extra>",
                         row=row, col=1)
         if selecting:
             fig.add_scatter(x=(edges[:-1] + edges[1:]) / 2, y=counts, mode="markers",
                             marker=dict(opacity=0), showlegend=False, hoverinfo="skip", row=row, col=1)
-        fig.update_yaxes(title_text="Counts / bin", rangemode="tozero", row=row, col=1)
+        fig.update_yaxes(title_text="Weighted counts / bin" if weighted else "Counts / bin",
+                         rangemode="tozero", row=row, col=1)
     _style(fig, title)
     fig.update_layout(height=400 if len(spectra) == 1 else 650)
     fig.update_xaxes(title_text="Time of flight (ns)", row=len(spectra), col=1)
@@ -504,7 +513,7 @@ def spectrum_job(path, *, source="pixels", reference=DEFAULT_REFERENCE, width=DE
     return job
 
 
-def filtered_job(original_job, metadata, low, high, shift, *, pending_metadata=False):
+def filtered_job(original_job, metadata, low, high, shift, *, pending_metadata=False, weight_by_gmd2=False):
     if "source_file" not in original_job.extra:
         raise ValueError("Plot TOF again before filtering this older result.")
     source = shared.checked_path(original_job.extra["source_file"])
@@ -521,8 +530,11 @@ def filtered_job(original_job, metadata, low, high, shift, *, pending_metadata=F
     job.cmd = [sys.executable, "-m", "vmi_analysis.ion_tof", "--input", str(source),
                "--output", str(result), "--tof-result", str(original), "--metadata", str(metadata),
                "--reference", reference, f"--gmd-min={low}", f"--gmd-max={high}", "--gmd-shift", str(shift)]
+    if weight_by_gmd2:
+        job.cmd.append("--weight-by-gmd2")
     job.extra.update(histogram=str(result), parent_id=original_job.id, metadata=str(metadata),
-                     gmd_min=low, gmd_max=high, gmd_shift=shift, source_file=str(source), reference=reference)
+                     gmd_min=low, gmd_max=high, gmd_shift=shift, source_file=str(source), reference=reference,
+                     weight_by_gmd2=weight_by_gmd2)
     return job
 
 
@@ -710,7 +722,8 @@ def _gmd_section(jobs, view, save, *, ask_agent=None):
             low, high = gmd_limits(readings, gmd_low.value, gmd_high.value)
             if shift.value is None:
                 raise ValueError("Select an alignment shift before filtering.")
-            job = jobs.submit(filtered_job(loaded_job, loaded_metadata, low, high, shift.value))
+            job = jobs.submit(filtered_job(loaded_job, loaded_metadata, low, high, shift.value,
+                                           weight_by_gmd2=weight_by_gmd2.value))
             filtered_display.clear()
             filter_view.attach(job)
         except (OSError, ValueError, ResourceBusyError) as exc:
@@ -728,25 +741,30 @@ def _gmd_section(jobs, view, save, *, ask_agent=None):
             spectra = {source: result[source] for source in ("pixels", "clusters") if source in result}
             selected = int(result["selected_triggers"])
             total = int(result["triggers"])
+            gmd2_reference = float(result["gmd2_reference_na"]) if "gmd2_reference_na" in result else None
+        weighted = gmd2_reference is not None
         original_path = shared.checked_path(original_job.extra["histogram"])
         with np.load(original_path, allow_pickle=False) as original:
             unfiltered_spectra = {source: original[source] for source in spectra}
         filtered_display.clear()
         with filtered_display:
-            theme.form_section("GMD2-filtered TOF")
+            theme.form_section("GMD2-filtered, weighted TOF" if weighted else "GMD2-filtered TOF")
             ui.label(f'GMD2 {job.extra["gmd_min"]:g}–{job.extra["gmd_max"]:g} nA · '
                      f'shift {job.extra["gmd_shift"]:+d} · {selected:,} of {total:,} triggers').classes("vmi-caption")
+            if weighted:
+                ui.label(f"Mean selected GMD2: {gmd2_reference:.6g} nA").classes("vmi-caption")
             if not any(counts.any() for counts in spectra.values()):
                 ui.label("No counts in the TOF range for these triggers.").classes("vmi-subtitle")
-                fig = _tof_figure(edges, spectra, "GMD2-filtered time-of-flight spectra")
+                fig = _tof_figure(edges, spectra, "GMD2-filtered time-of-flight spectra", weighted=weighted)
                 chart = ui.plotly(plot_options(fig)).classes("w-full")
                 _capture_plot(chart, job, ask_agent)
             else:
-                _peak_fitting(jobs, job, edges, spectra, ask_agent=ask_agent)
+                _peak_fitting(jobs, job, edges, spectra, ask_agent=ask_agent, weighted=weighted)
             with ui.expansion("Unfiltered TOF", icon="show_chart", value=False).classes("w-full gap-4").props(
                     'data-tof-fit-source="unfiltered"'):
-                ui.label("Fits the unfiltered spectrum to define peak windows. Counting and normalization "
-                         f"still use the {selected:,} GMD2-selected triggers above.").classes("vmi-subtitle")
+                counts = "Weighted counts" if weighted else "Counts"
+                ui.label(f"Fits the unfiltered spectrum to define peak windows. {counts} and yield use "
+                         f"the {selected:,} GMD2-selected triggers above.").classes("vmi-subtitle")
                 if selected and any(counts.any() for counts in unfiltered_spectra.values()):
                     _peak_fitting(jobs, job, edges, unfiltered_spectra, unfiltered_result=original_path,
                                   ask_agent=ask_agent, display_job=original_job)
@@ -761,6 +779,7 @@ def _gmd_section(jobs, view, save, *, ask_agent=None):
             gmd_low.value = job.extra["gmd_min"]
             gmd_high.value = job.extra["gmd_max"]
             shift.value = job.extra["gmd_shift"]
+            weight_by_gmd2.value = job.extra.get("weight_by_gmd2", False)
 
     with theme.panel_card().props('data-ion-tof-checkpoint') as checkpoint_card:
         checkpoint_card.set_visibility(False)
@@ -803,9 +822,13 @@ def _gmd_section(jobs, view, save, *, ask_agent=None):
                 .props("outlined dense")
         for field in (gmd_low, gmd_high):
             field.on_value_change(lambda _: refresh_gmd_plot())
+        weight_by_gmd2 = save(ui.checkbox("Weight by GMD2", value=False), "weight_by_gmd2")
         ui.label("GMD2 row j selects camera frame j + d. Drag to apply a range, or enter limits and "
                  "click Apply GMD2 range. Pairing stays within each acquisition. The limits are inclusive."
                  ).classes("vmi-subtitle")
+        ui.label("With weighting enabled, each arrival’s weight is the mean GMD2 of the selected shots "
+                 "divided by the GMD2 of its shot. Only shots with finite, positive GMD2 are included."
+                 ).classes("vmi-caption")
         filter_view.run_button("Apply GMD2 range", on_click=run_filter)
         filter_console = ui.column().classes("w-full")
     filtered_display = ui.column().classes("w-full gap-4")
@@ -826,14 +849,15 @@ def _gmd_section(jobs, view, save, *, ask_agent=None):
     return reset_gmd, set_metadata, restore_agent_gate
 
 
-def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None, ask_agent=None, display_job=None):
+def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None, ask_agent=None, display_job=None,
+                  weighted=False):
     peak_rows = []
     fit_job_name = UNFILTERED_FIT_JOB_NAME if unfiltered_result is not None else FIT_JOB_NAME
     title = "Unfiltered time-of-flight spectra" if unfiltered_result is not None else "GMD2-filtered time-of-flight spectra"
 
     def refresh_plot():
         selecting = mode.value == "Select fit range"
-        fig = _tof_figure(edges, spectra, title, selecting=selecting)
+        fig = _tof_figure(edges, spectra, title, selecting=selecting, weighted=weighted)
         _mark_interval(fig, fit_low.value, fit_high.value, selecting)
         fig.update_layout(uirevision=fit_job_name)
         plot.update_figure(plot_options(fig))
@@ -929,8 +953,9 @@ def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None,
                        for source in spectra if f"{source}_curve" in data}
             if results:
                 low, high = job.extra["fit_range"]
+                reference = float(data["gmd2_reference_na"]) if "gmd2_reference_na" in data else None
                 _show_peak_fits(results, job.extra["baseline"], int(data["selected_triggers"]), low, high,
-                                job=job, ask_agent=ask_agent)
+                                job=job, ask_agent=ask_agent, gmd2_reference=reference)
 
     with ui.row().classes("items-center gap-2"):
         mode = ui.toggle(["Zoom", "Select fit range"], value="Zoom", on_change=lambda _: refresh_plot())
@@ -961,14 +986,18 @@ def _peak_fitting(jobs, filtered_job, edges, spectra, *, unfiltered_result=None,
     refresh_plot()
 
 
-def _show_peak_fits(results, model, selected, fit_low, fit_high, *, job, ask_agent):
+def _show_peak_fits(results, model, selected, fit_low, fit_high, *, job, ask_agent, gmd2_reference=None):
     ui.label(f"Fit range {fit_low:g}–{fit_high:g} ns · {selected:,} GMD-selected triggers").classes("vmi-caption")
-    ui.label("Counts use individual arrivals from μ − 3σ (inclusive) to μ + 3σ (exclusive). "
+    weighted = gmd2_reference is not None
+    count_label = "Weighted counts" if weighted else "Counts"
+    if weighted:
+        ui.label(f"GMD2-weighted counts · reference {gmd2_reference:.6g} nA").classes("vmi-caption")
+    ui.label(f"{count_label} use individual arrivals from μ − 3σ (inclusive) to μ + 3σ (exclusive). "
              "Counts include background and any overlapping peaks. Yield divides counts by all selected triggers, "
              "including those with zero hits.").classes("vmi-subtitle")
     columns = [("spectrum", "Spectrum"), ("peak", "Peak"), ("center", "Center (ns)"),
                ("fwhm", "FWHM (ns)"), ("low", "Window min (ns)"), ("high", "Window max (ns)"),
-               ("counts", "Counts in window"), ("yield_per_trigger", "Counts per selected trigger"),
+               ("counts", f"{count_label} in window"), ("yield_per_trigger", f"{count_label} per selected trigger"),
                ("bound", "At bound")]
     rows = [dict(spectrum=SOURCES[source], **peak) for source, (_, peaks) in results.items() for peak in peaks]
     ui.table(columns=[dict(name=key, field=key, label=label) for key, label in columns],
@@ -984,7 +1013,8 @@ def _show_peak_fits(results, model, selected, fit_low, fit_high, *, job, ask_age
         (x, fitted, background, residual), peaks = results[target.value]
         grid, total, baseline, components = evaluate_fit_for_plot(x, background, peaks)
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.74, 0.26], vertical_spacing=0.09)
-        fig.add_scatter(x=x, y=fitted + residual, mode="markers", name="Counts", marker=dict(size=8), row=1, col=1)
+        fit_count_label = count_label if job.name == FIT_JOB_NAME else "Counts"
+        fig.add_scatter(x=x, y=fitted + residual, mode="markers", name=fit_count_label, marker=dict(size=8), row=1, col=1)
         fig.add_scatter(x=grid, y=total, mode="lines", name="Total fit", row=1, col=1)
         if model != "None":
             fig.add_scatter(x=grid, y=baseline, mode="lines", name="Baseline", line=dict(dash="dot"), row=1, col=1)
@@ -996,7 +1026,7 @@ def _show_peak_fits(results, model, selected, fit_low, fit_high, *, job, ask_age
         _style(fig, "TOF peak fit and residuals")
         fig.update_layout(height=570, showlegend=True)
         fig.update_xaxes(title_text="Time of flight (ns)", row=2, col=1)
-        fig.update_yaxes(title_text="Counts / bin", row=1, col=1)
+        fig.update_yaxes(title_text=f"{fit_count_label} / bin", row=1, col=1)
         fig.update_yaxes(title_text="Residual", row=2, col=1)
         chart.update_figure(plot_options(fig))
 

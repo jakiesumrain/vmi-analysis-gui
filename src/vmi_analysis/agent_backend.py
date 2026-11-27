@@ -1,4 +1,4 @@
-"""Per-user pi RPC sessions with disposable credentials and sandbox launchers."""
+"""Per-account provider connections and isolated Pi conversations."""
 
 from __future__ import annotations
 
@@ -12,12 +12,13 @@ import threading
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from http.client import HTTPConnection, HTTPException, HTTPSConnection
 from importlib.resources import files
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .agent_history import AgentHistory
 from .paths import GENERATED_DIR
 
 API_FORMATS = {
@@ -30,6 +31,13 @@ MAX_RECORD_BYTES = 4 * 1024 * 1024
 PROVIDER = "vmi-custom"
 PANEL_REQUEST_TITLE = "VMI panel operation"
 PANEL_REQUEST_TIMEOUT = 300
+VMI_SYSTEM_PROMPT = (
+    "You are the VMI Analysis Agent, embedded in the VMI Analysis workbench. "
+    "Help users run and interpret velocity-map imaging analyses. "
+    "Introduce yourself as the VMI Analysis Agent. If asked what powers you, explain that you run on the Pi agent runtime. "
+    "Use vmi_panel to discover supported workbench operations, propose runs for user approval, "
+    "and inspect available results. Follow the workbench approval flow for panel runs."
+)
 SLASH_CONTROLS = {
     "new": ("new_session", "Start a new conversation"),
     "compact": ("compact", "Compact the current conversation"),
@@ -45,12 +53,14 @@ class AgentRequest:
     config_root: Path
     base_url: str
     model: str
-    api_key: str
+    api_key: str = field(repr=False)
     api: str = "openai-completions"
     datasets: Path | None = None
     additional_models: tuple[str, ...] = ()
     image_models: tuple[str, ...] = ()
     analysis: Path | None = None
+    session_dir: Path | None = None
+    working_directory: Path | None = None
 
     @property
     def model_ids(self) -> tuple[str, ...]:
@@ -157,9 +167,10 @@ def write_models_config(config_dir: Path, request: AgentRequest) -> Path:
     return path
 
 
-def agent_arguments(model: str, extension: str) -> list[str]:
-    return ["--mode", "rpc", "--no-session", "--no-extensions", "--extension", extension,
-            "--provider", PROVIDER, "--model", model]
+def agent_arguments(model: str, extension: str, session_dir=None) -> list[str]:
+    storage = ["--no-session"] if session_dir is None else ["--session-dir", str(session_dir), "--continue"]
+    return ["--mode", "rpc", *storage, "--no-extensions", "--extension", extension,
+            "--append-system-prompt", VMI_SYSTEM_PROMPT, "--provider", PROVIDER, "--model", model]
 
 
 def process_options() -> dict:
@@ -184,8 +195,8 @@ class SubprocessLauncher:
         env["PI_CODING_AGENT_DIR"] = str(config_dir)
         try:
             return subprocess.Popen(
-                [executable, *agent_arguments(request.model, str(PANEL_EXTENSION))],
-                cwd=request.workspace,
+                [executable, *agent_arguments(request.model, str(PANEL_EXTENSION), request.session_dir)],
+                cwd=request.working_directory or request.workspace,
                 env=env,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -232,18 +243,26 @@ class ContainerLauncher:
             command.extend(["--volume", f"{request.datasets}:/datasets:ro"])
         if request.analysis is not None:
             command.extend(["--volume", f"{request.analysis}:/analysis:ro"])
+        if request.session_dir is not None:
+            command.extend(["--volume", f"{request.session_dir}:/history:rw"])
         if rootless and Path(self.runtime).stem == "podman":
             command.append("--userns=keep-id")
         elif not rootless and sys.platform != "win32" and hasattr(os, "getuid"):
             command.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
+        workdir = "/workspace"
+        if request.working_directory is not None and request.working_directory != request.workspace:
+            workdir += "/" + request.working_directory.relative_to(request.workspace).as_posix()
         command.extend([
-            "--workdir", "/workspace",
+            "--workdir", workdir,
             self.image,
-            *agent_arguments(request.model, "/opt/vmi-agent/src/vmi_analysis/gui/assets/agent_panels.js"),
+            *agent_arguments(request.model, "/agent/agent_panels.js",
+                             "/history" if request.session_dir is not None else None),
         ])
         return command
 
     def launch(self, request: AgentRequest, config_dir: Path, session_id: str) -> subprocess.Popen:
+        # Keep the extension and its history redaction in sync with the server.
+        (config_dir / "agent_panels.js").write_bytes(PANEL_EXTENSION.read_bytes())
         env = os.environ.copy()
         env["VMI_AGENT_API_KEY"] = request.api_key
         try:
@@ -312,7 +331,7 @@ def terminate_process_tree(process: subprocess.Popen) -> None:
 
 
 class AgentSession:
-    def __init__(self, request: AgentRequest, launcher, *, clock=time.monotonic):
+    def __init__(self, request: AgentRequest, launcher, *, clock=time.monotonic, history=None, chat=None):
         validate_request(request)
         self.id = uuid.uuid4().hex
         self.request = request
@@ -321,7 +340,9 @@ class AgentSession:
         self.status = "starting"
         self.error = ""
         self.created = time.time()
-        self.entries = deque(maxlen=1000)
+        self.history = history
+        self.chat = chat
+        self.entries = deque(history.entries(chat) if chat is not None else (), maxlen=1000)
         self.diagnostics = deque(maxlen=500)
         self.process: subprocess.Popen | None = None
         self.config_dir = request.config_root / self.id
@@ -404,7 +425,8 @@ class AgentSession:
                     or len(self.entries) == self.entries.maxlen):
                 self.entries.append({"kind": "assistant", "text": "", "detail": ""})
                 self._assistant_index = len(self.entries) - 1
-            self.entries[self._assistant_index]["text"] += self._redact(delta)
+            entry = self.entries[self._assistant_index]
+            entry["text"] = self._redact(entry["text"] + delta)
 
     def slash_commands(self):
         with self._lock:
@@ -416,6 +438,8 @@ class AgentSession:
             return self._commands
 
     def run_slash_control(self, name: str, argument: str):
+        if name == "new" and self.chat is not None:
+            raise ValueError("Use New chat in the sidebar to keep this conversation in history.")
         command, _ = SLASH_CONTROLS[name]
         payload = {"type": command}
         if argument:
@@ -468,7 +492,7 @@ class AgentSession:
         if attachments:
             context += ("\n\n[Files and folders selected by the user. These paths are available to the Agent.]\n"
                         + json.dumps(attachments, ensure_ascii=False))
-        command = {"type": "prompt", "message": message + context}
+        command = {"type": "prompt", "message": self._redact(message + context)}
         if images:
             command["images"] = images
         with self._lock:
@@ -620,6 +644,7 @@ class AgentSession:
                 self._panel_requests.clear()
                 self._active_tools.clear()
                 self._activity = ""
+                self._save_transcript()
                 if not self._stop_requested.is_set():
                     self.status = "ready"
             self._assistant_index = None
@@ -708,6 +733,16 @@ class AgentSession:
             if self._finalized:
                 self._discard_credentials()
 
+    def _save_transcript(self):
+        if self.chat is None:
+            return
+        try:
+            entries = [dict(entry, text=self._redact(entry["text"]), detail=self._redact(entry["detail"]))
+                       for entry in self.entries]
+            self.chat = self.history.save_entries(self.chat, entries)
+        except OSError:
+            self._append("error", "Could not save the Agent transcript.")
+
     def _finalize(self, status: str, error: str = "") -> None:
         with self._lock:
             if self._finalized:
@@ -720,6 +755,7 @@ class AgentSession:
             self._panel_requests.clear()
             self.error = self._redact(error)
             self._assistant_index = None
+            self._save_transcript()
         if error:
             self._append("error", error)
         if self._stderr_done.is_set():
@@ -737,6 +773,15 @@ class AgentSession:
             self._stop_thread = threading.Thread(target=self.stop, name=f"agent-stop-{self.id[:8]}",
                                                  daemon=True)
             self._stop_thread.start()
+
+    def stop_for_switch(self, *, busy_error="Finish or stop the reply in the active chat before sending here.") -> None:
+        with self._lock:
+            if self.active:
+                if self.status != "ready" or self._pending_model or self._pending_control:
+                    raise RuntimeError(busy_error)
+                self._stop_requested.set()
+                self.status = "stopping"
+        self.stop()
 
     def stop(self) -> None:
         with self._stop_lock:
@@ -803,6 +848,8 @@ class AgentManager:
     def __init__(self, launcher=None):
         self.launcher = launcher
         self._sessions: dict[str, AgentSession] = {}
+        self._connections: dict[str, tuple[AgentRequest, bool, AgentHistory | None]] = {}
+        self._owners = {}
         self._lock = threading.Lock()
         self._stopping = False
 
@@ -813,15 +860,88 @@ class AgentManager:
             return ContainerLauncher()
         return SubprocessLauncher()
 
-    def start(self, request: AgentRequest, *, shared_mode: bool) -> AgentSession:
+    def start(self, request: AgentRequest, *, shared_mode: bool,
+              history=None, chat_id=None, project_id=None) -> AgentSession:
         validate_request(request)
-        session = AgentSession(request, self._launcher(shared_mode))
+        lock = self._owner_lock(request.owner)
+        if not lock.acquire(blocking=False):
+            raise RuntimeError("Stop the current agent session before starting another.")
+        try:
+            session = self._start(request, shared_mode=shared_mode, history=history,
+                                  chat_id=chat_id, project_id=project_id)
+            with self._lock:
+                if self._stopping:
+                    raise RuntimeError("The server is shutting down.")
+                self._connections[request.owner] = (request, shared_mode, history)
+            return session
+        finally:
+            lock.release()
+
+    def _owner_lock(self, owner):
+        with self._lock:
+            return self._owners.setdefault(owner, threading.Lock())
+
+    def connect_provider(self, request: AgentRequest, *, shared_mode: bool, history=None) -> None:
+        validate_request(request)
+        if history is not None and history.workspace != request.workspace.resolve():
+            raise ValueError("Agent history belongs to a different workspace.")
+        with self._owner_lock(request.owner), self._lock:
+            if self._stopping:
+                raise RuntimeError("The server is shutting down.")
+            self._connections.setdefault(request.owner, (request, shared_mode, history))
+
+    def connection(self, owner) -> AgentRequest | None:
+        with self._lock:
+            connection = self._connections.get(owner)
+            return replace(connection[0], api_key="") if connection is not None else None
+
+    def prompt_chat(self, owner, message, *, chat_id=None, project_id=None, model=None,
+                    **prompt_options) -> AgentSession:
+        with self._owner_lock(owner):
+            with self._lock:
+                connection = self._connections.get(owner)
+                if self._stopping:
+                    raise RuntimeError("The server is shutting down.")
+            if connection is None:
+                raise RuntimeError("Connect a provider in Settings before sending a message.")
+            request, shared_mode, history = connection
+            current = self.current(owner)
+            if chat_id is not None and current is not None and current.active and (
+                    current.chat is not None and current.chat.id == chat_id):
+                session = current
+            else:
+                if model is not None:
+                    if model not in request.model_ids:
+                        raise ValueError("Choose a model configured for this provider.")
+                    request = replace(request, model=model,
+                                      additional_models=tuple(item for item in request.model_ids if item != model))
+                if history is not None:
+                    project = history.resumable_chat(chat_id).project_id if chat_id is not None else project_id
+                    history.project_folder(project)
+                if current is not None and current.active:
+                    current.stop_for_switch()
+                session = self._start(request, shared_mode=shared_mode, history=history,
+                                      chat_id=chat_id, project_id=project_id)
+            session.prompt(message, **prompt_options)
+            return session
+
+    def _start(self, request, *, shared_mode, history, chat_id, project_id):
         with self._lock:
             if self._stopping:
                 raise RuntimeError("The server is shutting down.")
             current = self._sessions.get(request.owner)
             if current is not None and current.active:
                 raise RuntimeError("Stop the current agent session before starting another.")
+            chat = None
+            if history is not None:
+                if history.workspace != request.workspace.resolve():
+                    raise ValueError("Agent history belongs to a different workspace.")
+                chat = history.resumable_chat(chat_id) if chat_id is not None else history.create_chat(project_id)
+                folder = history.project_folder(chat.project_id)
+                directory = history.session_dir(chat)
+                directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+                request = replace(request, workspace=history.workspace, session_dir=directory, working_directory=folder)
+            session = AgentSession(request, self._launcher(shared_mode), history=history, chat=chat)
             self._sessions[request.owner] = session
         try:
             session.start()
@@ -838,14 +958,51 @@ class AgentManager:
         with self._lock:
             return self._sessions.get(owner)
 
+    def set_archived(self, owner, history, *, chat_id=None, project_id=None, archived):
+        with self._owner_lock(owner):
+            session = self.current(owner)
+            chat = session.chat if session is not None else None
+            closes_chat = archived and chat is not None and (
+                chat.id == chat_id if chat_id is not None else chat.project_id == project_id)
+            if closes_chat and session.active:
+                session.stop_for_switch(busy_error="Finish or stop the active reply before archiving.")
+            history.set_archived(chat_id=chat_id, project_id=project_id, archived=archived)
+            if closes_chat:
+                with self._lock:
+                    self._sessions.pop(owner, None)
+
+    def delete_archived(self, owner, history, *, chat_id=None, project_id=None):
+        if (chat_id is None) == (project_id is None):
+            raise ValueError("Choose one archived chat or project to delete.")
+        with self._owner_lock(owner):
+            session = self.current(owner)
+            chat = session.chat if session is not None else None
+            is_current = chat is not None and (chat.id == chat_id if chat_id is not None else chat.project_id == project_id)
+            if is_current:
+                if session.active:
+                    raise RuntimeError("Stop this chat before deleting it.")
+                session.stop()
+            if chat_id is not None:
+                history.delete_archived_chat(chat_id)
+            else:
+                history.delete_archived_project(project_id)
+            if is_current:
+                with self._lock:
+                    self._sessions.pop(owner, None)
+
     def stop(self, owner: str) -> None:
-        session = self.current(owner)
-        if session is not None:
-            session.stop()
+        """Disconnect the account's provider and stop its active chat."""
+        with self._owner_lock(owner):
+            with self._lock:
+                self._connections.pop(owner, None)
+                session = self._sessions.get(owner)
+            if session is not None:
+                session.stop()
 
     def begin_shutdown(self) -> None:
         with self._lock:
             self._stopping = True
+            self._connections.clear()
             sessions = list(self._sessions.values())
         for session in sessions:
             if session.active:

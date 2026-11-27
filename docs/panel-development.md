@@ -31,6 +31,15 @@ When changing this capability, test a synthetic dark HDF5 fixture through both e
 
 [`panel_operations.py`](../src/vmi_analysis/gui/panel_operations.py) prepares the dump and passes its planned HDF5 or acquisition collection to Ion TOF. The optional GMD2 gate uses the matching metadata. If automatic alignment is ambiguous, the job waits for the user to pick a shift. Resolve the checkpoint on the existing job. Keep the workflow's reservations and attach each stage result to the regular panel so the user can inspect it there.
 
+## Save and load Workbench settings
+
+Use `persist()` for editable panel settings that should travel in a workflow
+file. It registers the control when the Workbench builds the panel. For
+settings whose controls appear only after a result opens, register the stored
+values in `workflow.result_fields()` and read them when building the result
+view. Check that loading them restores the controls without starting a run or
+live preview.
+
 ## Review checklist
 
 - Run the operation's normal GUI and CLI entry points. Compare equivalent manual and approved Agent results when both are exposed.

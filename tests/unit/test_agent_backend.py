@@ -17,6 +17,7 @@ from vmi_analysis.agent_backend import (
     AgentSession,
     ContainerLauncher,
     SubprocessLauncher,
+    VMI_SYSTEM_PROMPT,
     list_provider_models,
     process_options,
     validate_request,
@@ -226,6 +227,8 @@ class AgentBackendTests(unittest.TestCase):
         self.assertIn("no-new-privileges", command)
         self.assertIn(f"{request.workspace}:/workspace:rw", command)
         self.assertIn(f"{request.datasets}:/datasets:ro", command)
+        self.assertEqual(command[command.index("--append-system-prompt") + 1], VMI_SYSTEM_PROMPT)
+        self.assertEqual(command[command.index("--extension") + 1], "/agent/agent_panels.js")
         self.assertEqual(command[command.index("--name") + 1], "vmi-agent-abc123")
         self.assertNotIn("--privileged", command)
 
@@ -239,6 +242,8 @@ class AgentBackendTests(unittest.TestCase):
         which.assert_called_once_with("pi-test")
         self.assertEqual(args[0][0], "pi-test.CMD")
         self.assertNotIn(request.api_key, " ".join(args[0]))
+        self.assertEqual(args[0][args[0].index("--append-system-prompt") + 1], VMI_SYSTEM_PROMPT)
+        self.assertEqual(Path(args[0][args[0].index("--extension") + 1]).name, "agent_panels.js")
         self.assertEqual(kwargs["env"]["VMI_AGENT_API_KEY"], request.api_key)
         self.assertEqual(kwargs["env"]["PI_CODING_AGENT_DIR"], str(self.root / "session"))
         self.assertEqual(kwargs["cwd"], request.workspace)

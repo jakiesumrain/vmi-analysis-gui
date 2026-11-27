@@ -28,6 +28,7 @@ from nicegui import app, ui
 from nicegui.client import Client
 from starlette.datastructures import Headers
 
+from vmi_analysis.agent_history import AgentHistory
 from vmi_analysis.paths import WORKSPACE_ROOT, GENERATED_DIR
 from .workspace_io import WorkspaceFileResponse
 
@@ -100,6 +101,12 @@ def analysis_root(account):
     return account.root.parent / 'analysis'
 
 
+def agent_history(account):
+    if account is not None:
+        return AgentHistory(account.root.parent / '.agent-history', account.root)
+    return AgentHistory(GENERATED_DIR / 'agent-history', workspace_root())
+
+
 def password_hash(password, salt=None):
     salt = secrets.token_hex(16) if salt is None else salt
     digest = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt), n=2**14, r=8, p=1)
@@ -129,7 +136,8 @@ class SharedServer:
             workspace = parent / 'files'
             settings = parent / 'settings.json'
             analysis = parent / 'analysis'
-            if any(path.is_symlink() for path in (parent, workspace, settings, analysis)):
+            history = parent / '.agent-history'
+            if any(path.is_symlink() for path in (parent, workspace, settings, analysis, history)):
                 raise ValueError('Private workspace and settings paths must be regular paths.')
             digest = entry['password_hash']
             if not re.fullmatch(r'[0-9a-f]{32}:[0-9a-f]{128}', digest):
@@ -314,11 +322,14 @@ class AccountMiddleware:
 
 
 def install(config_path):
+    from .agent_api import connect_provider
+
     global SERVER
     if sys.platform != 'linux':
         raise RuntimeError('Shared-server mode requires a Linux host.')
     SERVER = SharedServer(json.loads(Path(config_path).read_text(encoding='utf-8')))
     app.add_middleware(AccountMiddleware)
+    app.post('/api/agent/session')(connect_provider)
     assets = files('vmi_analysis.gui.assets')
     login_page = (assets / 'login.html').read_text(encoding='utf-8')
 

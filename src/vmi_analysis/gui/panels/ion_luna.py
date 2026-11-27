@@ -123,8 +123,8 @@ def agent_operations():
         "manual": JOB_NAME,
     }
     return (PanelOperation("tpx3_dump", description, _prepare_dump, (JOB_NAME,), artifacts=_dump_artifacts),
-            PanelOperation("tpx3_timewalk", correction, _prepare_correction, (JOB_NAME,),
-                           reuse_job_names=True))
+            PanelOperation("tpx3_timewalk", correction, _prepare_correction, (),
+                           proposal_job_names=(JOB_NAME,)))
 
 
 def _active_dump_options(value):
@@ -271,8 +271,7 @@ def build(jobs: JobManager):
         form = adopt_agent_form(job, "ion_luna")
         if not form:
             return
-        if not job.extra.get("corrected"):
-            stage.value = DUMP
+        stage.value = CORRECT if job.extra.get("corrected") else DUMP
         for key, widget in (("input_mode", file_mode), ("input", source), ("output", output),
                             ("acquisition_prefix", prefixed), ("timewalk_file", timewalk),
                             ("correction_input", correction_input),

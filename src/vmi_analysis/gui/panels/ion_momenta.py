@@ -262,6 +262,14 @@ def _fit_controls(plot, source, edges, counts, context, save_peak, register_peak
     redraw()
 
 
+def _species_charge(value, formula):
+    if type(value) is int and value:
+        return value
+    if type(value) is float and value and isfinite(value) and value.is_integer():
+        return int(value)
+    raise ValueError(f"Enter a nonzero integer charge for {formula}, such as 1 or 2.")
+
+
 def _species_fields(record, save_peak):
     low, high = record["fit_window_ns"]
     with ui.column().classes("w-full gap-1") as row:
@@ -278,18 +286,16 @@ def _species_fields(record, save_peak):
 
             def read_peak(*, allow_blank=False):
                 name = (formula.value or "").strip()
-                number = charge.value
                 if allow_blank and not name:
                     return None
                 if not re.fullmatch(r"(?:[A-Z][a-z]?|[0-9]|[()\[\]]|[·.])+", name) or not re.search("[A-Z]", name):
                     raise ValueError("Enter a chemical formula such as Xe or N2.")
-                if number is None or not isfinite(number) or not float(number).is_integer() or not number:
-                    raise ValueError(f"Enter a nonzero integer charge for {name}, such as 1 or 2.")
+                number = _species_charge(charge.value, name)
                 t0 = reference_tof.value
                 if t0 is None or not isfinite(t0):
                     raise ValueError(f"Enter a finite zero-momentum TOF for {name}.")
                 window = _interval([minimum_tof.value, maximum_tof.value])
-                return dict(record, formula=name, charge=int(number), t0_ns=float(t0), window_ns=list(window))
+                return dict(record, formula=name, charge=number, t0_ns=float(t0), window_ns=list(window))
 
             def add():
                 try:
@@ -410,9 +416,13 @@ def _linked_plots(job, jobs, source, result, save_peak, register_peak, species_f
                     ui.button("Decline", on_click=decline).props("flat")
 
         async def run(draft):
-            outcome = await apply(kind, None if draft["bounds"] is None else tuple(draft["bounds"]))
+            bounds = draft["bounds"]
+            outcome = await apply(kind, None if bounds is None else tuple(bounds))
             if outcome["status"] != "done":
                 raise ValueError(outcome.get("error") or outcome.get("note") or "The gate could not be applied.")
+            fields = xy if kind == "position" else times
+            for field, value in zip(fields, bounds if bounds is not None else [None] * len(fields), strict=True):
+                field.value = value
             return {**outcome, "panel": JOB_NAME, "job_id": job.id, "source": source}
 
         ask_agent(PanelView(panel=JOB_NAME, operation=GATE_OPERATION, label=f"{SOURCES[source]} {kind} gate",
@@ -1004,6 +1014,7 @@ def _results(job, jobs, species_file, ask_agent=None):
             for key in ("formula", "charge", "t0_ns", "window_ns"):
                 if key in requested:
                     record[key] = requested[key]
+            record["charge"] = _species_charge(record["charge"], record["formula"])
             formula, charge, _source, window, t0 = _species_entries(
                 dict(schema=SPECIES_SCHEMA, species=[record]), tuple(SOURCES), job.extra["reference"])[0]
             record.update(formula=formula, charge=charge, window_ns=list(window), t0_ns=t0)

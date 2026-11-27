@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect x="26" y="26" width="972" height="972" rx="198" fill="#171128"/>
+  <!-- Average the close rings from the measured artwork. -->
+  <g fill="none" stroke-width="18.4">
+    <circle cx="512" cy="512" r="131.00918067" stroke="#f39a66"/>
+    <circle cx="512" cy="512" r="171.16003596" stroke="#ffb57a"/>
+    <circle cx="512" cy="512" r="224.627488475" stroke="#ffd080"/>
+    <circle cx="512" cy="512" r="258.070672697" stroke="#f483b2"/>
+    <circle cx="512" cy="512" r="377.94380592" stroke="#a092ef"/>
+    <circle cx="512" cy="512" r="403.63622189" stroke="#78adf4"/>
+  </g>
+  <circle cx="512" cy="512" r="6.7" fill="#ffd6a6"/>
+</svg>

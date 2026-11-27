@@ -26,6 +26,7 @@ ABEL_METHODS = {
     "daun": "Daun",
 }
 BETA_ORDERS = (0, 2, 4, 6, 8, 10)
+MAX_RESAMPLED_BINS = 10_000
 BASELINE_PARAMETERS = {"None": 0, "Constant": 1, "Linear": 2}
 QUADRANT_ORDER = ("ur", "ul", "ll", "lr")
 QUADRANT_LABELS = {"ur": "Upper right", "ul": "Upper left",
@@ -133,6 +134,62 @@ def anisotropy_values(moments):
     isotropic = moments[0]
     return np.divide(moments[1:], isotropic, out=np.full_like(moments[1:], np.nan),
                      where=np.isfinite(isotropic) & (isotropic > 0))
+
+
+def uniform_grid_bounds(grids):
+    """Use the span of all spectra that have data to integrate."""
+    grids = [x for x in grids if x.size >= 2]
+    if not grids:
+        raise ValueError("Resampling requires at least two spectrum samples.")
+    return min(x[0] for x in grids), max(x[-1] for x in grids)
+
+
+def default_uniform_bin_width(low, high):
+    return float(f"{(high - low) / 200:.2g}")
+
+
+def uniform_bin_edges(low, high, width):
+    """Build the equal-width PES grid, including the final partial bin."""
+    if width is None or not np.isfinite(width) or width <= 0 or not np.isfinite(low + width):
+        raise ValueError("Enter a positive, finite bin width.")
+    span = high - low
+    if width < span / MAX_RESAMPLED_BINS or low + width == low:
+        raise ValueError(f"Use a larger bin width for at most {MAX_RESAMPLED_BINS:,} bins.")
+    count = max(1, int(np.ceil(span / width)))
+    edges = low + np.arange(count + 1) * width
+    if not np.isfinite(edges).all() or np.any(np.diff(edges) <= 0):
+        raise ValueError("Bin edges must be finite and increasing.")
+    return edges
+
+
+def integrate_spectral_bins(x, values, edges):
+    """Integrate piecewise-linear samples over the measured part of each bin.
+
+    The last dimension of values indexes x. Bins outside coverage and bins
+    intersecting a segment with missing data have NaN integrals.
+    """
+    x, values, edges = (np.asarray(array, dtype=float) for array in (x, values, edges))
+    if (x.ndim != 1 or values.ndim == 0 or values.shape[-1] != x.size
+            or edges.ndim != 1 or edges.size < 2 or not np.isfinite(x).all()
+            or not np.isfinite(edges).all() or np.any(np.diff(x) <= 0)
+            or np.any(np.diff(edges) <= 0)):
+        raise ValueError("Expected increasing spectral coordinates and bin edges with matching sample values.")
+    integrated = np.full((*values.shape[:-1], edges.size - 1), np.nan)
+    if x.size < 2:
+        return integrated
+    start = np.searchsorted(edges, x[0], side="right") - 1
+    stop = np.searchsorted(edges, x[-1], side="left")
+    start, stop = max(0, start), min(edges.size - 1, stop)
+    if start >= stop:
+        return integrated
+    clipped = edges[start:stop + 1].clip(x[0], x[-1])
+    grid = np.union1d(clipped, x[(x > clipped[0]) & (x < clipped[-1])])
+    bin_starts = np.searchsorted(grid, clipped[:-1])
+    for samples, output in zip(values.reshape(-1, x.size), integrated.reshape(-1, edges.size - 1)):
+        y = np.interp(grid, x, samples)
+        areas = (y[:-1] + y[1:]) * (np.diff(grid) / 2)
+        output[start:stop] = np.add.reduceat(areas, bin_starts)
+    return integrated
 
 
 def average_anisotropy(x, moments, center, fwhm):

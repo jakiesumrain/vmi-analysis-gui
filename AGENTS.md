@@ -53,9 +53,11 @@ when developing panels.
   Bubblewrap and reviewed Python in a separate run container.
   Manual-only shared mode disables Agent entry points and uses the shared
   service account for panel jobs. See [deployment](docs/shared-server.md).
-  Pass API keys only through the child environment; never save them in settings,
-  workflows, model configuration, arguments, or logs. Clear key copies and remove
-  temporary configuration on startup failure, process exit, stop, and shutdown.
+  Keep provider keys in memory per account and pass them through the child
+  environment. Never save them in settings, workflows, model configuration,
+  arguments, or logs. Clear chat-specific key copies and remove temporary
+  configuration on startup failure, process exit, stop, and shutdown.
+  Provider disconnect and server shutdown clear the account connection.
   Agent is an interactive session panel, not a finite `JobView` job.
 - Follow the workbench patterns in [GUI design](docs/DESIGN.md) and use the
   UI/UX Pro Max skill for UI design. Keep panel summaries short. Describe

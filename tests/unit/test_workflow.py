@@ -47,6 +47,17 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
             "calibration.placement": "raw",
             "centroid.raw_colormap": "Magma",
             "centroid.spectrum_plot.x_max": 90,
+            "ion_live.endpoint": "tcp://acquisition-host:5556",
+            "ion_live.tof_bin_width": 2.5,
+            "ion_live.gmd2_min": 1,
+            "ion_live.gmd2_max": 10,
+            "ion_live.gmd2_bin_width": 0.5,
+            "pes.beta_6_y_max": 2,
+            "pes.uniform_ev_bin_width": 0.1,
+            "pes.uniform_ev_x_min": 21,
+            "pes.uniform_ev_intensity_y_max": 200,
+            "pes.uniform_ev_beta_4_y_min": -2,
+            "pes.uniform_pixel2_bin_width": 5,
             gui.KEEP_ALIVE_KEY: True,
         }
         callbacks = {}
@@ -64,6 +75,9 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                         patch.object(gui, "LocalFilePicker", new=AsyncMock(return_value=str(path))), \
                         patch.object(ui.navigate, "reload") as reload, patch.object(ui, "notify") as notify:
                     gui.index()
+                    publisher = next(element for element in client.elements.values()
+                                     if isinstance(element, ui.input) and element.label == "Acquisition publisher")
+                    publisher.value = "tcp://user:test-secret@acquisition-host:5556"
                     await callbacks["Save workflow"]()
                     saved = json.loads(path.read_text(encoding="utf-8"))
                     values = saved["settings"]
@@ -71,7 +85,7 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual({key.split(".", 1)[0] for key in values},
                                      {"gmd_map", "movie", "dark", "accumulate", "centroid", "binning",
                                       "calibration", "circularize", "pes", "ion_luna",
-                                      "ion_tof", "ion_momenta", "ion_pipeline", "ion_unpack", "ion_tof_fallback",
+                                      "ion_tof", "ion_momenta", "ion_pipeline", "ion_live", "ion_unpack", "ion_tof_fallback",
                                       "ion_pipeline_fallback"})
                     self.assertEqual(values["accumulate.max_workers"], 6)
                     self.assertIsNone(values["accumulate.frame_index"])
@@ -82,10 +96,15 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(values["centroid.raw_colormap"], "Magma")
                     self.assertEqual(values["centroid.tuning_colormap"], "Gray")
                     self.assertEqual(values["centroid.spectrum_plot.x_max"], 90)
+                    for key in store:
+                        if key.startswith(("ion_live.", "pes.")):
+                            self.assertEqual(values[key], store[key])
+                    self.assertEqual(values["ion_live.endpoint"], "tcp://acquisition-host:5556")
                     self.assertNotIn(gui.KEEP_ALIVE_KEY, values)
 
                     store.update({"movie.h5_dir": "dataset-b", "calibration.abel": True,
-                                  "calibration.placement": "post_abel", gui.KEEP_ALIVE_KEY: False})
+                                  "calibration.placement": "post_abel", "ion_live.tof_bin_width": 5,
+                                  "pes.uniform_ev_bin_width": 0.2, gui.KEEP_ALIVE_KEY: False})
                     values["accumulate.max_workers"] = "invalid"
                     path.write_text(json.dumps(saved), encoding="utf-8")
                     await callbacks["Load workflow"]()
@@ -110,6 +129,8 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(store["centroid.spectrum_plot.x_max"], 120)
                     self.assertEqual(store["calibration.raw_color_min_pct"], 10)
                     self.assertEqual(store["calibration.processed_color_min_pct"], 25)
+                    self.assertEqual(store["ion_live.tof_bin_width"], 2.5)
+                    self.assertEqual(store["pes.uniform_ev_bin_width"], 0.1)
                     self.assertFalse(store[gui.KEEP_ALIVE_KEY])
                     self.assertEqual(manager.jobs(), [])
                 reloaded = Client(page)
@@ -118,6 +139,11 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                         gui.index()
                     self.assertTrue(any(isinstance(element, ui.input) and element.value == "dataset-a"
                                         for element in reloaded.elements.values()))
+                    settings = {element.label: element.value for element in reloaded.elements.values()
+                                if isinstance(element, (ui.input, ui.number))}
+                    self.assertEqual(settings["Acquisition publisher"], "tcp://acquisition-host:5556")
+                    self.assertIn(2.5, [element.value for element in reloaded.elements.values()
+                                        if isinstance(element, ui.number) and element.label == "TOF bin size (ns)"])
                 finally:
                     reloaded.delete()
             finally:
