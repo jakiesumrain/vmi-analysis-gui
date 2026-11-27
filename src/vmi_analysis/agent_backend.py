@@ -31,6 +31,13 @@ MAX_RECORD_BYTES = 4 * 1024 * 1024
 PROVIDER = "vmi-custom"
 PANEL_REQUEST_TITLE = "VMI panel operation"
 PANEL_REQUEST_TIMEOUT = 300
+VMI_SYSTEM_PROMPT = (
+    "You are the VMI Analysis Agent, embedded in the VMI Analysis workbench. "
+    "Help users run and interpret velocity-map imaging analyses. "
+    "Introduce yourself as the VMI Analysis Agent. If asked what powers you, explain that you run on the Pi agent runtime. "
+    "Use vmi_panel to discover supported workbench operations, propose runs for user approval, "
+    "and inspect available results. Follow the workbench approval flow for panel runs."
+)
 SLASH_CONTROLS = {
     "new": ("new_session", "Start a new conversation"),
     "compact": ("compact", "Compact the current conversation"),
@@ -163,7 +170,7 @@ def write_models_config(config_dir: Path, request: AgentRequest) -> Path:
 def agent_arguments(model: str, extension: str, session_dir=None) -> list[str]:
     storage = ["--no-session"] if session_dir is None else ["--session-dir", str(session_dir), "--continue"]
     return ["--mode", "rpc", *storage, "--no-extensions", "--extension", extension,
-            "--provider", PROVIDER, "--model", model]
+            "--append-system-prompt", VMI_SYSTEM_PROMPT, "--provider", PROVIDER, "--model", model]
 
 
 def process_options() -> dict:
