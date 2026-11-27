@@ -26,7 +26,7 @@ from plotly.subplots import make_subplots
 from vmi_analysis.circularization import polar_fit as pf
 from vmi_analysis.imaging.centering import brightest_pixel
 
-from ..agent_panels import PanelOperation, PanelView, boolean, number
+from ..agent_panels import PanelOperation, PanelView, boolean, number, resolve_path
 from ..shared import circularization_dir, settings_store
 from .. import shared, theme
 from ..centroid_plots import _style, plot_options
@@ -315,11 +315,14 @@ def agent_operations():
         "n_terms": {"type": "integer", "description": "Number of trigonometric terms"},
         "use_beta": {"type": "boolean", "description": "Fit the intensity anisotropy parameter"},
         "iterative": {"type": "boolean", "description": "Fit with successively higher trig orders"},
+        "accept": {"type": "boolean", "default": False,
+                   "description": "After review, append the fitted ring to the calibration file"},
+        "output": {"type": "path", "description": "Extracted trig-fit .txt file used when accept is true"},
     }
     return (PanelOperation(FIT_OPERATION, {
         "panel": PANEL_TITLE, "manual": PANEL_TITLE, "parameters": parameters,
-        "summary": "Fit one selected ring from the loaded processed polar image. Start from Ask Agent "
-                   "in Trig Calibration and review the fit there before accepting the ring.",
+        "summary": "Fit one selected ring from the loaded processed polar image and optionally accept it after review. "
+                   "Start from Ask Agent in Trig Calibration.",
     }, None, ()),)
 
 
@@ -328,7 +331,7 @@ def _band_values(rect):
 
 
 def _fit_parameters(parameters, *, max_radius):
-    if parameters.keys() - {"band", "n_terms", "use_beta", "iterative"}:
+    if parameters.keys() - {"band", "n_terms", "use_beta", "iterative", "accept", "output"}:
         raise ValueError("Use the band and fit options listed for Trig Calibration.")
     band = parameters["band"]
     if not isinstance(band, list) or len(band) != 4:
@@ -342,8 +345,15 @@ def _fit_parameters(parameters, *, max_radius):
     terms = parameters["n_terms"]
     if (type(terms) is not int and (type(terms) is not float or not terms.is_integer())) or terms < 0:
         raise ValueError("Enter a nonnegative whole number of trig terms.")
+    accept = boolean(parameters.get("accept", False))
+    output = parameters.get("output", "")
+    if not isinstance(output, str) or (accept and (not output.strip() or Path(output).suffix.lower() != ".txt")):
+        raise ValueError("Choose an extracted trig-fit .txt file when accepting the ring.")
+    if accept:
+        output = str(resolve_path(output.strip(), write=True))
     return {"band": [r0, r1, theta0, theta1], "n_terms": int(terms),
-            "use_beta": boolean(parameters["use_beta"]), "iterative": boolean(parameters["iterative"])}
+            "use_beta": boolean(parameters["use_beta"]), "iterative": boolean(parameters["iterative"]),
+            "accept": accept, "output": output}
 
 
 def build(jobs=None, *, use_calibration=None, ask_agent=None) -> None:
@@ -1057,6 +1067,7 @@ def build(jobs=None, *, use_calibration=None, ask_agent=None) -> None:
             "band": selected_band,
             "n_terms": int(widgets["n_terms"].value if widgets["n_terms"].value is not None else 3),
             "use_beta": bool(widgets["beta"].value), "iterative": bool(widgets["iterative"].value),
+            "accept": False, "output": (widgets["output"].value or "").strip(),
         }
 
         def bind(parameters):
@@ -1080,10 +1091,15 @@ def build(jobs=None, *, use_calibration=None, ask_agent=None) -> None:
                     terms = num_input("Trig terms", draft["n_terms"], step=1, min=0)
                     beta = ui.checkbox("Fit beta", value=draft["use_beta"])
                     iterative = ui.checkbox("Iterative terms", value=draft["iterative"])
+                accept = ui.checkbox("Accept the fitted ring and append it to the calibration file",
+                                     value=draft["accept"])
+                output = path_input("Extracted trig-fit file", draft["output"], browse="save", filters=[".txt"],
+                                    default_name="extracted.txt").bind_visibility_from(accept, "value")
 
                 async def confirm():
                     edits = {"band": [field.value for field in limits], "n_terms": terms.value,
-                             "use_beta": beta.value, "iterative": iterative.value}
+                             "use_beta": beta.value, "iterative": iterative.value,
+                             "accept": accept.value, "output": output.value}
                     try:
                         bind(draft | edits)
                     except (OSError, ValueError) as exc:
@@ -1105,12 +1121,20 @@ def build(jobs=None, *, use_calibration=None, ask_agent=None) -> None:
             fit = await _fit_selection()
             if fit is None:
                 raise ValueError("The fit could not be applied. Check the Trig Calibration console.")
+            saved = False
+            if draft["accept"]:
+                widgets["output"].value = draft["output"]
+                if await _accept() is None:
+                    raise ValueError("The ring was not accepted. Check the output path and Trig Calibration console.")
+                saved = True
             return {"status": "done", "panel": PANEL_TITLE, "converged": bool(fit.converged),
                     "parameters": {key: float(value) if np.isfinite(value) else None
                                    for key, value in fit.params.items()},
                     "rms": float(fit.rms) if np.isfinite(fit.rms) else None,
-                    "issues": fit.export_issue(), "saved": False,
-                    "note": "Review the fitted ridge and use Accept ring to append it to the calibration file."}
+                    "issues": fit.export_issue(), "saved": saved,
+                    "output": draft["output"] if saved else None,
+                    "note": "Ring appended to the calibration file." if saved else
+                            "Review the fitted ridge and use Accept ring to append it to the calibration file."}
 
         ask_agent(PanelView(
             panel=PANEL_TITLE, operation=FIT_OPERATION, label="Trig Calibration ring selection",
@@ -1377,6 +1401,7 @@ def build(jobs=None, *, use_calibration=None, ask_agent=None) -> None:
             _save_session()
         await _update_reduction()
         ui.notify(f"Appended ring r0 = {fit.params['r0']:.3f} px")
+        return fit
 
     async def _update_reduction():
         model_plots.clear()

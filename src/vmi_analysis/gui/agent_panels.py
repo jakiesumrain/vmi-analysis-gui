@@ -20,6 +20,7 @@ class PanelOperation:
     workflow_panels: tuple[str, ...] = ()
     measure_result: Callable[[object, Job, dict], dict] | None = None
     render_review: Callable[[Job], None] | None = None
+    reuse_job_names: bool = False
 
 
 @dataclass(frozen=True)
@@ -60,11 +61,13 @@ class PanelRegistry:
         self._job_operations = {}
 
     def register(self, operation: PanelOperation):
-        if operation.id in self._operations or any(
-                name in self._job_operations for name in operation.job_names):
+        duplicates = {name for name in operation.job_names if name in self._job_operations}
+        if operation.id in self._operations or (duplicates and not operation.reuse_job_names):
             raise ValueError(f"Duplicate panel operation or job name for {operation.id}.")
+        if operation.reuse_job_names and duplicates != set(operation.job_names):
+            raise ValueError(f"Reused job names for {operation.id} must already belong to another operation.")
         self._operations[operation.id] = operation
-        self._job_operations.update(dict.fromkeys(operation.job_names, operation))
+        self._job_operations.update({name: operation for name in operation.job_names if name not in duplicates})
 
     def describe(self, operation=None):
         if operation is None:

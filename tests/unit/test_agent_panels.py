@@ -68,7 +68,7 @@ class AgentPanelTests(unittest.TestCase):
         with self.assertRaises(shared.WorkspaceDenied):
             self.registry.prepare(self.jobs, "movie", {**params, "movie_dir": "/datasets/camera"})
 
-    def test_live_preview_is_inspection_only_and_summarizes_recent_finite_readings(self):
+    def test_live_preview_inspection_and_reviewed_control_registration(self):
         from vmi_analysis.ion_live import LiveFrame, LivePreview
 
         self.assertEqual(self.registry.describe("live_tpx3")["action"], "inspect")
@@ -85,6 +85,64 @@ class AgentPanelTests(unittest.TestCase):
         self.assertEqual(snapshot["tof"]["busiest_bins"], [{"minimum_ns": 10, "maximum_ns": 20, "hits": 1}])
         self.assertIsNone(snapshot["gmd"]["GMD1"]["latest_na"])
         self.assertEqual(snapshot["gmd"]["GMD2"]["mean_na"], 5)
+        with self.assertRaisesRegex(ValueError, "Ask Agent"):
+            self.registry.prepare(self.jobs, ion_live.CONTROL_OPERATION, {})
+        settings = {
+            "endpoint": "tcp://127.0.0.1:5556", "minimum_ns": 0, "maximum_ns": 20, "bin_size_ns": 10,
+            "gmd": {"GMD1": [None, None, None], "GMD2": [1, 3, 1]},
+        }
+        address, edges, limits = ion_live._preview_configuration(settings)
+        self.assertEqual(address, settings["endpoint"])
+        np.testing.assert_array_equal(edges, [0, 10, 20])
+        self.assertEqual(limits["GMD2"], (1, 3, 1))
+        for change in ({"endpoint": "http://127.0.0.1:5556"}, {"maximum_ns": 0}, {"bin_size_ns": 0},
+                       {"gmd": {"GMD1": [None, None, None]}},
+                       {"gmd": settings["gmd"] | {"GMD1": [float("nan"), None, None]}}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                ion_live._preview_configuration(settings | change)
+
+    def test_live_agent_controls_run_start_reset_and_stop_in_the_originating_tab(self):
+        views, buttons = [], {}
+        real_button = ui.button
+
+        def button(text="", **kwargs):
+            if callback := kwargs.get("on_click"):
+                buttons[text] = callback
+            return real_button(text, **kwargs)
+
+        client = Client(ui.page("/_test_live_agent_controls"))
+        self.addCleanup(client.delete)
+        with (client, patch.object(ui, "button", button), patch.object(shared, "workspace_timer"),
+              patch.dict(ion_live.os.environ, {"VMI_TPX3_LIVE_ENDPOINT": "tcp://127.0.0.1:5556"}),
+              patch.object(ion_live, "find_spec", return_value=object()),
+              patch.object(ion_live.LivePreview, "start") as start,
+              patch.object(ion_live.LivePreview, "reset", autospec=True,
+                           side_effect=ion_live.LivePreview.reset) as reset,
+              patch.object(ion_live.LivePreview, "stop") as stop):
+            ion_live.build(self.jobs, ask_agent=views.append)
+            buttons["Ask Agent to control preview"]()
+            start_view = views[-1]
+            self.assertEqual(start_view.operation, ion_live.CONTROL_OPERATION)
+            draft = start_view.bind({})
+            self.assertEqual(draft["action"], "start")
+            start_view.render_review(None, draft, Mock(), Mock())
+            outcome = asyncio.run(start_view.run_interactive(draft))
+            self.assertEqual(outcome["preview"]["status"], "waiting for frames")
+            start.assert_called_once_with()
+
+            buttons["Ask Agent to control preview"]()
+            reset_view = views[-1]
+            reset_draft = reset_view.bind({"action": "reset"})
+            self.assertEqual(asyncio.run(reset_view.run_interactive(reset_draft))["action"], "reset")
+            self.assertEqual(reset.call_count, 2)
+
+            buttons["Ask Agent to control preview"]()
+            stop_view = views[-1]
+            stop_draft = stop_view.bind({"action": "stop"})
+            self.assertEqual(asyncio.run(stop_view.run_interactive(stop_draft))["preview"]["status"], "stopped")
+            stop.assert_called_once_with()
+            with self.assertRaisesRegex(ValueError, "preview changed"):
+                reset_view.bind({})
 
     def test_run_measurement_reads_owned_histogram_and_saved_gaussian_fit(self):
         histogram = self.workspace / "histogram.npz"
@@ -270,6 +328,55 @@ class AgentPanelTests(unittest.TestCase):
         self.assertEqual(form["timewalk_file"], "")
         self.assertNotIn("tof-tdc-reference", form)  # absent from a raw-only run
 
+    def test_timewalk_agent_uses_manual_builder_and_reserves_collection_members(self):
+        source = self.workspace / "stats.h5"
+        source.touch()
+        proposed, summary = self.registry.prepare(self.jobs, "tpx3_timewalk", {
+            "input": "/workspace/stats.h5", "ctot_cut": 250.0,
+        })
+        manual = ion_luna.correction_job(source, ctot_cut=250)
+        self.assertEqual(proposed.cmd, manual.cmd)
+        self.assertEqual(proposed.extra["panel_form"], manual.extra["panel_form"])
+        self.assertIn("--apply-timewalk-correction", proposed.cmd)
+        self.assertEqual(summary["CTOT cut"], 250)
+        self.assertEqual(job_access(proposed).reads, {source})
+        self.assertIn(self.workspace / "stats_corrected.h5", job_access(proposed).writes)
+        for change in ({"ctot_cut": -1}, {"ctot_cut": 1.5}, {"output": "/datasets/corrected.h5"},
+                       {"output": "/workspace/stats.h5"}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                self.registry.prepare(self.jobs, "tpx3_timewalk", {"input": "/workspace/stats.h5"} | change)
+
+        collection = self.workspace / "dump.segments.json"
+        data = self.workspace / "hits.h5"
+        metadata = self.workspace / "metadata.h5"
+        for path in (data, metadata):
+            path.touch()
+        collection.write_text(json.dumps({"schema": SCHEMA, "segments": [
+            {"data": data.name, "metadata": metadata.name},
+        ]}), encoding="utf-8")
+        corrected, summary = self.registry.prepare(self.jobs, "tpx3_timewalk", {
+            "input": "/workspace/dump.segments.json",
+        })
+        manual = ion_luna.correction_job(collection)
+        corrected_collection = self.workspace / "dump.segments_corrected.segments.json"
+        self.assertEqual(corrected.cmd, manual.cmd)
+        self.assertEqual(corrected.extra["collection"], str(corrected_collection))
+        self.assertEqual(summary["Corrected collection"], str(corrected_collection))
+        access = job_access(corrected)
+        self.assertEqual(access.reads, {collection, data, metadata})
+        self.assertTrue({corrected_collection, self.workspace / "dump.segments_corrected_segments"} <= access.writes)
+        corrected_collection.touch()
+        corrected.status = "done"
+        corrected.owner = self.account.name
+        self.jobs._jobs[corrected.id] = corrected
+        self.assertEqual(self.registry.status(self.jobs, corrected.id)["files"], {
+            "collection": "/workspace/dump.segments_corrected.segments.json",
+        })
+        with self.assertRaises(ValueError):
+            self.registry.prepare(self.jobs, "tpx3_timewalk", {
+                "input": "/workspace/dump.segments.json", "output": "/workspace/dump.h5",
+            })
+
     def test_discovery_exposes_typed_inputs_and_rejects_internal_builder_options(self):
         spectrum = self.registry.describe("ion_tof")
         self.assertEqual(spectrum["parameters"]["bin_size_ns"]["unit"], "ns")
@@ -434,7 +541,14 @@ class AgentPanelTests(unittest.TestCase):
         self.assertEqual(self.registry.describe(operation)["panel"], "Trig Calibration")
         with self.assertRaisesRegex(ValueError, "Ask Agent"):
             self.registry.prepare(self.jobs, operation, params)
-        self.assertEqual(calibration._fit_parameters(params, max_radius=15), params)
+        self.assertEqual(calibration._fit_parameters(params, max_radius=15),
+                         {**params, "accept": False, "output": ""})
+        accepted = calibration._fit_parameters(params | {"accept": True, "output": "/workspace/extracted.txt"},
+                                               max_radius=15)
+        self.assertEqual(accepted["output"], str(self.workspace / "extracted.txt"))
+        with self.assertRaisesRegex(ValueError, "trig-fit .txt"):
+            calibration._fit_parameters(params | {"accept": True, "output": "/workspace/extracted.json"},
+                                        max_radius=15)
         with self.assertRaisesRegex(ValueError, "inside the loaded"):
             calibration._fit_parameters(params | {"band": [4, 16, 0, 360]}, max_radius=15)
         with self.assertRaisesRegex(ValueError, "finite numeric"):
@@ -575,6 +689,105 @@ class AgentPanelTests(unittest.TestCase):
         with patch.object(shared, "current_account", return_value=SimpleNamespace(name="other")):
             with self.assertRaisesRegex(ValueError, "from your workspace"):
                 self.registry.prepare(self.jobs, "ion_momenta", params)
+
+    def test_ion_momenta_context_operations_validate_models_and_require_panel_views(self):
+        for operation in (ion_momenta.GATE_OPERATION, ion_momenta.FIT_OPERATION,
+                          ion_momenta.SPECIES_OPERATION, ion_momenta.MOMENTUM_OPERATION):
+            with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, "Ask Agent"):
+                self.registry.prepare(self.jobs, operation, {})
+
+        def parameters(**changes):
+            assignment = {"formula": "Xe", "charge": 2, "source": "pixels",
+                          "window_ns": [9000, 9100], "mass_u": 131.293, "t0_ns": 9050, "pz_scale": 1.5}
+            return {"model": "simple", "center_px": [10, 12], "mm_per_pixel": .4,
+                    "assignments": [assignment]} | changes
+
+        settings, species = ion_momenta._momentum_parameters(parameters(), ("pixels",), "TDC1Rising")
+        self.assertEqual(settings["assignments"][0]["t0_ns"], 9050)
+        self.assertEqual((species[0].mass_u, species[0].charge, species[0].pz_scale), (131.293, 2, 1.5))
+        oxygen = parameters(model="oxygen")
+        oxygen["assignments"][0].update(t0_ns=None, mass_u=128)
+        settings, species = ion_momenta._momentum_parameters(oxygen, ("pixels",), "TDC1Rising")
+        self.assertEqual(settings["assignments"][0]["t0_ns"], ion_momenta.oxygen_scaled_t0(128, 2))
+        self.assertEqual(species[0].pz_scale, 1)
+        for change in ({"model": "unknown"}, {"center_px": [0, float("nan")]}, {"mm_per_pixel": 0},
+                       {"assignments": []}, {"assignments": [{"source": "pixels"}]}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                ion_momenta._momentum_parameters(parameters(**change), ("pixels",), "TDC1Rising")
+        for field, value in (("mass_u", 0), ("source", "clusters"), ("charge", 0), ("pz_scale", 0)):
+            changed = parameters()
+            changed["assignments"][0][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                ion_momenta._momentum_parameters(changed, ("pixels",), "TDC1Rising")
+
+    def test_ion_momenta_agent_runs_gate_fit_species_and_reconstruction_in_one_view(self):
+        source = self.workspace / "hits.h5"
+        source.touch()
+        histogram = self.workspace / "positions.npz"
+        np.savez(histogram, triggers=np.array(2), edges=np.array([0., 10., 20.]),
+                 pixels=np.array([1, 2]), pixels_image=np.array([[1, 0], [0, 1]]),
+                 pixels_unmatched=np.array(0), pixels_outside=np.array(0), pixels_invalid_positions=np.array(0),
+                 trigger_times=np.array([0, 100], dtype=np.uint64), segment_offsets=np.array([0, 2]))
+        job = Job(ion_momenta.JOB_NAME, status="done", owner=self.account.name,
+                  extra={"histogram": str(histogram), "source_file": str(source),
+                         "reference": ion_momenta.DEFAULT_REFERENCE, "input_name": source.name, "bin_size_ns": 10})
+        species_file = SimpleNamespace(value=str(self.workspace / "agent-species.json"))
+        views, buttons = [], {}
+        real_button = ui.button
+
+        def button(text="", **kwargs):
+            if callback := kwargs.get("on_click"):
+                buttons[text] = callback
+            return real_button(text, **kwargs)
+
+        client = Client(ui.page("/_test_ion_momenta_agent_workflow"))
+        self.addCleanup(client.delete)
+        model = (np.array([5., 15.]), np.array([2., 1.]), np.zeros(2), None, np.array([.1, -.1]),
+                 [{"center": 10., "fwhm": 4., "gaussian_fwhm": 4., "lorentzian_fwhm": 0.,
+                   "area": 10., "bound": False}])
+        momentum_result = ([[np.array([-1., 0., 1.]), np.array([-1., 0., 1.])]],
+                           np.zeros((1, 2, 2, 2), dtype=np.int64), np.array([0]))
+        with (client, patch.object(ui, "button", button), patch.object(ui, "notify"),
+              patch.object(ion_momenta, "gated_preview", return_value=np.array([2, 1])),
+              patch.object(ion_momenta, "fit_peaks", return_value=model),
+              patch.object(ion_momenta, "momentum_projections", return_value=momentum_result)):
+            ion_momenta._results(job, self.jobs, species_file, ask_agent=views.append)
+            buttons["Ask Agent about X/Y gate"]()
+            gate = views[-1]
+            self.assertEqual(gate.operation, ion_momenta.GATE_OPERATION)
+            gate_draft = gate.bind({"bounds": [0, 1, 0, 1]})
+            gate.render_review(None, gate_draft, Mock(), Mock())
+            self.assertEqual(asyncio.run(gate.run_interactive(gate_draft))["arrivals"], 3)
+            with self.assertRaisesRegex(ValueError, "gate changed"):
+                gate.bind({})
+
+            buttons["Ask Agent about fit"]()
+            fit = views[-1]
+            fit_draft = fit.bind({"region": [0, 20]})
+            fit.render_review(None, fit_draft, Mock(), Mock())
+            fitted = asyncio.run(fit.run_interactive(fit_draft))
+            self.assertEqual(fitted["peaks"][0]["center_ns"], 10)
+            formula = next(element for element in client.elements.values()
+                           if element._props.get("label") == "Chemical formula")
+            formula.value = "Xe"
+
+            buttons["Ask Agent about species"]()
+            assignment = views[-1]
+            assignment_draft = assignment.bind({"output": "/workspace/agent-species.json"})
+            assignment.render_review(None, assignment_draft, Mock(), Mock())
+            saved = asyncio.run(assignment.run_interactive(assignment_draft))
+            self.assertEqual(saved["status"], "done")
+            document = json.loads((self.workspace / "agent-species.json").read_text(encoding="utf-8"))
+            self.assertEqual(document["schema"], ion_momenta.SPECIES_SCHEMA)
+            self.assertEqual(document["species"][0]["formula"], "Xe")
+
+            buttons["Ask Agent about reconstruction"]()
+            reconstruction = views[-1]
+            reconstruction_draft = reconstruction.bind({})
+            reconstruction.render_review(None, reconstruction_draft, Mock(), Mock())
+            result = asyncio.run(reconstruction.run_interactive(reconstruction_draft))
+            self.assertEqual(result["status"], "done")
+            self.assertEqual(result["results"][0]["formula"], "Xe")
 
     def test_folder_dump_proposal_marks_the_folder_input_mode(self):
         self.datasets.joinpath("frames").mkdir()

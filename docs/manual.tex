@@ -462,7 +462,17 @@ scientific parameters. Review the resolved settings and output paths.
 Choose \emph{Approve and run} to queue the job or \emph{Decline} to dismiss
 it. Return to the ordinary panel to check its form, console, and results.
 For a fit tied to a plot, use the panel's \emph{Ask Agent} control and
-review the selection in that panel.
+review the selection in that panel. Trig Calibration can also accept the
+fitted ring into a selected extracted \code{.txt} calibration file after
+review. TPX3 Dump supports reviewed timewalk correction of an HDF5 file or
+acquisition collection.
+
+In Ion momenta, the result view's \emph{Ask Agent} controls apply or clear
+position and TOF gates, fit the current position-filtered spectrum, append
+a reviewed species assignment, and reconstruct momentum projections. Live
+TPX3 can inspect the current preview and review start, stop, and reset in
+the same tab. Starting or resetting clears accumulated counts. A shared
+server administrator fixes the acquisition endpoint.
 
 For example, ask for a dark frame using the median of a named HDF5 folder.
 For ion work, ask for a TPX3 dump followed by an Ion TOF plot from that

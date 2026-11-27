@@ -392,7 +392,7 @@ def index() -> None:
                             elif module is agent:
                                 ask_agent = module.build(MANAGER, registry=PANEL_OPERATIONS,
                                                          navigate=lambda name: setattr(panels, "value", name))
-                            elif module in (ion_tof, ion_live):
+                            elif module in (ion_tof, ion_momenta, ion_live):
                                 module.build(MANAGER, ask_agent=handoff_to_agent)
                             else:
                                 module.build(MANAGER)

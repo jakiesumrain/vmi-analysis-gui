@@ -13,13 +13,14 @@ from vmi_analysis.ion_live import GMD_HISTORY, LivePreview, gmd_histogram
 from vmi_analysis.tof_bins import DEFAULT_BIN_SIZE_NS, tof_bin_edges
 
 from .. import shared, theme
-from ..agent_panels import PanelInspection, PanelOperation
+from ..agent_panels import PanelInspection, PanelOperation, PanelView
 from ..centroid_plots import SERIES_COLORS, _style, plot_options
 from .common import field_grid, num_input
 
 
 JOB_NAME = "Live TPX3"
 INSPECT_OPERATION = "live_tpx3"
+CONTROL_OPERATION = "live_tpx3_control"
 DETECTOR_ROW_HEIGHT = 580
 GMD_TIMELINE_SECONDS = 60
 
@@ -41,11 +42,52 @@ def _endpoint(value):
 
 
 def agent_operations():
-    return (PanelOperation(INSPECT_OPERATION, {
+    inspection = PanelOperation(INSPECT_OPERATION, {
         "panel": JOB_NAME, "manual": JOB_NAME, "parameters": {}, "action": "inspect",
         "summary": "Read the current tab's live preview counters, accumulated hit map and TOF summaries, "
                    "and recent GMD readings. Open Ask Agent about preview in Live TPX3.",
-    }, None, ()),)
+    }, None, ())
+    control = PanelOperation(CONTROL_OPERATION, {
+        "panel": JOB_NAME, "manual": JOB_NAME,
+        "summary": "Start, stop, or reset the current tab's live preview after review. Starting clears accumulated counts. "
+                   "Open Ask Agent to control preview in Live TPX3.",
+        "parameters": {
+            "action": {"type": "string", "choices": ["start", "stop", "reset"]},
+            "endpoint": {"type": "string", "description": "tcp://host:port; fixed by the server in shared mode"},
+            "minimum_ns": {"type": "number", "default": 0},
+            "maximum_ns": {"type": "number", "default": 15_000},
+            "bin_size_ns": {"type": "number", "default": DEFAULT_BIN_SIZE_NS},
+            "gmd": {"type": "object", "description": "GMD1 and GMD2 [minimum, maximum, bin size]; null values use automatic limits"},
+        },
+    }, None, ())
+    return inspection, control
+
+
+def _preview_configuration(settings):
+    address = _endpoint(settings["endpoint"])
+    low, high, width = (settings[key] for key in ("minimum_ns", "maximum_ns", "bin_size_ns"))
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value)
+           for value in (low, high, width)):
+        raise ValueError("Enter finite TOF limits and a bin size.")
+    if low >= high:
+        raise ValueError("Enter increasing, finite TOF limits.")
+    if width is None:
+        raise ValueError("Enter a TOF bin size.")
+    edges = tof_bin_edges(low, high, None, bin_size_ns=width)
+    requested = settings["gmd"]
+    if not isinstance(requested, dict) or requested.keys() != {"GMD1", "GMD2"}:
+        raise ValueError("Provide GMD1 and GMD2 histogram settings.")
+    limits = {}
+    for name, values in requested.items():
+        if not isinstance(values, (list, tuple)) or len(values) != 3:
+            raise ValueError(f"Enter minimum, maximum, and bin size for {name}.")
+        values = tuple(values)
+        if any(value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))
+                                     or not isfinite(value)) for value in values):
+            raise ValueError(f"Enter finite histogram settings for {name}.")
+        gmd_histogram(np.empty(0), *values, name)
+        limits[name] = values
+    return address, edges, limits
 
 
 def _preview_summary(receiver):
@@ -111,6 +153,76 @@ def build(_jobs, *, ask_agent=None):
         ask_agent(PanelInspection(panel=JOB_NAME, operation=INSPECT_OPERATION,
                                   label="Live TPX3 preview", read_snapshot=read_preview))
 
+    def control_form():
+        return {
+            "action": "stop" if receiver is not None else "start",
+            "endpoint": configured_endpoint if shared.SERVER else endpoint.value,
+            "minimum_ns": minimum.value, "maximum_ns": maximum.value, "bin_size_ns": tof_width.value,
+            "gmd": {name: [control.value for control in fields] for name, fields in gmd_fields.items()},
+        }
+
+    def open_control():
+        initial = control_form()
+        selected = receiver
+        opened_revision = revision
+
+        def bind(parameters):
+            if receiver is not selected or revision != opened_revision:
+                raise ValueError("The live preview changed. Ask the Agent again from this panel.")
+            if not isinstance(parameters, dict) or parameters.keys() - initial.keys():
+                raise ValueError("Use the live preview controls listed for this operation.")
+            draft = initial | parameters
+            if draft["action"] not in ("start", "stop", "reset"):
+                raise ValueError("Choose start, stop, or reset.")
+            if draft["action"] == "start":
+                if selected is not None:
+                    raise ValueError("Stop the current preview before starting another one.")
+                if shared.SERVER and draft["endpoint"] != configured_endpoint:
+                    raise ValueError("The shared server administrator fixes the acquisition endpoint.")
+                _preview_configuration(draft)
+            elif selected is None:
+                raise ValueError("Start the preview before stopping or resetting it.")
+            return draft
+
+        def review(_job, draft, approve, decline):
+            with control_review, theme.panel_card():
+                theme.form_section("Agent live preview control")
+                action = ui.select(["start", "stop", "reset"], value=draft["action"], label="Action") \
+                    .props("outlined dense")
+                address = ui.input("Acquisition publisher", value=draft["endpoint"]).props("outlined dense")
+                if shared.SERVER:
+                    address.disable()
+                with field_grid(3):
+                    low = num_input("TOF minimum (ns)", draft["minimum_ns"], step="any")
+                    high = num_input("TOF maximum (ns)", draft["maximum_ns"], step="any")
+                    width = num_input("TOF bin size (ns)", draft["bin_size_ns"], step="any")
+                for name, values in draft["gmd"].items():
+                    ui.label(f"{name} histogram limits and bin size: {values}").classes("vmi-caption")
+                ui.label("Starting or resetting clears accumulated counts.").classes("vmi-subtitle")
+
+                async def confirm():
+                    edits = {"action": action.value, "endpoint": address.value, "minimum_ns": low.value,
+                             "maximum_ns": high.value, "bin_size_ns": width.value}
+                    try:
+                        bind(draft | edits)
+                    except (TypeError, ValueError) as exc:
+                        ui.notify(str(exc), type="warning")
+                        return
+                    await approve(edits)
+
+                with ui.row().classes("items-center gap-2"):
+                    ui.button("Approve preview control", on_click=confirm)
+                    ui.button("Decline", on_click=decline).props("flat")
+
+        async def run(draft):
+            result = {"start": start, "stop": stop, "reset": reset}[draft["action"]](draft)
+            return {"status": "done", "panel": JOB_NAME, "action": draft["action"], "preview": result}
+
+        ask_agent(PanelView(panel=JOB_NAME, operation=CONTROL_OPERATION, label="Live TPX3 preview controls",
+                            instruction="Use the current tab's preview. Starting or resetting discards its accumulated counts.",
+                            settings=initial, bind=bind, render_review=review, review_container=control_review,
+                            run_interactive=run, context=read_preview()))
+
     def refresh():
         nonlocal previous, last_error
         if receiver is None:
@@ -166,7 +278,7 @@ def build(_jobs, *, ask_agent=None):
         if receiver is not None:
             receiver.stop()
 
-    def stop():
+    def stop(_settings=None):
         nonlocal receiver
         disconnect()
         receiver = None
@@ -176,36 +288,25 @@ def build(_jobs, *, ask_agent=None):
         for control in bin_controls:
             control.enable()
         status.set_text("Preview stopped.")
+        return read_preview()
 
-    def reset():
+    def reset(_settings=None):
         nonlocal previous, revision
         if receiver is None:
-            return
+            raise ValueError("Start the preview before resetting its counts.")
         receiver.reset()
         previous = None
         revision += 1
         refresh()
+        return read_preview()
 
-    def start():
+    def start(settings=None):
         nonlocal receiver, charts, previous, revision, last_error
         if receiver is not None:
-            return
-        try:
-            if find_spec("zmq") is None:
-                raise ValueError("Install live monitoring with uv sync --extra live, then restart the server.")
-            address = _endpoint(configured_endpoint if shared.SERVER else endpoint.value)
-            low, high = minimum.value, maximum.value
-            if low is None or high is None or not isfinite(low) or not isfinite(high) or low >= high:
-                raise ValueError("Enter increasing, finite TOF limits.")
-            if tof_width.value is None:
-                raise ValueError("Enter a TOF bin size.")
-            edges = tof_bin_edges(low, high, None, bin_size_ns=tof_width.value)
-            limits = {name: tuple(control.value for control in fields) for name, fields in gmd_fields.items()}
-            for name, settings in limits.items():
-                gmd_histogram(np.empty(0), *settings, name)
-        except ValueError as exc:
-            ui.notify(str(exc), type="warning")
-            return
+            raise ValueError("The preview is already running.")
+        if find_spec("zmq") is None:
+            raise ValueError("Install live monitoring with uv sync --extra live, then restart the server.")
+        address, edges, limits = _preview_configuration(settings or control_form())
         if charts is None:
             with output:
                 with ui.element("div").classes("vmi-live-detector-row"):
@@ -226,6 +327,13 @@ def build(_jobs, *, ask_agent=None):
         previous = None
         revision += 1
         refresh()
+        return read_preview()
+
+    def control_clicked(action):
+        try:
+            {"start": start, "stop": stop, "reset": reset}[action]()
+        except (OSError, RuntimeError, ValueError) as exc:
+            ui.notify(str(exc), type="warning")
 
     with theme.panel_card():
         endpoint = ui.input("Acquisition publisher", value=configured_endpoint,
@@ -246,14 +354,17 @@ def build(_jobs, *, ask_agent=None):
                                              for label in ("minimum", "maximum", "bin size"))
         bin_controls = [minimum, maximum, tof_width, *(control for fields in gmd_fields.values() for control in fields)]
         with ui.row():
-            start_button = ui.button("Start preview", icon="play_arrow", on_click=start)
-            stop_button = ui.button("Stop", icon="stop", on_click=stop).props("flat")
-            reset_button = ui.button("Reset counts", icon="restart_alt", on_click=reset).props("flat")
+            start_button = ui.button("Start preview", icon="play_arrow", on_click=lambda: control_clicked("start"))
+            stop_button = ui.button("Stop", icon="stop", on_click=lambda: control_clicked("stop")).props("flat")
+            reset_button = ui.button("Reset counts", icon="restart_alt",
+                                     on_click=lambda: control_clicked("reset")).props("flat")
             if ask_agent:
                 ui.button("Ask Agent about preview", icon="smart_toy", on_click=open_agent).props("flat")
+                ui.button("Ask Agent to control preview", icon="smart_toy", on_click=open_control).props("flat")
             stop_button.disable()
             reset_button.disable()
         status = ui.label("Preview stopped.").classes("vmi-caption")
+        control_review = ui.column().classes("w-full")
         ui.label("Stop the preview to change binning. Starting again clears the accumulated counts."
                  ).classes("vmi-subtitle")
         ui.label(f"The hit map and TOF accumulate until reset. The GMD timeline follows the last "

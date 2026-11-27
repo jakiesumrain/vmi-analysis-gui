@@ -16,8 +16,8 @@ Read the [capability matrix](agent-first-design.md#agent-capabilities) first. De
 | Task | Contract | Example |
 | --- | --- | --- |
 | Prepare a batch run from named inputs | `PanelOperation.prepare` | Dark Frame, ion histogram generation |
-| Review a fit tied to the current selection | `PanelView` with a binding and review hook | Trig Calibration, PES peak fitting |
-| Read current state from a running panel | `PanelInspection` | Load or summarize Live TPX3 preview data after the user starts it |
+| Review an action tied to current panel state | `PanelView` with a binding and review hook | Trig Calibration and PES fitting, Ion momenta gates and reconstruction, Live TPX3 receiver control |
+| Read current state from a running panel | `PanelInspection` | Summarize the current Live TPX3 preview |
 | Measure a completed result | `PanelOperation.measure_result` with job ownership checks | Ion TOF peak or bin measurements |
 | Combine jobs with a known handoff | `Job.stages`, `Stage.result`, optional `Checkpoint` | TPX3 Dump → Ion TOF → optional GMD2 gate |
 

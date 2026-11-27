@@ -49,6 +49,50 @@ def completed_dump_input(job):
     return extra.get("collection", extra["output"]), extra.get("collection", extra.get("metadata"))
 
 
+def correction_job(source, output=None, *, ctot_cut=500, wsl=()):
+    cwd = workspace_root(REPO_ROOT)
+    selected = checked_path(source, cwd=cwd)
+    if not selected.is_file():
+        raise ValueError("Choose an existing HDF5 file or acquisition collection with timewalk statistics.")
+    if type(ctot_cut) is not int or ctot_cut < 0:
+        raise ValueError("CTOT cut must be a nonnegative whole number.")
+    target = output or selected.with_name(f"{selected.stem}_corrected.h5")
+    target = validate_distinct_output(target, [("timewalk input", selected)], cwd=cwd,
+                                      output_label="corrected HDF5 output")
+    target = checked_path(target, write=True, cwd=cwd)
+    if target.suffix.lower() not in HDF5_TYPES:
+        raise ValueError("Choose an .h5 or .hdf5 corrected output path.")
+    extra = {"output": str(target), "corrected": True,
+             "panel_form": {"correction_input": str(selected), "corrected_output": str(target),
+                            "ctot-cut": ctot_cut}}
+    if selected.suffix.lower() == ".json":
+        inputs = [("input collection", selected),
+                  *((str(path), path) for pair in segment_files(selected) for path in pair)]
+        collection = validate_distinct_output(manifest_path(target), inputs, cwd=cwd,
+                                              output_label="corrected collection")
+        extra["collection"] = str(collection)
+    cmd = [sys.executable, "-m", "vmi_analysis.ion_luna", "--apply-timewalk-correction",
+           "--input", str(selected), "--output", str(target), "--ctot-cut", str(ctot_cut), *wsl]
+    return Job(JOB_NAME, cmd=cmd, cwd=str(cwd), extra=extra, consume_output=capture_command)
+
+
+def _prepare_correction(_jobs, params):
+    source = resolve_path(params["input"])
+    output = resolve_path(params["output"], write=True) if params.get("output") else None
+    ctot_cut = params.get("ctot_cut", PANEL_DEFAULTS["ctot-cut"])
+    if type(ctot_cut) is float and ctot_cut.is_integer():
+        ctot_cut = int(ctot_cut)
+    wsl = wsl_settings()
+    job = correction_job(source, output, ctot_cut=ctot_cut, wsl=wsl_arguments(wsl))
+    summary = {"Timewalk input": str(source), "Corrected HDF5 output": job.extra["output"],
+               "CTOT cut": ctot_cut}
+    if "collection" in job.extra:
+        summary["Corrected collection"] = job.extra["collection"]
+    summary.update({WSL_FIELDS[key]: value.strip() for key, value in wsl.items()
+                    if isinstance(value, str) and value.strip()})
+    return job, summary
+
+
 def agent_operations():
     description = {
         "panel": JOB_NAME,
@@ -67,7 +111,20 @@ def agent_operations():
         "outputs": ["collection", "output", "metadata"],
         "manual": JOB_NAME,
     }
-    return (PanelOperation("tpx3_dump", description, _prepare_dump, (JOB_NAME,), artifacts=_dump_artifacts),)
+    correction = {
+        "panel": JOB_NAME,
+        "summary": "Apply the panel's LUNA timewalk correction to an existing statistics HDF5 file or acquisition collection.",
+        "parameters": {
+            "input": {"type": "path", "description": "Existing HDF5 file or acquisition collection with timewalk statistics"},
+            "output": {"type": "path", "description": "Optional corrected workspace HDF5 file; defaults to _corrected.h5"},
+            "ctot_cut": {"type": "integer", "default": PANEL_DEFAULTS["ctot-cut"]},
+        },
+        "outputs": ["output"],
+        "manual": JOB_NAME,
+    }
+    return (PanelOperation("tpx3_dump", description, _prepare_dump, (JOB_NAME,), artifacts=_dump_artifacts),
+            PanelOperation("tpx3_timewalk", correction, _prepare_correction, (JOB_NAME,),
+                           reuse_job_names=True))
 
 
 def _active_dump_options(value):
@@ -271,7 +328,6 @@ def build(jobs: JobManager):
         return []
 
     def run():
-        command = [sys.executable, "-m", "vmi_analysis.ion_luna"]
         try:
             if stage.value == CORRECT:
                 input_value = correction_input.value.strip() or output.value.strip()
@@ -280,15 +336,9 @@ def build(jobs: JobManager):
                 selected = (workspace_root(REPO_ROOT) / Path(input_value).expanduser()).resolve()
                 if not correction_input.value.strip() and manifest_path(selected).is_file():
                     selected = manifest_path(selected)
-                target = corrected_output.value.strip() or selected.with_name(f"{selected.stem}_corrected.h5")
-                target = validate_distinct_output(target, [("timewalk input", selected)],
-                                                  cwd=workspace_root(REPO_ROOT), output_label="corrected HDF5 output")
-                cmd = [*command, "--apply-timewalk-correction", "--input", str(selected), "--output", str(target),
-                       "--ctot-cut", str(option_value("ctot-cut"))]
-                view.attach(jobs.submit(Job(JOB_NAME, cmd=[*cmd, *wsl_options()],
-                                            cwd=str(workspace_root(REPO_ROOT)),
-                                            extra={"output": str(target), "corrected": True},
-                                            consume_output=capture_command)))
+                job = correction_job(selected, corrected_output.value.strip() or None,
+                                     ctot_cut=option_value("ctot-cut"), wsl=wsl_options())
+                view.attach(jobs.submit(job))
                 return
             if not source.value.strip() or not output.value.strip():
                 raise ValueError("Choose a TPX3 input and an HDF5 output.")
