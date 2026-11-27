@@ -1,11 +1,11 @@
-"""Start an Agent session for an authenticated shared account."""
+"""Connect a provider for an authenticated shared account."""
 
 import asyncio
 
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
-from vmi_analysis.agent_backend import AGENTS, AgentRequest, validate_request
+from vmi_analysis.agent_backend import AGENTS, AgentRequest
 from . import shared
 
 
@@ -18,16 +18,15 @@ class ModelConnection(BaseModel):
     api_key: str = Field(max_length=16384, repr=False)
 
 
-async def start_session(request: Request):
+async def connect_provider(request: Request):
     server = shared.SERVER
     account = shared.request_account(request.scope)
     if account is None:
         raise HTTPException(401, "Sign in to VMI Analysis first.")
     if server.manual_only:
         raise HTTPException(403, "Agent is disabled in manual-only mode.")
-    session = AGENTS.current(account.name)
-    if session is not None and session.active:
-        return {"state": "active"}
+    if AGENTS.connection(account.name) is not None:
+        return {"state": "connected"}
 
     if request.headers.get("content-type", "").split(";", 1)[0] != "application/json":
         raise HTTPException(415, "Use a JSON request.")
@@ -43,14 +42,9 @@ async def start_session(request: Request):
             additional_models=tuple(profile.additional_models), image_models=tuple(profile.image_models),
             api_key=profile.api_key,
         )
-        validate_request(agent)
+        await asyncio.to_thread(AGENTS.connect_provider, agent, shared_mode=True, history=shared.agent_history(account))
     except ValueError:
         raise HTTPException(400, "Check the model connection settings.") from None
-    try:
-        await asyncio.to_thread(AGENTS.start, agent, shared_mode=True, history=shared.agent_history(account))
-    except (ValueError, RuntimeError, OSError):
-        session = AGENTS.current(account.name)
-        if session is not None and session.active:
-            return {"state": "active"}
-        raise HTTPException(503, "Agent could not start. Check the server diagnostics.") from None
-    return {"state": "started"}
+    except (RuntimeError, OSError):
+        raise HTTPException(503, "Could not connect the Agent provider.") from None
+    return {"state": "connected"}
