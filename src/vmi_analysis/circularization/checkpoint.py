@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import brentq
 
+from vmi_analysis.centroiding.frame_roster import successful_shots
 from vmi_analysis.paths import validate_distinct_output
 
 from .circularization import eval_reassignment_model, source_radius
@@ -110,22 +111,28 @@ class EventWarp:
         return corrected_x, corrected_y, status
 
 
-def _bin_events(histogram, x, y, resolution, include):
+def _bin_events(histogram, x, y, x_edges, y_edges, include=True):
     ny, nx = histogram.shape
-    px, py = x * resolution, y * resolution
-    inside = include & (px >= 0) & (px <= nx) & (py >= 0) & (py <= ny)
-    # Match the legacy histogram's inclusive rightmost edge.
-    cols = np.minimum(px[inside].astype(np.intp), nx - 1)
-    rows = np.minimum(py[inside].astype(np.intp), ny - 1)
+    inside = include & (x >= x_edges[0]) & (x <= x_edges[-1]) & (y >= y_edges[0]) & (y <= y_edges[-1])
+    # Interior edges enter the bin on their right. The final edge is inclusive.
+    cols = np.minimum(np.searchsorted(x_edges, x[inside], side="right") - 1, nx - 1)
+    rows = np.minimum(np.searchsorted(y_edges, y[inside], side="right") - 1, ny - 1)
     np.add.at(histogram, (rows, cols), 1)
     return inside
 
 
 def correct_checkpoint(checkpoint, corrected, counts, *, shape, center, resolution, warp,
                        metadata, polar_preview=None, chunksize=250_000):
-    """Stream rows into a new HDF5 checkpoint and publish the integer image."""
+    """Export retained electrons and the complete successful-shot roster."""
+    with h5py.File(checkpoint, "r") as source:
+        shots = successful_shots(source)
+    if not len(shots):
+        raise ValueError("The raw checkpoint has no successfully processed shots. Rerun Centroiding.")
+    ny, nx = shape
+    x_edges = np.arange(nx + 1, dtype=np.float64) / resolution
+    y_edges = np.arange(ny + 1, dtype=np.float64) / resolution
     histogram = np.zeros(shape, dtype=np.int64)
-    raw_histogram = np.zeros_like(histogram) if polar_preview is not None else None
+    raw_histogram = np.zeros_like(histogram) if polar_preview is not None and warp is not None else None
     totals = np.zeros(len(STATUS), dtype=np.int64)
     for path in (corrected, counts):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,40 +141,60 @@ def correct_checkpoint(checkpoint, corrected, counts, *, shape, center, resoluti
         staged_checkpoint = Path(checkpoint_dir) / "checkpoint.h5"
         staged_counts = Path(counts_dir) / "counts.npy"
         with (pd.HDFStore(checkpoint, mode="r") as source,
-              pd.HDFStore(staged_checkpoint, mode="w", complevel=1) as destination):
+              h5py.File(staged_checkpoint, "w") as destination):
             if "/localizations" not in source or not source.get_storer("localizations").is_table:
                 raise ValueError("The source checkpoint needs a localizations table.")
             columns = source.select("localizations", start=0, stop=0).columns
             if not {"x", "y", "frame"}.issubset(columns):
                 raise ValueError("The localizations table needs x, y, and frame columns.")
+            events = destination.create_group("events")
+            for name, dtype in (("shot_id", "i8"), ("x_corrected", "f8"), ("y_corrected", "f8")):
+                events.create_dataset(name, shape=(0,), maxshape=(None,), dtype=dtype,
+                                      chunks=(min(chunksize, 65_536),), compression="gzip", compression_opts=1)
+            destination.create_group("shots").create_dataset("id", data=shots, dtype="i8")
+            geometry = destination.create_group("geometry")
+            geometry.create_dataset("x_edges", data=x_edges)
+            geometry.create_dataset("y_edges", data=y_edges)
+            geometry.attrs.update(x_direction="right", y_direction="down", coordinate_units="detector_pixel",
+                                  center_xy=(np.asarray(center) + 0.5) / resolution,
+                                  resolution_factor=resolution)
             for chunk in source.select("localizations", chunksize=chunksize):
+                frames = chunk["frame"].to_numpy()
+                if (frames.dtype.kind not in "iu"
+                        or (frames.dtype.kind == "u" and np.any(frames > np.iinfo(np.int64).max))):
+                    raise ValueError("Localizations need integer shot IDs in the Int64 range. Rerun Centroiding.")
+                frames = frames.astype(np.int64, copy=False)
+                if not np.isin(frames, shots).all():
+                    raise ValueError("Localizations reference invalid or unsuccessful shots. Rerun Centroiding.")
                 raw_x = chunk["x"].to_numpy(dtype=float)
                 raw_y = chunk["y"].to_numpy(dtype=float)
-                x, y, status = warp.correct(raw_x, raw_y, center, resolution)
+                if warp is None:
+                    x, y = raw_x, raw_y
+                    status = np.where(np.isfinite(x) & np.isfinite(y), STATUS["counted"], STATUS["invalid_input"])
+                else:
+                    x, y, status = warp.correct(raw_x, raw_y, center, resolution)
                 if raw_histogram is not None:
-                    _bin_events(raw_histogram, raw_x, raw_y, resolution, True)
+                    _bin_events(raw_histogram, raw_x, raw_y, x_edges, y_edges)
                 valid = status == STATUS["counted"]
-                inside = _bin_events(histogram, x, y, resolution, valid)
+                inside = _bin_events(histogram, x, y, x_edges, y_edges, valid)
                 status[valid & ~inside] = STATUS["outside_histogram"]
+                start = int(totals[STATUS["counted"]])
                 totals += np.bincount(status, minlength=len(STATUS))
-                destination.append("localizations", chunk.assign(
-                    x_corrected=x, y_corrected=y, correction_status=status), index=False)
-            if not totals.sum():
-                raise ValueError("The source checkpoint has no localizations.")
+                stop = int(totals[STATUS["counted"]])
+                if stop > start:
+                    for name, values in (("shot_id", frames), ("x_corrected", x), ("y_corrected", y)):
+                        events[name].resize((stop,))
+                        events[name][start:stop] = values[inside]
 
-        summary = {name: int(totals[code]) for name, code in STATUS.items()}
-        with h5py.File(checkpoint, "r") as source, h5py.File(staged_checkpoint, "r+") as destination:
-            for name in source:
-                if name != "localizations":
-                    source.copy(name, destination)
-            for key, value in source.attrs.items():
-                if key not in destination.attrs:
-                    destination.attrs[key] = value
+            summary = {name: int(totals[code]) for name, code in STATUS.items()}
+            destination.attrs.update(schema_version=1, source_checkpoint=str(Path(checkpoint).resolve()),
+                                     coordinate_correction="none" if warp is None else "circularize")
+            provenance = dict(metadata)
+            if warp is not None:
+                destination.attrs["calibration_id"] = provenance.pop("calibration_id")
             destination.attrs["circularization"] = json.dumps({
-                **metadata, "version": 1, "source_checkpoint": str(Path(checkpoint).resolve()),
-                "shape_yx": list(shape), "center_xy": list(center), "resolution_factor": resolution,
-                "grid_center_offset": -0.5, "max_corrected_radius": warp.radius,
-                "correction_status": STATUS, "event_totals": summary,
+                **provenance, "max_corrected_radius_grid_pixels": warp.radius if warp is not None else None,
+                "event_totals": summary,
             })
         with staged_counts.open("wb") as stream:
             np.save(stream, histogram, allow_pickle=False)
@@ -183,11 +210,14 @@ def correct_checkpoint(checkpoint, corrected, counts, *, shape, center, resoluti
             else:
                 counts.unlink()
             raise
-    if raw_histogram is not None:
+    if polar_preview is not None:
         from .polar_fit import save_polar_comparison
 
         try:
-            save_polar_comparison(polar_preview, raw_histogram, histogram, center)
+            if raw_histogram is None:
+                save_polar_comparison(polar_preview, histogram, None, center)
+            else:
+                save_polar_comparison(polar_preview, raw_histogram, histogram, center)
         except (OSError, ValueError) as exc:
             print(f"Warning: could not save polar previews: {exc}")
     return summary

@@ -1,4 +1,5 @@
 import json
+from functools import partial
 from pathlib import Path
 import sys
 import tempfile
@@ -9,8 +10,8 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from vmi_analysis.circularization import circularization
-from vmi_analysis.circularization.checkpoint import STATUS
+from vmi_analysis.circularization import checkpoint, circularization
+from vmi_analysis.centroiding.frame_roster import FAILED, PROCESSED, SKIPPED, write_frame_roster
 from vmi_analysis.circularization.polar_fit import save_polar_comparison
 from vmi_analysis.gui.panels import circularize
 from vmi_analysis.gui.resources import command_access
@@ -33,11 +34,10 @@ class CircularizeCheckpointTests(unittest.TestCase):
             "frame": [0, 0, 2, 2, 2],
             "mass": [4, 7, 13, 9, 15],
         }, index=[0, 1, 0, 1, 2])
-        self.frames = pd.DataFrame({"frame": [0, 1, 2, 3]})
         self.events.to_hdf(self.source, key="localizations", format="table")
-        self.frames.to_hdf(self.source, key="frames", format="table")
         with h5py.File(self.source, "r+") as store:
-            store.attrs["frame_limit"] = 4
+            write_frame_roster(store, [("camera.h5", index) for index in range(5)],
+                               [PROCESSED, FAILED, PROCESSED, PROCESSED, SKIPPED])
         self.calibration.write_text(
             '# detector geometry: {"center": [5, 5], "shape": [12, 12]}\n'
             '"Parameter" "Value" "+-" "Uncertainty (1 std dev)"\n'
@@ -55,20 +55,19 @@ class CircularizeCheckpointTests(unittest.TestCase):
         with patch.object(sys, "argv", self.args):
             circularization.main()
 
-    def test_inverts_combined_map_and_preserves_events_and_frame_table(self):
+    def verify_histogram(self, store):
+        counts = np.load(self.counts)
+        rebuilt = np.histogram2d(store["events/y_corrected"][:], store["events/x_corrected"][:],
+                                 bins=(store["geometry/y_edges"][:], store["geometry/x_edges"][:]))[0]
+        self.assertEqual(counts.dtype, np.int64)
+        np.testing.assert_array_equal(rebuilt, counts)
+
+    def test_inverts_combined_map_and_exports_only_counted_events(self):
         preview = self.root / "polar.npz"
         self.args += ["--polar-preview", str(preview)]
         with patch("builtins.print"):
             self.run_cli()
-        actual = pd.read_hdf(self.corrected, "localizations")
-        pd.testing.assert_frame_equal(actual[list(self.events)], self.events)
-        pd.testing.assert_frame_equal(pd.read_hdf(self.corrected, "frames"), self.frames)
-        np.testing.assert_allclose(actual.x_corrected, [2.75, 3.75, 2.75, np.nan, np.nan])
-        np.testing.assert_allclose(actual.y_corrected, [3.75, 2.75, 2.75, np.nan, np.nan])
-        np.testing.assert_array_equal(actual.correction_status, [
-            STATUS["counted"], STATUS["counted"], STATUS["counted"],
-            STATUS["outside_calibration"], STATUS["invalid_input"],
-        ])
+        pd.testing.assert_frame_equal(pd.read_hdf(self.source, "localizations"), self.events)
         expected = np.zeros((12, 12), dtype=np.int64)
         expected[7, 5] = expected[5, 7] = expected[5, 5] = 1
         histogram = np.load(self.counts)
@@ -82,10 +81,65 @@ class CircularizeCheckpointTests(unittest.TestCase):
             for key in ("raw", "circularized", "dr"):
                 np.testing.assert_array_equal(actual_preview[key], expected_preview[key])
         with h5py.File(self.corrected, "r") as store:
-            self.assertEqual(store.attrs["frame_limit"], 4)
+            self.assertEqual(set(store), {"events", "shots", "geometry"})
+            self.assertEqual(store.attrs["schema_version"], 1)
+            self.assertEqual(store.attrs["coordinate_correction"], "circularize")
+            self.assertRegex(store.attrs["calibration_id"], r"^sha256:[a-f0-9]{64}$")
+            events = store["events"]
+            self.assertEqual(events["shot_id"].dtype, np.dtype("int64"))
+            self.assertEqual(events["x_corrected"].dtype, np.dtype("float64"))
+            self.assertEqual(events["y_corrected"].dtype, np.dtype("float64"))
+            self.assertTrue(all(column.chunks for column in events.values()))
+            np.testing.assert_array_equal(store["shots/id"][:], [0, 2, 3])
+            np.testing.assert_array_equal(events["shot_id"][:], [0, 0, 2])
+            np.testing.assert_allclose(events["x_corrected"][:], [2.75, 3.75, 2.75])
+            np.testing.assert_allclose(events["y_corrected"][:], [3.75, 2.75, 2.75])
+            np.testing.assert_array_equal(store["geometry"].attrs["center_xy"], [2.75, 2.75])
+            self.verify_histogram(store)
             metadata = json.loads(store.attrs["circularization"])
-        self.assertEqual(metadata["event_totals"]["counted"], 3)
-        self.assertEqual(metadata["max_corrected_radius"], 4.0)
+        self.assertEqual(metadata["event_totals"],
+                         {"counted": 3, "invalid_input": 1, "outside_calibration": 1, "outside_histogram": 0})
+        self.assertEqual(metadata["max_corrected_radius_grid_pixels"], 4.0)
+
+    def test_measured_export_uses_exact_edges_and_one_preview(self):
+        edge = 1 / 3
+        just_before = np.nextafter(edge, -np.inf)
+        events = pd.DataFrame({"x": [0, just_before, edge, 2, np.nextafter(2., np.inf), np.inf],
+                               "y": [0, edge, edge, 2, 2, edge], "frame": [2, 0, 2, 0, 2, 0]})
+        events.to_hdf(self.source, key="localizations", format="table")
+        preview = self.root / "measured.npz"
+        self.args += ["--coordinate-correction", "none", "--shape", "6", "6", "--center", "2", "2",
+                      "--resolution-factor", "3", "--polar-preview", str(preview)]
+        self.calibration.unlink()
+        self.reassign.unlink()
+        with (patch("builtins.print"),
+              patch.object(checkpoint, "correct_checkpoint", partial(checkpoint.correct_checkpoint, chunksize=2))):
+            self.run_cli()
+        with h5py.File(self.corrected, "r") as store:
+            self.assertEqual(store.attrs["coordinate_correction"], "none")
+            self.assertNotIn("calibration_id", store.attrs)
+            np.testing.assert_array_equal(store["events/x_corrected"][:], events.x[:4])
+            np.testing.assert_array_equal(store["events/y_corrected"][:], events.y[:4])
+            np.testing.assert_array_equal(store["events/shot_id"][:], [2, 0, 2, 0])
+            np.testing.assert_array_equal(store["shots/id"][:], [0, 2, 3])
+            self.verify_histogram(store)
+            self.assertEqual(json.loads(store.attrs["circularization"])["event_totals"],
+                             {"counted": 4, "invalid_input": 1, "outside_calibration": 0, "outside_histogram": 1})
+        with np.load(preview) as polar:
+            self.assertEqual(set(polar.files), {"raw", "dr"})
+
+    def test_rejects_missing_roster_and_event_from_failed_shot(self):
+        with h5py.File(self.source, "r+") as store:
+            del store["frame_roster"]
+        with patch("builtins.print"), self.assertRaisesRegex(SystemExit, "valid shot roster"):
+            self.run_cli()
+        with h5py.File(self.source, "r+") as store:
+            write_frame_roster(store, [("camera.h5", index) for index in range(3)],
+                               [PROCESSED, PROCESSED, FAILED])
+        with patch("builtins.print"), self.assertRaisesRegex(SystemExit, "unsuccessful shots"):
+            self.run_cli()
+        self.assertFalse(self.corrected.exists())
+        self.assertFalse(self.counts.exists())
 
     def test_checkpoint_publication_failure_restores_existing_histogram(self):
         np.save(self.counts, np.array([[42]]))

@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -13,6 +14,7 @@ from vmi_analysis.imaging.centering import brightest_pixel
 from vmi_analysis.paths import validate_distinct_output
 
 DETECTOR_GEOMETRY_PREFIX = "# detector geometry: "
+COORDINATE_CORRECTIONS = {"circularize": "Apply circularization", "none": "Keep measured coordinates"}
 
 try:
     import matplotlib.pyplot as plt
@@ -868,6 +870,8 @@ def parse_args():
     parser.add_argument("--polar-preview", type=Path,
                         help="Optional NumPy archive of raw and circularized polar previews.")
     parser.add_argument("--checkpoint", type=Path, help="Input Centroiding localization checkpoint.")
+    parser.add_argument("--coordinate-correction", choices=COORDINATE_CORRECTIONS, default="circularize",
+                        help="Checkpoint export mode. 'none' keeps measured coordinates and skips calibration.")
     parser.add_argument("--corrected-checkpoint", type=Path, help="Output HDF5 checkpoint.")
     parser.add_argument("--counts-output", type=Path, help="Output integer count image (.npy).")
     parser.add_argument("--resolution-factor", type=int, default=1,
@@ -961,8 +965,8 @@ def parse_args():
         xc, yc = args.center
         if not (0 <= xc < nx and 0 <= yc < ny):
             parser.error("Checkpoint center must lie inside the calibration grid.")
-    elif args.corrected_checkpoint is not None or args.counts_output is not None:
-        parser.error("--corrected-checkpoint and --counts-output require --checkpoint.")
+    elif args.corrected_checkpoint is not None or args.counts_output is not None or args.coordinate_correction == "none":
+        parser.error("Checkpoint output and coordinate correction options require --checkpoint.")
     return args
 
 
@@ -972,17 +976,9 @@ def fit_radial_terms(args, dataset):
     return build_all_trig_interpolators(dataset, max_trig_n=args.max_trig_n)
 
 
-def circularize_events(args):
-    from .checkpoint import EventWarp, checkpoint_targets, correct_checkpoint
+def _fit_event_warp(args):
+    from .checkpoint import EventWarp
 
-    corrected, counts = checkpoint_targets(args.checkpoint, args.extracted, args.reassign_file,
-                                           args.corrected_checkpoint, args.counts_output)
-    preview = args.polar_preview
-    if preview is not None:
-        preview = validate_distinct_output(
-            preview, (("source checkpoint", args.checkpoint), ("trig-fit calibration", args.extracted),
-                      ("radial reassignment file", args.reassign_file), ("corrected checkpoint", corrected),
-                      ("count histogram", counts)), output_label="polar preview")
     calibration_text = args.extracted.read_text(encoding="utf-8")
     blocks = parse_extracted_text(calibration_text, source=str(args.extracted))
     for block in blocks:
@@ -1002,15 +998,31 @@ def circularize_events(args):
         pairs = np.column_stack((circ, fixed)).tolist()
     warp = EventWarp(fit_params, args.max_trig_n, reassignment, args.polar_dr, float(np.max(dataset["radii"])))
     print(f"Correcting centroids through radius {warp.radius:g} calibration-grid pixels.", flush=True)
+    settings = {
+        "calibration_text": calibration_text, "reassignment_pairs": pairs, "radial_model": args.radial_model,
+        "poly_order": args.poly_order if args.radial_model == "poly" else None,
+        "max_trig_n": args.max_trig_n, "polar_dr": args.polar_dr,
+    }
+    fingerprint = hashlib.sha256(json.dumps(settings, sort_keys=True).encode("utf-8")).hexdigest()
+    return warp, dict(settings, calibration_id=f"sha256:{fingerprint}", calibration_file=str(args.extracted.resolve()),
+                      reassignment_file=str(args.reassign_file.resolve()) if args.reassign_file else None)
+
+
+def circularize_events(args):
+    from .checkpoint import checkpoint_targets, correct_checkpoint
+
+    corrected, counts = checkpoint_targets(args.checkpoint, args.extracted, args.reassign_file,
+                                           args.corrected_checkpoint, args.counts_output)
+    preview = args.polar_preview
+    if preview is not None:
+        preview = validate_distinct_output(
+            preview, (("source checkpoint", args.checkpoint), ("trig-fit calibration", args.extracted),
+                      ("radial reassignment file", args.reassign_file), ("corrected checkpoint", corrected),
+                      ("count histogram", counts)), output_label="polar preview")
+    warp, metadata = _fit_event_warp(args) if args.coordinate_correction == "circularize" else (None, {})
     summary = correct_checkpoint(
         args.checkpoint, corrected, counts, shape=args.shape, center=args.center,
-        resolution=args.resolution_factor, warp=warp, polar_preview=preview, metadata={
-            "calibration_file": str(args.extracted.resolve()), "calibration_text": calibration_text,
-            "reassignment_file": str(args.reassign_file.resolve()) if args.reassign_file else None,
-            "reassignment_pairs": pairs, "radial_model": args.radial_model,
-            "poly_order": args.poly_order if args.radial_model == "poly" else None,
-            "max_trig_n": args.max_trig_n, "polar_dr": args.polar_dr,
-        },
+        resolution=args.resolution_factor, warp=warp, polar_preview=preview, metadata=metadata,
     )
     for status, total in summary.items():
         print(f"{status.replace('_', ' ').capitalize()}: {total:,}")

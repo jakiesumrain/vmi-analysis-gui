@@ -246,6 +246,30 @@ class CentroidScriptCalibrationTests(unittest.TestCase):
                     np.testing.assert_array_equal(fit.call_args.args[0],
                                                   np.stack([raw, raw + 100]).astype(float) - offset)
 
+    def test_batch_roster_distinguishes_fit_failure_from_zero_hits(self):
+        import h5py
+        import pandas as pd
+        from vmi_analysis.centroiding.frame_roster import FAILED, PROCESSED, SKIPPED
+
+        with tempfile.TemporaryDirectory() as folder:
+            files = [Path(folder) / name for name in ("first.h5", "next.h5", "skipped.h5")]
+            for path in files:
+                with h5py.File(path, "w") as store:
+                    store.create_dataset("raw/data", data=np.zeros((2, 8, 8), dtype=np.uint16))
+            frame_info = [(str(path), index) for path in files for index in range(2)]
+            with (patch.dict(self.env, OUTPUT_DIR=folder, CHECKPOINT_FILE="raw.h5", ENABLE_PARALLEL=False,
+                             FRAME_LIMIT=4, ENABLE_MEDIAN_SUBTRACTION=False),
+                  patch.object(self.env["localize"], "identify", side_effect=[RuntimeError("failed fit"), []]),
+                  redirect_stdout(io.StringIO())):
+                self.env["run_batch_processing_picasso"](frame_info, 4, None, None)
+            checkpoint = Path(folder) / "raw.h5"
+            with h5py.File(checkpoint) as store:
+                np.testing.assert_array_equal(store["frame_roster/status"][:],
+                                              [FAILED, FAILED, PROCESSED, PROCESSED, SKIPPED, SKIPPED])
+                self.assertEqual(store.attrs["limited_frames_attempted"], 4)
+                self.assertEqual(store.attrs["limited_frames_processed"], 2)
+            self.assertTrue(pd.read_hdf(checkpoint, "localizations").empty)
+
 
 if __name__ == "__main__":
     unittest.main()

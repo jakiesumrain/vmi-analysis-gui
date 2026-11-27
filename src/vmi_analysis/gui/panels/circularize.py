@@ -9,6 +9,7 @@ import numpy as np
 from nicegui import ui
 from plotly.subplots import make_subplots
 from vmi_analysis.circularization.checkpoint import checkpoint_targets
+from vmi_analysis.circularization.circularization import COORDINATE_CORRECTIONS
 from vmi_analysis.paths import validate_distinct_output
 
 from ..agent_panels import PanelOperation, boolean, number, require_completed_job, resolve_path
@@ -52,17 +53,23 @@ def _whole(value, minimum, label, maximum=None):
     return int(value)
 
 
-def circularize_job(extracted, *, inp="", out="", reassign="", plot_dir=None,
-                    corrected_checkpoint="", counts_output="", **settings):
+def circularize_job(extracted="", *, inp="", out="", reassign="", plot_dir=None,
+                    corrected_checkpoint="", counts_output="", coordinate_correction="circularize", **settings):
     cwd = circularization_dir(CIRC_DIR)
     options = DEFAULTS | settings
     for key in BOOLEAN_FIELDS:
         boolean(options[key])
-    if not extracted or not str(extracted).strip():
+    events = Path(inp or "").suffix.lower() in CHECKPOINT_SUFFIXES and not options["summary_only"]
+    if coordinate_correction not in COORDINATE_CORRECTIONS or (coordinate_correction == "none" and not events):
+        raise ValueError("Choose a valid coordinate correction mode for a localization checkpoint.")
+    apply_correction = coordinate_correction == "circularize"
+    if apply_correction and (not extracted or not str(extracted).strip()):
         raise ValueError("Choose an extracted trig-fit file.")
     plot_dir = cwd / "trig_fit_plots" if plot_dir is None else plot_dir
-    cmd = [sys.executable, "-m", "vmi_analysis.circularization.circularization", "--extracted", str(extracted)]
-    order = _whole(options["max_trig_n"] or 0, 0, "Maximum trig order")
+    cmd = [sys.executable, "-m", "vmi_analysis.circularization.circularization"]
+    if apply_correction:
+        cmd += ["--extracted", str(extracted)]
+    order = _whole(options["max_trig_n"] or 0, 0, "Maximum trig order") if apply_correction else 0
     if order:
         cmd += ["--max-trig-n", str(order)]
 
@@ -77,14 +84,15 @@ def circularize_job(extracted, *, inp="", out="", reassign="", plot_dir=None,
         raise ValueError("Choose a VMI image or localization checkpoint.")
     raw = Path(inp).suffix.lower() == ".npy"
     model = options["radial_model"]
-    if model not in RADIAL_MODELS:
-        raise ValueError("Choose interpolation or polynomial radial fits.")
-    cmd += ["--radial-model", model]
-    if model == "poly":
-        cmd += ["--poly-order", str(_whole(options["poly_order"], 1, "Polynomial order"))]
+    if apply_correction:
+        if model not in RADIAL_MODELS:
+            raise ValueError("Choose interpolation or polynomial radial fits.")
+        cmd += ["--radial-model", model]
+        if model == "poly":
+            cmd += ["--poly-order", str(_whole(options["poly_order"], 1, "Polynomial order"))]
     preview = generated_dir(GENERATED) / f"circ_{job.id}_polar.npz"
     checked_path(preview, write=True)
-    if Path(inp).suffix.lower() in CHECKPOINT_SUFFIXES:
+    if events:
         source = checked_path(inp, cwd=cwd)
         if not source.is_file():
             raise ValueError("Choose an existing localization checkpoint.")
@@ -97,20 +105,27 @@ def circularize_job(extracted, *, inp="", out="", reassign="", plot_dir=None,
         xc, yc = [number(options[key]) for key in ("center_x", "center_y")]
         if not (0 <= xc < nx and 0 <= yc < ny):
             raise ValueError("Center must lie inside the calibration grid.")
-        dr = number(options["polar_dr"])
-        if dr <= 0:
-            raise ValueError("Polar radial step must be positive.")
         factor = _whole(options["resolution_factor"], 1, "Histogram resolution factor")
         cmd += ["--checkpoint", str(source), "--corrected-checkpoint", str(corrected),
                 "--counts-output", str(counts), "--shape", str(ny), str(nx),
-                "--center", str(xc), str(yc), "--polar-dr", str(dr), "--resolution-factor", str(factor)]
-        if reassign:
-            cmd += ["--reassign-file", str(reassign)]
+                "--center", str(xc), str(yc), "--resolution-factor", str(factor),
+                "--coordinate-correction", coordinate_correction]
+        if apply_correction:
+            dr = number(options["polar_dr"])
+            if dr <= 0:
+                raise ValueError("Polar radial step must be positive.")
+            cmd += ["--polar-dr", str(dr)]
+            if reassign:
+                cmd += ["--reassign-file", str(reassign)]
         cmd += ["--polar-preview", str(preview)]
         job.extra.update(corrected_checkpoint=str(corrected), counts_output=str(counts), polar_preview=str(preview),
                          panel_form=dict(options, inp=str(source), extracted=str(extracted),
                                          reassign=str(reassign), corrected_checkpoint=str(corrected),
-                                         counts_output=str(counts), max_trig_n=order))
+                                         counts_output=str(counts), max_trig_n=order,
+                                         coordinate_correction=coordinate_correction))
+        if not apply_correction:
+            for key in ("extracted", "reassign", "radial_model", "poly_order", "max_trig_n", "polar_dr"):
+                job.extra["panel_form"].pop(key)
         return job
 
     inputs = (("input image", inp), ("extracted calibration file", extracted), ("radial reassignment file", reassign))
@@ -190,16 +205,22 @@ def _prepare_agent(jobs, params, *, checkpoint_only=False):
     events = bool(source) and source.suffix.lower() in CHECKPOINT_SUFFIXES
     if event_outputs and not events:
         raise ValueError("Corrected checkpoint and count histogram outputs require a localization checkpoint.")
+    apply_correction = inputs.get("coordinate_correction", "circularize") != "none"
     calibration = inputs.get("extracted")
-    if not calibration and source:
-        calibration = source.with_name("extracted.txt")
-    calibration = resolve_path(str(calibration) if isinstance(calibration, Path) else calibration)
-    if not calibration.is_file():
-        raise ValueError("Choose an existing extracted trig-fit file.")
-    inputs["extracted"] = calibration
+    if apply_correction:
+        if not calibration and source:
+            calibration = source.with_name("extracted.txt")
+        calibration = resolve_path(str(calibration) if isinstance(calibration, Path) else calibration)
+        if not calibration.is_file():
+            raise ValueError("Choose an existing extracted trig-fit file.")
+        inputs["extracted"] = calibration
+    else:
+        inputs.pop("extracted", None)
     inputs["inp"] = source
     inputs["out"] = inputs.pop("output", "")
     inputs["reassign"] = inputs.pop("reassign_file", "") or ""
+    if not apply_correction:
+        inputs["reassign"] = ""
     for key in ("out", "plot_dir", "reassign", "corrected_checkpoint", "counts_output"):
         if inputs.get(key) or (key == "out" and not summary_only and not events):
             inputs[key] = resolve_path(inputs.get(key), write=key != "reassign")
@@ -212,19 +233,19 @@ def _prepare_agent(jobs, params, *, checkpoint_only=False):
         raise ValueError("Enter finite Circularize settings.") from exc
     form = job.extra["panel_form"]
     summary = {"Mode": "Calibration summary" if summary_only else "Correct radial distortion",
-               "Extracted trig-fit file": str(calibration),
-               "Maximum trig order": form["max_trig_n"] or "Automatic"}
+               "Extracted trig-fit file": str(calibration) if apply_correction else None,
+               "Maximum trig order": (form["max_trig_n"] or "Automatic") if apply_correction else None}
     if not summary_only and events:
         summary.update({
-            "Mode": "Correct individual centroids and build unit counts",
+            "Mode": COORDINATE_CORRECTIONS[form["coordinate_correction"]],
             "Source checkpoint": str(source),
             "Image shape (NY, NX)": [form["shape_y"], form["shape_x"]],
             "Center (X, Y)": [form["center_x"], form["center_y"]],
             "Histogram bins per detector pixel": form["resolution_factor"],
-            "Polar radial step (pixels)": form["polar_dr"],
-            "Radial model": form["radial_model"],
-            "Polynomial order": form["poly_order"] if form["radial_model"] == "poly" else None,
-            "Radial reassignment": form["reassign"] or "Off",
+            "Polar radial step (pixels)": form["polar_dr"] if apply_correction else None,
+            "Radial model": form["radial_model"] if apply_correction else None,
+            "Polynomial order": form["poly_order"] if apply_correction and form["radial_model"] == "poly" else None,
+            "Radial reassignment": (form["reassign"] or "Off") if apply_correction else None,
             "Corrected checkpoint": form["corrected_checkpoint"],
             "Integer histogram": form["counts_output"],
         })
@@ -256,6 +277,8 @@ def agent_operations():
         "output": {"type": "path", "description": "Corrected image text file in your workspace"},
         "corrected_checkpoint": {"type": "path", "description": "Output HDF5 file for corrected centroids"},
         "counts_output": {"type": "path", "description": "Output NumPy integer histogram for corrected centroids"},
+        "coordinate_correction": {"type": "string", "choices": list(COORDINATE_CORRECTIONS), "default": "circularize",
+                                  "description": "For checkpoints, use 'none' to keep measured coordinates without calibration."},
         "plot_dir": {"type": "path", "description": "Diagnostic output directory. Defaults to circularization/trig_fit_plots."},
         "reassign_file": {"type": "path", "description": "Optional two-column radial reassignment file"},
     }
@@ -282,19 +305,20 @@ def agent_operations():
                    "summary": "Correct radial distortion in a VMI image. Use circularize_checkpoint for individual centroids."}
     checkpoint_parameters = {
         key: dict(parameters[key])
-        for key in ("input", "source_job_id", "extracted", "reassign_file", *CHECKPOINT_GEOMETRY,
+        for key in ("input", "source_job_id", "extracted", "reassign_file", "coordinate_correction", *CHECKPOINT_GEOMETRY,
                     "polar_dr", "resolution_factor", "max_trig_n", "radial_model", "poly_order",
                     *CHECKPOINT_OUTPUTS)
     }
     checkpoint_parameters["input"]["description"] = "Centroiding localization checkpoint (.h5 or .hdf5). Supply this or source_job_id."
     checkpoint_parameters["source_job_id"]["description"] = "Completed Centroiding job whose checkpoint to use."
-    checkpoint_parameters["extracted"]["description"] = "Trig-fit file. Defaults to extracted.txt beside the checkpoint."
+    checkpoint_parameters["extracted"]["description"] = (
+        "Trig-fit file for circularization. Defaults to extracted.txt beside the checkpoint. Omit in 'none' mode.")
     for key in (*CHECKPOINT_GEOMETRY, *CHECKPOINT_OUTPUTS):
         checkpoint_parameters[key].pop("default", None)
         checkpoint_parameters[key]["required"] = True
     checkpoint = {
         "panel": JOB_NAME, "manual": JOB_NAME, "parameters": checkpoint_parameters,
-        "summary": "Correct each electron centroid, preserve frame IDs, and build an unweighted integer histogram for pbasex_counts.",
+        "summary": "Export measured or circularized centroids with a complete shot roster and an unweighted integer histogram.",
     }
     return (
         PanelOperation("circularize", description, _prepare_agent, (JOB_NAME,),
@@ -335,6 +359,9 @@ def build(jobs: JobManager):
                                  default_name="image_circularized.txt"),
                       "circularize.out")
         with ui.column().classes("w-full gap-2") as event_paths:
+            coordinate_correction = persist(
+                ui.select(COORDINATE_CORRECTIONS, value="circularize", label="Coordinate correction")
+                .props("outlined dense").classes("w-full"), "circularize.coordinate_correction")
             corrected_checkpoint = persist(path_input(
                 "Corrected checkpoint (.h5)", str(circularization_dir(CIRC_DIR) / "localizations_circularized.h5"),
                 browse="save", filters=list(CHECKPOINT_SUFFIXES), default_name="localizations_circularized.h5"),
@@ -403,23 +430,27 @@ def build(jobs: JobManager):
         def update_geometry():
             raw = raw_input()
             events = checkpoint_input()
+            measured = events and coordinate_correction.value == "none"
             event_paths.set_visibility(events)
             resolution_factor.set_visibility(events)
             for field in (out, interp_order, no_jacobian, no_plots, plot_dir, summary_only, image_hint):
                 field.set_visibility(not events)
             for field in (shape_y, shape_x, polar_dr):
                 field.set_enabled(not raw)
+            for field in (extracted, reassign, radial_model, poly_order, max_trig_n, polar_dr):
+                field.set_visibility(not measured)
             for field in (center_x, center_y):
                 field.set_enabled(not raw or not brightest_center.value)
             brightest_center.set_visibility(raw)
 
         inp.on_value_change(lambda _: update_geometry())
+        coordinate_correction.on_value_change(lambda _: update_geometry())
         brightest_center.on_value_change(lambda _: update_geometry())
         update_geometry()
 
         fields = dict(inp=inp, out=out, extracted=extracted, reassign=reassign, plot_dir=plot_dir,
                       corrected_checkpoint=corrected_checkpoint, counts_output=counts_output,
-                      resolution_factor=resolution_factor,
+                      resolution_factor=resolution_factor, coordinate_correction=coordinate_correction,
                       shape_y=shape_y, shape_x=shape_x, center_x=center_x, center_y=center_y,
                       brightest_center=brightest_center, radial_model=radial_model, poly_order=poly_order,
                       interp_order=interp_order, max_trig_n=max_trig_n, polar_dr=polar_dr,
@@ -430,6 +461,8 @@ def build(jobs: JobManager):
                 options = {key: widget.value for key, widget in fields.items()}
                 if checkpoint_input():
                     options["summary_only"] = False
+                else:
+                    options.pop("coordinate_correction")
                 job = circularize_job(**options)
                 view.attach(jobs.submit(job))
             except (OSError, ValueError, OverflowError) as exc:
@@ -483,14 +516,16 @@ def build(jobs: JobManager):
             ui.button("Clear outputs", icon="delete", on_click=clear) \
                 .props("flat color=negative").classes("vmi-action-danger")
 
-        polar_data, polar_widgets = {}, {}
+        polar_data, polar_widgets, polar_sections = {}, {}, {}
         with ui.column().classes("w-full gap-2 border-t border-stone-200 pt-4 polar-guide-group") as polar_card:
             polar_card.set_visibility(False)
             scale, colormap, guides = polar_controls("circularize", radius_only=True)
             for key, label in (("raw", "Raw polar"), ("circularized", "Circularized polar")):
-                polar_widgets[key] = polar_preview(
-                    "circularize", key, label, guides, lambda: ui.interactive_image(""),
-                    radius_only=True)
+                with ui.column().classes("w-full gap-2") as section:
+                    polar_sections[key] = section
+                    polar_widgets[key] = polar_preview(
+                        "circularize", key, label, guides, lambda: ui.interactive_image(""),
+                        radius_only=True)
 
     def refresh_polar(key):
         if key in polar_data:
@@ -507,8 +542,11 @@ def build(jobs: JobManager):
         if not Path(path).is_file():
             return  # The job console reports preview generation errors.
         with np.load(path, allow_pickle=False) as data:
-            polar_data.update({key: data[key] for key in polar_widgets})
+            polar_data.clear()
+            polar_data.update({key: data[key] for key in polar_widgets if key in data})
             dr = float(data["dr"])
+        for key, section in polar_sections.items():
+            section.set_visibility(key in polar_data)
         n_theta, n_r = polar_data["raw"].shape
         set_polar_view(polar_card, (0, n_r - 1), (0, n_theta - 1), dr, 360 / n_theta)
         refresh_polar_pair()

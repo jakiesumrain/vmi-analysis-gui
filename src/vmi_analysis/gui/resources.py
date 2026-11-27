@@ -152,10 +152,12 @@ def command_access(cmd, cwd=None, *, prior_outputs=()):
         read(value("--checkpoint-path")); read(value("--gmd-map-path"))
         write(value("--output-dir"))
     elif module == "vmi_analysis.circularization.circularization":
-        read(value("--extracted", "extracted.txt"))
+        if value("--coordinate-correction", "circularize") == "circularize":
+            read(value("--extracted", "extracted.txt"))
         if value("--checkpoint"):
             read(value("--checkpoint"))
-            read(value("--reassign-file"))
+            if value("--coordinate-correction", "circularize") == "circularize":
+                read(value("--reassign-file"))
             write(value("--corrected-checkpoint"))
             write(value("--counts-output"))
             write(value("--polar-preview"))

@@ -177,7 +177,7 @@ def remap_polar(image, center, n_r=512, n_theta=720, r_max=None, order=1, *,
 
 
 def save_polar_comparison(path, raw, corrected, center):
-    """Save both detector images on the same display grid about the correction center."""
+    """Save one or two detector images on a shared polar display grid."""
     ny, nx = raw.shape
     cx, cy = center
     radius = min(cx, nx - 1 - cx, cy, ny - 1 - cy)
@@ -185,13 +185,15 @@ def save_polar_comparison(path, raw, corrected, center):
         radius = np.hypot(max(cx, nx - 1 - cx), max(cy, ny - 1 - cy))
     grid = {"r_max": radius, "radial_bin_size": min(1.0, radius / 7)}
     raw_polar, _, _, dr, _ = remap_polar(raw, center, **grid)
-    corrected_polar, *_ = remap_polar(corrected, center, **grid)
+    arrays = {"raw": raw_polar, "dr": dr}
+    if corrected is not None:
+        arrays["circularized"], *_ = remap_polar(corrected, center, **grid)
     path = Path(path)
     temporary = NamedTemporaryFile(mode="wb", dir=path.parent,
                                    prefix=f".{path.name}.", suffix=".tmp", delete=False)
     try:
         with temporary:
-            np.savez(temporary, raw=raw_polar, circularized=corrected_polar, dr=dr)
+            np.savez(temporary, **arrays)
         Path(temporary.name).replace(path)
     finally:
         Path(temporary.name).unlink(missing_ok=True)
