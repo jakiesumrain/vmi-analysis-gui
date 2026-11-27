@@ -5,7 +5,7 @@ description = "VMI photoelectron analysis pipeline with a NiceGUI web interface"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE", "vendor/pbasex-matlab/LICENSE.txt"]
+license-files = ["LICENSE", "NOTICE"]
 dependencies = [
     "astropy>=8.0.0",
     "h5py>=3.11.0",

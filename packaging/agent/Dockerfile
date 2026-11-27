@@ -15,7 +15,6 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/vmi-agent/.venv \
     XDG_CACHE_HOME=/tmp/cache
 WORKDIR /opt/vmi-agent
 COPY pyproject.toml uv.lock README.md LICENSE NOTICE ./
-COPY vendor/pbasex-matlab/LICENSE.txt vendor/pbasex-matlab/LICENSE.txt
 COPY src src
 ARG VMI_PYTHON_VERSION=3.13
 RUN uv sync --locked --python "${VMI_PYTHON_VERSION}" --no-dev --no-editable --no-cache \

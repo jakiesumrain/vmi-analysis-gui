@@ -48,4 +48,4 @@ Agent from a saved profile. [Connection options](docs/shared-server.md#connect-f
 
 ## License
 
-VMI Analysis uses the [Apache License, Version 2.0](LICENSE). Bundled CPBASEX uses the [MIT license](vendor/pbasex-matlab/LICENSE.txt). See [NOTICE](NOTICE) for attribution.
+VMI Analysis uses the [Apache License, Version 2.0](LICENSE).

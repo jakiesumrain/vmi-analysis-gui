@@ -146,10 +146,10 @@ class ConcurrentJobTests(unittest.TestCase):
         self.assertEqual(another.status, 'queued')
         self.assertIn('panel:second', another.wait_reason)
 
-    def test_matlab_exclusive_lock_does_not_block_unrelated_work(self):
-        first = self.manager.submit(self.job('matlab1', exclusive=['MATLAB/CPBASEX']))
-        second = self.manager.submit(self.job('matlab2', exclusive=['MATLAB/CPBASEX']))
-        other = self.manager.submit(self.job('pyabel'))
+    def test_exclusive_lock_does_not_block_unrelated_work(self):
+        first = self.manager.submit(self.job('first', exclusive=['shared-tool']))
+        second = self.manager.submit(self.job('second', exclusive=['shared-tool']))
+        other = self.manager.submit(self.job('other'))
         self.ready(first, other)
         self.assertEqual(second.status, 'queued')
         self.release(first)

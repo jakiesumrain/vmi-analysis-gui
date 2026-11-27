@@ -6,7 +6,6 @@ from pathlib import Path
 
 from vmi_analysis.centroiding.plot_data import (ABEL_IMAGE, RAW_IMAGE, SPECTRUM_CSV, SUMMARY_DATA,
                                                 SUMMARY_PNG, TUNING_DATA, TUNING_PNG)
-from vmi_analysis.paths import CPBASEX_DIR
 from vmi_analysis.ion_acquisition import collection_reads, manifest_path
 from .shared import centroid_dir, circularization_dir
 
@@ -87,7 +86,7 @@ def command_access(cmd, cwd=None, *, prior_outputs=()):
                 return arg.split("=", 1)[1]
         return default
 
-    reads, writes, exclusive = set(), set(), set()
+    reads, writes = set(), set()
     gmd_map_output = centroid_output_dir = None
 
     def read(path, base=cwd):
@@ -176,14 +175,9 @@ def command_access(cmd, cwd=None, *, prior_outputs=()):
         read(value("--bin-dir", str(centroid_dir() / "vmi_analysis_output_xe_j_100_sig")))
         for filename in ("extracted-FOC100eV-20260710.txt", "reassignment-FOC100eV-20260710.txt"):
             read(circularization_dir() / filename)
-        backend = value("--inversion-backend", "pyabel")
-        name = "gmd_bins_results" + value("--weight-suffix", "_w-gmd_norm")
-        if backend == "pyabel":
-            name += "_pyabel_" + value("--pyabel-method", "daun")
+        name = ("gmd_bins_results" + value("--weight-suffix", "_w-gmd_norm")
+                + "_pyabel_" + value("--pyabel-method", "daun"))
         write(value("--output-dir", str(circularization_dir() / name)))
-        if backend == "matlab":
-            exclusive.add("MATLAB/CPBASEX")
-            write(CPBASEX_DIR / "examples")
     elif module == "vmi_analysis.ion_luna":
         read_collection(value("--input"))
         read(value("--timewalk-file"))
@@ -208,7 +202,7 @@ def command_access(cmd, cwd=None, *, prior_outputs=()):
         read(value("--tof-result"))
         read(value("--filtered-result"))
         write(value("--output"))
-    return Access(frozenset(reads), frozenset(writes), frozenset(exclusive),
+    return Access(frozenset(reads), frozenset(writes),
                   gmd_map_output=gmd_map_output, centroid_output_dir=centroid_output_dir)
 
 

@@ -107,9 +107,8 @@
   \node[anchor=north west, inner sep=0, text=vmcovermuted,
         align=left, text width=17cm, font=\sffamily\small]
     at ([yshift=-26.65cm]cover-left)
-    {This manual describes the panels, input fields, processing stages,
-     output files, and operating constraints of the application.
-     Bundled CPBASEX uses the MIT License.};
+     {This manual describes the panels, input fields, processing stages,
+      output files, and operating constraints of the application.};
 \end{tikzpicture}
 \end{titlepage}
 
@@ -198,8 +197,6 @@ installation, i.e.\ before any saved setting exists.
         installation and for launching the application.
   \item Optional: \code{ffmpeg} on the system path, needed only to write
         MP4 movies in the Movie panel (otherwise a GIF is written).
-  \item Optional: MATLAB, needed only for the CPBASEX inversion backend in
-        PES. The default PyAbel backend is pure Python.
 \end{itemize}
 
 \subsection{Install}
@@ -356,10 +353,6 @@ slot}. Unrelated jobs can start in the free slots. Only one job per panel
 may be active at a time.
 GMD Map can write a file inside a standalone Centroiding output directory
 when the map path is separate from the run's inputs and outputs.
-
-The MATLAB/CPBASEX backend takes an exclusive lock because the MATLAB script
-uses a shared working file, so MATLAB jobs never overlap each other or a job
-writing the same directory.
 
 \subsection{The log console and progress}
 \label{sec:log}
@@ -828,13 +821,11 @@ Path & Created by & Purpose \\
 \emph{circularization/\allowbreak{}} & user / GUI & Calibration files and batch PES results \\
 \emph{.cache/\allowbreak{}vmi-\allowbreak{}analysis/\allowbreak{}} & the GUI & Disposable previews, frame dumps, screenshots \\
 \emph{.nicegui/\allowbreak{}} & the GUI & Saved form settings \\
-\emph{vendor/\allowbreak{}pbasex-\allowbreak{}matlab/\allowbreak{}} & repository & Bundled MATLAB CPBASEX code \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 Check each panel for its output paths. Some tools use workspace defaults.
-The MATLAB backend also writes shared files in the CPBASEX checkout.
 
 \section{Panel reference}
 \label{sec:panels}
@@ -2641,8 +2632,8 @@ of an image or centroid checkpoint (Section~\ref{sec:circularize}). Image option
 \code{-\allowbreak{}-\allowbreak{}extracted}, \code{-\allowbreak{}-\allowbreak{}reassign-\allowbreak{}file}, \code{-\allowbreak{}-\allowbreak{}no-\allowbreak{}jacobian}. \\
 \addlinespace
 \code{vmi\_\allowbreak{}analysis.circularization.process\_\allowbreak{}gmd\_\allowbreak{}bins} & Standalone GMD-bin batch
-inversion; \code{-\allowbreak{}-\allowbreak{}weight-\allowbreak{}suffix}, \code{-\allowbreak{}-\allowbreak{}bin-\allowbreak{}dir}, \code{-\allowbreak{}-\allowbreak{}output-\allowbreak{}dir},
-\code{-\allowbreak{}-\allowbreak{}inversion-\allowbreak{}backend}, \code{-\allowbreak{}-\allowbreak{}pyabel-\allowbreak{}method}, \code{-\allowbreak{}-\allowbreak{}use-\allowbreak{}cache},
+inversion with PyAbel. Options include \code{-\allowbreak{}-\allowbreak{}weight-\allowbreak{}suffix}, \code{-\allowbreak{}-\allowbreak{}bin-\allowbreak{}dir}, \code{-\allowbreak{}-\allowbreak{}output-\allowbreak{}dir},
+\code{-\allowbreak{}-\allowbreak{}pyabel-\allowbreak{}method}, \code{-\allowbreak{}-\allowbreak{}use-\allowbreak{}cache},
 \code{-\allowbreak{}-\allowbreak{}no-\allowbreak{}show}. \\
 \end{longtable}
 \end{center}
@@ -2686,8 +2677,6 @@ Variable & Default & Effect \\
 settings and relative default paths, important for installed copies. \\
 \code{NICEGUI\_\allowbreak{}STORAGE\_\allowbreak{}PATH} & \code{.\allowbreak{}nicegui} & Overrides where saved
 settings are stored. \\
-\code{CPBASEX\_\allowbreak{}DIR} & bundled vendor copy & Root of the MATLAB CPBASEX
-checkout used by the MATLAB backend. \\
 \emph{MPLBACKEND} & TkAgg in one script & Forces a non-interactive Matplotlib
 backend, for example \code{Agg}. \\
 \bottomrule
@@ -2717,10 +2706,6 @@ backend, for example \code{Agg}. \\
   \item[GMD weighting has no effect.] The map may be missing, partial, or all
     weights are 1.0. A map built with \emph{First N files} only covers those
     files; frames outside it silently keep weight 1.0.
-  \item[Legacy MATLAB backend fails.] The MATLAB backend needs MATLAB and the basis file
-    \code{G\_\allowbreak{}r512\_\allowbreak{}k512\_\allowbreak{}l10.\allowbreak{}h5}. Generate it once with
-    \code{save\_\allowbreak{}gData.\allowbreak{}m}; expect tens of minutes. Use the PyAbel backend to
-    avoid MATLAB entirely. MATLAB bins are processed sequentially by design.
   \item[The frame histogram or movie disagrees with another tool.] Frame
     enumeration differs between tools: GMD Map and Dark Frame use the HDF5
     pattern (\code{RAW-\allowbreak{}*.\allowbreak{}h5} by default, adjustable for prefixed names), while

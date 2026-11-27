@@ -19,9 +19,6 @@ CENTROID_DIR = WORKSPACE_ROOT / "centroiding"
 CIRCULARIZATION_DIR = WORKSPACE_ROOT / "circularization"
 GENERATED_DIR = Path(os.environ.get("VMI_CACHE_DIR", WORKSPACE_ROOT / ".cache" / "vmi-analysis")).expanduser().resolve()
 STORAGE_DIR = WORKSPACE_ROOT / ".nicegui"
-_old_cpbasex = WORKSPACE_ROOT / "pbasex-matlab"
-CPBASEX_DIR = Path(os.environ.get("CPBASEX_DIR", _old_cpbasex if _old_cpbasex.is_dir()
-                                else WORKSPACE_ROOT / "vendor" / "pbasex-matlab"))
 
 
 def validate_distinct_output(output, inputs, *, cwd=None, output_label="output image"):

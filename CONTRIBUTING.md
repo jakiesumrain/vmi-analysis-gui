@@ -26,7 +26,7 @@ uv run vmi-analysis     # opens http://localhost:13517
 ```
 
 Install Python 3.12 or newer and [uv](https://docs.astral.sh/uv/).
-Install ffmpeg for MP4 output. Install MATLAB if you use the CPBASEX backend.
+Install ffmpeg for MP4 output.
 Linux shared deployments have separate [setup instructions](docs/shared-server.md).
 
 ## Branch and commits
@@ -110,13 +110,9 @@ The highlights that review most often catches (full detail in `AGENTS.md`):
   the web process.
 - Preserve legacy data roots and saved `.nicegui` keys. Resolve relative
   CLI paths from the subprocess working directory.
-- MATLAB/CPBASEX work stays sequential because it shares
-  `examples/image.txt`.
 - Update `README.md`, `docs/`, or `AGENTS.md` when behavior or workflow
   changes.
 
 ## License
 
 The project uses the [Apache License, Version 2.0](LICENSE).
-Bundled CPBASEX uses a separate
-[MIT license](vendor/pbasex-matlab/LICENSE.txt).

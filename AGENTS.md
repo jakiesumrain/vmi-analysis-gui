@@ -23,8 +23,6 @@ when developing panels.
 - Centroiding uses a supplied alpha to scale energy coordinates only. Keep
   intensity and the CSV intensity column unchanged. Xe fits use pixel² and
   report a suggested alpha. GMD weighting is a per-frame scalar.
-- Keep the MATLAB CPBASEX path sequential because it shares
-  `examples/image.txt`. Preserve `CPBASEX_DIR` and legacy checkout support.
 - `centroiding/options.py` owns defaults and CLI serialization.
   `gui/settings.py` owns GUI persistence and read-only legacy migration.
   TOML is an explicit CLI option. The GUI uses saved fields and passes explicit

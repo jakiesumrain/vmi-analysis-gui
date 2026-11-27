@@ -295,7 +295,7 @@ def main():
 
     # ── 5. Save histograms ───────────────────────────────────────────────
     # A suffix keeps weighted output from overwriting the default (unweighted)
-    # bins that the downstream circularization/CPBASEX pipeline consumes.
+    # bins that the standalone circularization and PyAbel script consumes.
     suffix = weight_suffix(WEIGHT_MODE, WEIGHT_POWER)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     for b, filename in enumerate(histogram_filenames(thresholds, suffix)):

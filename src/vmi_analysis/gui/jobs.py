@@ -317,7 +317,7 @@ class JobManager:
                 return
             if sys.platform == "win32":
                 # CREATE_NEW_PROCESS_GROUP alone does not make terminate() kill
-                # descendants (notably the MATLAB process launched by a script).
+                # descendants launched by the analysis subprocess.
                 result = subprocess.run(
                     ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                     capture_output=True, timeout=5.0,
