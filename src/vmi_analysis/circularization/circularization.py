@@ -298,6 +298,14 @@ def evaluate_delta_r(r, theta, fit_params, max_trig_n=None):
     return delta_r, d_delta_r_dr
 
 
+def source_radius(r_fixed, theta, fit_params, max_trig_n, reassignment_model, polar_dr):
+    """Map corrected-grid radii to measured-grid radii and return the derivative."""
+    r_fixed, theta = np.broadcast_arrays(r_fixed, theta)
+    r_target, dr_target = eval_reassignment_model(reassignment_model, r_fixed / polar_dr)
+    delta_r, d_delta_r = evaluate_delta_r(r_target, theta, fit_params, max_trig_n)
+    return polar_dr * (r_target + delta_r), (1.0 + d_delta_r) * dr_target
+
+
 def circularize_vmi(
     raw_image,
     center,
@@ -348,18 +356,9 @@ def circularize_vmi(
     if polar_dr <= 0:
         raise ValueError("polar_dr must be positive")
 
-    r_fixed_model = r_fixed / polar_dr
-    r_target_model, dr_targetmodel_dr_fixedmodel = eval_reassignment_model(
-        reassignment_model, r_fixed_model
+    r_source, dr_source_dr_fixed = source_radius(
+        r_fixed, theta, fit_params, max_trig_n, reassignment_model, polar_dr
     )
-
-    delta_r, d_delta_r_dr = evaluate_delta_r(
-        r_target_model, theta, fit_params, max_trig_n=max_trig_n
-    )
-
-    r_source_model = r_target_model + delta_r
-    r_source = polar_dr * r_source_model
-    dr_source_dr_fixed = (1.0 + d_delta_r_dr) * dr_targetmodel_dr_fixedmodel
     if (not np.isfinite(r_source).all() or not np.isfinite(dr_source_dr_fixed).all()
             or np.any(r_source < 0.0) or np.any(dr_source_dr_fixed < -1e-12)):
         raise ValueError("The combined radial warp folds or has invalid source radii on the output grid. "
@@ -852,7 +851,7 @@ def summarize_delta_r_contributions(fit_params, max_radius, max_trig_n=None, num
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Circularize a VMI image using fixed-center polynomial A_n(r), B_n(r) fits."
+        description="Circularize a VMI image or a checkpoint of electron centroids."
     )
     parser.add_argument(
         "--input",
@@ -868,12 +867,17 @@ def parse_args():
     )
     parser.add_argument("--polar-preview", type=Path,
                         help="Optional NumPy archive of raw and circularized polar previews.")
+    parser.add_argument("--checkpoint", type=Path, help="Input Centroiding localization checkpoint.")
+    parser.add_argument("--corrected-checkpoint", type=Path, help="Output HDF5 checkpoint.")
+    parser.add_argument("--counts-output", type=Path, help="Output integer count image (.npy).")
+    parser.add_argument("--resolution-factor", type=int, default=1,
+                        help="Histogram bins per detector pixel in the calibration image.")
     parser.add_argument(
         "--shape",
         type=int,
         nargs=2,
         metavar=("NY", "NX"),
-        help="Legacy text image shape (default: 1023 1023). NumPy arrays retain their native shape.",
+        help="Output grid for checkpoints, or legacy text image shape (default: 1023 1023).",
     )
     parser.add_argument(
         "--center",
@@ -945,11 +949,76 @@ def parse_args():
         default=1.0,
         help="Radial step size used in the polar image. Extracted radii/A_n/B_n are interpreted in these units.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.checkpoint is not None:
+        if args.summary_only or args.polar_preview is not None:
+            parser.error("--checkpoint produces a corrected checkpoint and count image.")
+        if any(value is None for value in (args.corrected_checkpoint, args.counts_output, args.shape, args.center)):
+            parser.error("--checkpoint requires --corrected-checkpoint, --counts-output, --shape and --center.")
+        if min(args.shape) < 1 or args.resolution_factor < 1 or not np.isfinite(args.center).all():
+            parser.error("Checkpoint shape and resolution factor must be positive, and center must be finite.")
+        ny, nx = args.shape
+        xc, yc = args.center
+        if not (0 <= xc < nx and 0 <= yc < ny):
+            parser.error("Checkpoint center must lie inside the calibration grid.")
+    elif args.corrected_checkpoint is not None or args.counts_output is not None:
+        parser.error("--corrected-checkpoint and --counts-output require --checkpoint.")
+    return args
+
+
+def fit_radial_terms(args, dataset):
+    if args.radial_model == "poly":
+        return fit_all_trig_polynomials(dataset, order=args.poly_order, max_trig_n=args.max_trig_n)
+    return build_all_trig_interpolators(dataset, max_trig_n=args.max_trig_n)
+
+
+def circularize_events(args):
+    from .checkpoint import EventWarp, checkpoint_targets, correct_checkpoint
+
+    corrected, counts = checkpoint_targets(args.checkpoint, args.extracted, args.reassign_file,
+                                           args.corrected_checkpoint, args.counts_output)
+    calibration_text = args.extracted.read_text(encoding="utf-8")
+    blocks = parse_extracted_text(calibration_text, source=str(args.extracted))
+    for block in blocks:
+        geometry = block.get("detector_geometry")
+        if geometry and (tuple(geometry["shape"]) != tuple(args.shape)
+                         or not np.allclose(geometry["center"], args.center, atol=1e-6, rtol=0)):
+            raise ValueError("Checkpoint shape and center must match the saved trig calibration geometry.")
+    for warning in detector_geometry_warnings(blocks, args.shape, args.center):
+        print(f"Warning: {warning}")
+    dataset = build_fit_dataset(blocks, max_trig_n=args.max_trig_n)
+    fit_params, _ = fit_radial_terms(args, dataset)
+    reassignment = {"kind": "identity"}
+    pairs = None
+    if args.reassign_file is not None:
+        circ, fixed = parse_reassignment_file(args.reassign_file)
+        reassignment = build_reassignment_interpolator(circ, fixed)
+        pairs = np.column_stack((circ, fixed)).tolist()
+    warp = EventWarp(fit_params, args.max_trig_n, reassignment, args.polar_dr, float(np.max(dataset["radii"])))
+    print(f"Correcting centroids through radius {warp.radius:g} calibration-grid pixels.", flush=True)
+    summary = correct_checkpoint(
+        args.checkpoint, corrected, counts, shape=args.shape, center=args.center,
+        resolution=args.resolution_factor, warp=warp, metadata={
+            "calibration_file": str(args.extracted.resolve()), "calibration_text": calibration_text,
+            "reassignment_file": str(args.reassign_file.resolve()) if args.reassign_file else None,
+            "reassignment_pairs": pairs, "radial_model": args.radial_model,
+            "poly_order": args.poly_order if args.radial_model == "poly" else None,
+            "max_trig_n": args.max_trig_n, "polar_dr": args.polar_dr,
+        },
+    )
+    for status, total in summary.items():
+        print(f"{status.replace('_', ' ').capitalize()}: {total:,}")
+    print(f"Corrected checkpoint: {corrected}\nInteger histogram: {counts}")
 
 
 def main():
     args = parse_args()
+    if args.checkpoint is not None:
+        try:
+            circularize_events(args)
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"Circularize: {exc}") from exc
+        return
     inputs = (("input image", args.input), ("extracted calibration file", args.extracted),
               ("radial reassignment file", args.reassign_file))
     if not args.summary_only:
@@ -974,17 +1043,7 @@ def main():
           f"Center X={center[0]:g}, Center Y={center[1]:g}.")
     for warning in detector_geometry_warnings(blocks, raw_image.shape, center):
         print(f"Warning: {warning}")
-    if args.radial_model == "poly":
-        fit_params, fit_meta = fit_all_trig_polynomials(
-            dataset,
-            order=args.poly_order,
-            max_trig_n=args.max_trig_n,
-        )
-    else:
-        fit_params, fit_meta = build_all_trig_interpolators(
-            dataset,
-            max_trig_n=args.max_trig_n,
-        )
+    fit_params, fit_meta = fit_radial_terms(args, dataset)
     print_fit_summary(fit_params)
     for term in fit_meta.values():
         if term.get("warning"):

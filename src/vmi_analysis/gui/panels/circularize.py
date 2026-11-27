@@ -1,4 +1,4 @@
-"""Panel: circularization.py — single-image circularization."""
+"""Correct VMI images and electron localization checkpoints."""
 
 import re
 import sys
@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 from nicegui import ui
 from plotly.subplots import make_subplots
+from vmi_analysis.circularization.checkpoint import checkpoint_targets
 from vmi_analysis.paths import validate_distinct_output
 
 from ..agent_panels import PanelOperation, boolean, number, require_completed_job, resolve_path
@@ -31,9 +32,10 @@ DEFAULTS = {
     "shape_y": 1023, "shape_x": 1023, "center_x": 511.0, "center_y": 511.0,
     "brightest_center": True, "radial_model": "interp", "poly_order": 2,
     "interp_order": 3, "max_trig_n": 0, "polar_dr": 1.0,
-    "no_jacobian": True, "no_plots": False, "summary_only": False,
+    "no_jacobian": True, "no_plots": False, "summary_only": False, "resolution_factor": 1,
 }
 RADIAL_MODELS = ("interp", "poly")
+CHECKPOINT_SUFFIXES = (".h5", ".hdf5")
 BOOLEAN_FIELDS = ("brightest_center", "no_jacobian", "no_plots", "summary_only")
 
 
@@ -45,7 +47,8 @@ def _whole(value, minimum, label, maximum=None):
     return int(value)
 
 
-def circularize_job(extracted, *, inp="", out="", reassign="", plot_dir=None, **settings):
+def circularize_job(extracted, *, inp="", out="", reassign="", plot_dir=None,
+                    corrected_checkpoint="", counts_output="", **settings):
     cwd = circularization_dir(CIRC_DIR)
     options = DEFAULTS | settings
     for key in BOOLEAN_FIELDS:
@@ -66,22 +69,51 @@ def circularize_job(extracted, *, inp="", out="", reassign="", plot_dir=None, **
         return job
 
     if not inp or not str(inp).strip():
-        raise ValueError("Choose a VMI image.")
+        raise ValueError("Choose a VMI image or localization checkpoint.")
     raw = Path(inp).suffix.lower() == ".npy"
     model = options["radial_model"]
     if model not in RADIAL_MODELS:
         raise ValueError("Choose interpolation or polynomial radial fits.")
+    cmd += ["--radial-model", model]
+    if model == "poly":
+        cmd += ["--poly-order", str(_whole(options["poly_order"], 1, "Polynomial order"))]
+    if Path(inp).suffix.lower() in CHECKPOINT_SUFFIXES:
+        source = checked_path(inp, cwd=cwd)
+        if not source.is_file():
+            raise ValueError("Choose an existing localization checkpoint.")
+        if not corrected_checkpoint or not counts_output:
+            raise ValueError("Choose a corrected checkpoint and an integer histogram output.")
+        corrected, counts = checkpoint_targets(
+            source, extracted, reassign, checked_path(corrected_checkpoint, write=True, cwd=cwd),
+            checked_path(counts_output, write=True, cwd=cwd), cwd=cwd)
+        ny, nx = [_whole(options[key], 1, f"Shape {key[-1].upper()}") for key in ("shape_y", "shape_x")]
+        xc, yc = [number(options[key]) for key in ("center_x", "center_y")]
+        if not (0 <= xc < nx and 0 <= yc < ny):
+            raise ValueError("Center must lie inside the calibration grid.")
+        dr = number(options["polar_dr"])
+        if dr <= 0:
+            raise ValueError("Polar radial step must be positive.")
+        factor = _whole(options["resolution_factor"], 1, "Histogram resolution factor")
+        cmd += ["--checkpoint", str(source), "--corrected-checkpoint", str(corrected),
+                "--counts-output", str(counts), "--shape", str(ny), str(nx),
+                "--center", str(xc), str(yc), "--polar-dr", str(dr), "--resolution-factor", str(factor)]
+        if reassign:
+            cmd += ["--reassign-file", str(reassign)]
+        job.extra.update(corrected_checkpoint=str(corrected), counts_output=str(counts),
+                         panel_form=dict(options, inp=str(source), extracted=str(extracted),
+                                         reassign=str(reassign), corrected_checkpoint=str(corrected),
+                                         counts_output=str(counts), max_trig_n=order))
+        return job
+
     inputs = (("input image", inp), ("extracted calibration file", extracted), ("radial reassignment file", reassign))
     if not out or not str(out).strip():
         raise ValueError("Choose an output image file.")
     target = validate_distinct_output(checked_path(out, write=True, cwd=cwd), inputs, cwd=cwd)
     preview = generated_dir(GENERATED) / f"circ_{job.id}_polar.npz"
     checked_path(preview, write=True)
-    cmd += ["--input", str(inp), "--output", str(target), "--radial-model", model,
+    cmd += ["--input", str(inp), "--output", str(target),
             "--interp-order", str(_whole(options["interp_order"], 0, "Interpolation order", 5)),
             "--polar-preview", str(preview)]
-    if model == "poly":
-        cmd += ["--poly-order", str(_whole(options["poly_order"], 1, "Polynomial order"))]
     if not raw:
         shape = [_whole(options[key], 1, f"Shape {key[-1].upper()}") for key in ("shape_y", "shape_x")]
         dr = number(options["polar_dr"])
@@ -120,6 +152,7 @@ def _prepare_agent(jobs, params):
     source_id = inputs.pop("source_job_id", None)
     bin_index = inputs.pop("bin_index", None)
     source = inputs.pop("input", "")
+    event_outputs = bool(inputs.get("corrected_checkpoint") or inputs.get("counts_output"))
     if source_id is not None:
         if source:
             raise ValueError("Supply either input or source_job_id.")
@@ -129,17 +162,24 @@ def _prepare_agent(jobs, params):
         parent = require_completed_job(jobs, source_id, name=parent.name)
         if bin_index is not None and parent.name != "GMD binning":
             raise ValueError("A bin index requires a completed Binning job.")
-        artifact = ("raw_image" if parent.name == "Centroiding" else "all_bins_image"
-                    if bin_index is None else f"bin_{_whole(bin_index, 0, 'Bin index')}")
+        if parent.name == "Centroiding":
+            artifact = "checkpoint" if event_outputs else "raw_image"
+        elif event_outputs:
+            raise ValueError("A checkpoint input requires a completed Centroiding job.")
+        else:
+            artifact = "all_bins_image" if bin_index is None else f"bin_{_whole(bin_index, 0, 'Bin index')}"
         source = parent.extra.get(artifact)
         if not source:
-            raise ValueError("The completed job does not have the requested VMI image.")
+            raise ValueError("The completed job does not have the requested image or checkpoint.")
     elif bin_index is not None:
         raise ValueError("A bin index requires a completed Binning job.")
     if not summary_only or source:
         source = resolve_path(source)
-        if not source.is_file() or source.suffix.lower() not in (".npy", ".txt"):
-            raise ValueError("Choose an existing VMI image (.npy or .txt).")
+        if not source.is_file() or source.suffix.lower() not in (".npy", ".txt", *CHECKPOINT_SUFFIXES):
+            raise ValueError("Choose an existing VMI image (.npy or .txt) or localization checkpoint (.h5 or .hdf5).")
+    events = bool(source) and source.suffix.lower() in CHECKPOINT_SUFFIXES
+    if event_outputs and not events:
+        raise ValueError("Corrected checkpoint and count histogram outputs require a localization checkpoint.")
     calibration = inputs.get("extracted")
     if not calibration and source:
         calibration = source.with_name("extracted.txt")
@@ -150,8 +190,8 @@ def _prepare_agent(jobs, params):
     inputs["inp"] = source
     inputs["out"] = inputs.pop("output", "")
     inputs["reassign"] = inputs.pop("reassign_file", "") or ""
-    for key in ("out", "plot_dir", "reassign"):
-        if inputs.get(key) or (key == "out" and not summary_only):
+    for key in ("out", "plot_dir", "reassign", "corrected_checkpoint", "counts_output"):
+        if inputs.get(key) or (key == "out" and not summary_only and not events):
             inputs[key] = resolve_path(inputs.get(key), write=key != "reassign")
     if inputs["reassign"] and not inputs["reassign"].is_file():
         raise ValueError("Choose an existing radial reassignment file.")
@@ -164,7 +204,21 @@ def _prepare_agent(jobs, params):
     summary = {"Mode": "Calibration summary" if summary_only else "Correct radial distortion",
                "Extracted trig-fit file": str(calibration),
                "Maximum trig order": form["max_trig_n"] or "Automatic"}
-    if not summary_only:
+    if not summary_only and events:
+        summary.update({
+            "Mode": "Correct individual centroids and build unit counts",
+            "Source checkpoint": str(source),
+            "Image shape (NY, NX)": [form["shape_y"], form["shape_x"]],
+            "Center (X, Y)": [form["center_x"], form["center_y"]],
+            "Histogram bins per detector pixel": form["resolution_factor"],
+            "Polar radial step (pixels)": form["polar_dr"],
+            "Radial model": form["radial_model"],
+            "Polynomial order": form["poly_order"] if form["radial_model"] == "poly" else None,
+            "Radial reassignment": form["reassign"] or "Off",
+            "Corrected checkpoint": form["corrected_checkpoint"],
+            "Integer histogram": form["counts_output"],
+        })
+    elif not summary_only:
         raw = source.suffix.lower() == ".npy"
         summary.update({
             "VMI image": str(source),
@@ -185,23 +239,27 @@ def _prepare_agent(jobs, params):
 
 def agent_operations():
     parameters = {
-        "input": {"type": "path", "description": "VMI image (.npy or .txt), alternative to source_job_id"},
+        "input": {"type": "path", "description": "VMI image (.npy or .txt) or localization checkpoint (.h5 or .hdf5), alternative to source_job_id"},
         "source_job_id": {"type": "job ID", "description": "Completed batch Centroiding or Binning job"},
         "bin_index": {"type": "integer", "description": "Optional zero-based Binning bin. Defaults to the combined image."},
         "extracted": {"type": "path", "description": "Trig-fit file. Defaults to extracted.txt beside the input image."},
         "output": {"type": "path", "description": "Corrected image text file in your workspace"},
+        "corrected_checkpoint": {"type": "path", "description": "Output HDF5 file for corrected centroids"},
+        "counts_output": {"type": "path", "description": "Output NumPy integer histogram for corrected centroids"},
         "plot_dir": {"type": "path", "description": "Diagnostic output directory. Defaults to circularization/trig_fit_plots."},
         "reassign_file": {"type": "path", "description": "Optional two-column radial reassignment file"},
     }
     help_text = {
-        "shape_y": "Rows in a legacy text image", "shape_x": "Columns in a legacy text image",
+        "shape_y": "Rows in the checkpoint calibration grid or legacy text image",
+        "shape_x": "Columns in the checkpoint calibration grid or legacy text image",
         "center_x": "Zero-based center column in pixels", "center_y": "Zero-based center row in pixels",
         "brightest_center": "Use the brightest pixel as center for NumPy input",
         "radial_model": "Model for radial dependence of the trig coefficients",
         "poly_order": "Order used for the polynomial radial model",
         "interp_order": "Remapping interpolation order from 0 to 5",
         "max_trig_n": "Highest trig term to use. Zero infers it from the calibration.",
-        "polar_dr": "Radial step in pixels for legacy text input",
+        "polar_dr": "Radial step in pixels for checkpoint or legacy text input",
+        "resolution_factor": "Histogram bins per detector pixel in the checkpoint calibration image",
         "no_jacobian": "Disable Jacobian intensity correction",
         "no_plots": "Skip the trig-fit diagnostic plots",
         "summary_only": "Read and summarize the calibration. An output image is unnecessary.",
@@ -211,9 +269,9 @@ def agent_operations():
         parameters[key] = {"type": types[type(value)], "default": value, "description": help_text[key]}
     parameters["radial_model"]["choices"] = list(RADIAL_MODELS)
     description = {"panel": JOB_NAME, "manual": JOB_NAME, "parameters": parameters,
-                   "summary": "Correct radial distortion in a VMI image and compare raw and corrected polar views."}
+                   "summary": "Correct radial distortion in a VMI image or build integer counts from corrected centroids."}
     return (PanelOperation("circularize", description, _prepare_agent, (JOB_NAME,),
-                           outputs=("output", "polar_preview")),)
+                           outputs=("output", "polar_preview", "corrected_checkpoint", "counts_output")),)
 
 
 def build(jobs: JobManager):
@@ -232,19 +290,29 @@ def build(jobs: JobManager):
     view = JobView(jobs, job_name=JOB_NAME, results_builder=results, attach_builder=restore_form)
     theme.panel_header(
         JOB_NAME,
-        "Correct radial distortion in one VMI image and compare the raw and corrected polar views.",
+        "Correct radial distortion in a VMI image or in individual electron centroids.",
         view=view)
 
     with theme.panel_card():
-        inp = persist(path_input("Input image (.npy or .txt)",
+        inp = persist(path_input("VMI image or localization checkpoint",
                                  str(output_dir(centroid_settings()) / "vmi_2d_raw.npy"),
-                                 browse="file", filters=[".npy", ".txt"]),
+                                 browse="file", filters=[".npy", ".txt", *CHECKPOINT_SUFFIXES]),
                       "circularize.inp")
         out = persist(path_input("Output image (.txt)",
                                  str(circularization_dir(CIRC_DIR) / "image_circularized.txt"),
                                  browse="save", filters=[".txt"],
                                  default_name="image_circularized.txt"),
                       "circularize.out")
+        with ui.column().classes("w-full gap-2") as event_paths:
+            corrected_checkpoint = persist(path_input(
+                "Corrected checkpoint (.h5)", str(circularization_dir(CIRC_DIR) / "localizations_circularized.h5"),
+                browse="save", filters=list(CHECKPOINT_SUFFIXES), default_name="localizations_circularized.h5"),
+                "circularize.corrected_checkpoint")
+            counts_output = persist(path_input(
+                "Integer histogram (.npy)", str(circularization_dir(CIRC_DIR) / "image_circularized_counts.npy"),
+                browse="save", filters=[".npy"], default_name="image_circularized_counts.npy"),
+                "circularize.counts_output")
+            ui.label("Match the grid shape, binning and center used to fit the calibration.").classes("vmi-subtitle")
         with field_grid():
             shape_y = persist(num_input("Shape NY", 1023, step=1),
                               "circularize.shape_y")
@@ -254,6 +322,8 @@ def build(jobs: JobManager):
                                "circularize.center_x")
             center_y = persist(num_input("Center Y", 511.0, step="any"),
                                "circularize.center_y")
+            resolution_factor = persist(num_input("Histogram bins per detector pixel", 1, min=1, step=1),
+                                        "circularize.resolution_factor")
         with check_grid():
             brightest_center = persist(ui.checkbox("Use brightest pixel as center", value=True),
                                        "circularize.brightest_center")
@@ -290,14 +360,22 @@ def build(jobs: JobManager):
             "Plot output dir", str(circularization_dir(CIRC_DIR) / "trig_fit_plots"),
             browse="dir"), "circularize.plot_dir")
 
-        ui.label("NumPy input keeps its original grid. Use the same center as Trig Calibration.") \
+        image_hint = ui.label("NumPy input keeps its original grid. Use the same center as Trig Calibration.") \
             .classes("vmi-subtitle")
 
         def raw_input():
             return Path(inp.value or "").suffix.lower() == ".npy"
 
+        def checkpoint_input():
+            return Path(inp.value or "").suffix.lower() in CHECKPOINT_SUFFIXES
+
         def update_geometry():
             raw = raw_input()
+            events = checkpoint_input()
+            event_paths.set_visibility(events)
+            resolution_factor.set_visibility(events)
+            for field in (out, interp_order, no_jacobian, no_plots, plot_dir, summary_only, image_hint):
+                field.set_visibility(not events)
             for field in (shape_y, shape_x, polar_dr):
                 field.set_enabled(not raw)
             for field in (center_x, center_y):
@@ -309,6 +387,8 @@ def build(jobs: JobManager):
         update_geometry()
 
         fields = dict(inp=inp, out=out, extracted=extracted, reassign=reassign, plot_dir=plot_dir,
+                      corrected_checkpoint=corrected_checkpoint, counts_output=counts_output,
+                      resolution_factor=resolution_factor,
                       shape_y=shape_y, shape_x=shape_x, center_x=center_x, center_y=center_y,
                       brightest_center=brightest_center, radial_model=radial_model, poly_order=poly_order,
                       interp_order=interp_order, max_trig_n=max_trig_n, polar_dr=polar_dr,
@@ -316,12 +396,26 @@ def build(jobs: JobManager):
 
         def run():
             try:
-                job = circularize_job(**{key: widget.value for key, widget in fields.items()})
+                options = {key: widget.value for key, widget in fields.items()}
+                if checkpoint_input():
+                    options["summary_only"] = False
+                job = circularize_job(**options)
                 view.attach(jobs.submit(job))
             except (OSError, ValueError, OverflowError) as exc:
                 ui.notify(str(exc), type="warning")
 
         def clear():
+            if checkpoint_input():
+                try:
+                    targets = checkpoint_targets(inp.value, extracted.value, reassign.value,
+                                                 corrected_checkpoint.value, counts_output.value,
+                                                 cwd=circularization_dir(CIRC_DIR))
+                except (OSError, ValueError) as exc:
+                    ui.notify(str(exc), type="warning")
+                    return
+                confirm_clear_outputs(targets, "Delete the corrected checkpoint and integer histogram?",
+                                      on_cleared=view.clear_results)
+                return
             if not out.value:
                 ui.notify("Set an output image path first.", type="warning")
                 return
@@ -417,16 +511,24 @@ def _results(job: Job):
     if job.status != "done" or job.extra.get("summary_only"):
         return
     cwd = Path(job.cwd or circularization_dir(CIRC_DIR))
-    out = cwd / job.extra["output"]
+    counts = job.extra.get("counts_output")
+    if counts:
+        checkpoint = cwd / job.extra["corrected_checkpoint"]
+        if checkpoint.is_file():
+            url = file_url(checkpoint)
+            ui.button("Download corrected checkpoint", icon="download",
+                      on_click=lambda: ui.download.from_url(url, filename=checkpoint.name)).props("flat")
+    out = cwd / (counts or job.extra["output"])
     if out.is_file():
         with ui.row().classes("items-center gap-2"):
             url = file_url(out)
-            ui.button("Download corrected image", icon="download",
+            ui.button("Download integer histogram" if counts else "Download corrected image", icon="download",
                       on_click=lambda: ui.download.from_url(url, filename=out.name)).props("flat")
             if not shared.SERVER:
                 open_folder_button(out)
         try:
-            figure = _corrected_figure(np.loadtxt(out, ndmin=2))
+            image = np.load(out, allow_pickle=False) if counts else np.loadtxt(out, ndmin=2)
+            figure = _corrected_figure(image, quantity="Counts" if counts else "Intensity")
             ui.plotly(plot_options(figure)).classes("w-full max-w-4xl")
         except (OSError, ValueError) as e:
             ui.label(f"Could not render {out}: {e}").classes("vmi-subtitle")
@@ -437,8 +539,8 @@ def _results(job: Job):
             zoomable_image(file_url(reassignment_plot)).classes("w-full max-w-2xl")
 
 
-def _corrected_figure(image):
-    trace = _heatmap(image, logarithmic=True, colorbar={"title": {"text": "Intensity"}})
+def _corrected_figure(image, quantity="Intensity"):
+    trace = _heatmap(image, logarithmic=True, colorbar={"title": {"text": quantity}})
     positive = image[np.isfinite(image) & (image > 0)]
     if positive.size:
         high = np.log10(np.percentile(positive, 99.999))
@@ -447,7 +549,7 @@ def _corrected_figure(image):
         trace.update(zmin=low, zmax=high, colorbar={
             "tickvals": ticks, "ticktext": [f"10<sup>{tick}</sup>" for tick in ticks]})
     trace.update(colorscale="Viridis",
-                 hovertemplate="X: %{x:.0f} px<br>Y: %{y:.0f} px<br>Intensity: %{customdata:.6g}<extra></extra>")
+                 hovertemplate="X: %{x:.0f} px<br>Y: %{y:.0f} px<br>" + quantity + ": %{customdata:.6g}<extra></extra>")
     figure = make_subplots(rows=1, cols=1)
     figure.add_trace(trace, row=1, col=1)
     _image_axes(figure, image, 1, 1, "x")

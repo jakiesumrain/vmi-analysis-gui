@@ -153,7 +153,12 @@ def command_access(cmd, cwd=None, *, prior_outputs=()):
         write(value("--output-dir"))
     elif module == "vmi_analysis.circularization.circularization":
         read(value("--extracted", "extracted.txt"))
-        if "--summary-only" not in args:
+        if value("--checkpoint"):
+            read(value("--checkpoint"))
+            read(value("--reassign-file"))
+            write(value("--corrected-checkpoint"))
+            write(value("--counts-output"))
+        elif "--summary-only" not in args:
             read(value("--input", "image.txt"))
             reassignment = value("--reassign-file")
             read(reassignment)
