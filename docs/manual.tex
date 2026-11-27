@@ -468,7 +468,17 @@ scientific parameters. Review the resolved settings and output paths.
 Choose \emph{Approve and run} to queue the job or \emph{Decline} to dismiss
 it. Return to the ordinary panel to check its form, console, and results.
 For a fit tied to a plot, use the panel's \emph{Ask Agent} control and
-review the selection in that panel.
+review the selection in that panel. In Trig Calibration, inspect the fitted
+ridge and residuals, then choose \emph{Accept ring} to append the fit to the
+selected extracted \code{.txt} calibration file. TPX3 Dump supports reviewed
+timewalk correction of an HDF5 file or acquisition collection.
+
+In Ion momenta, the result view's \emph{Ask Agent} controls apply or clear
+position and TOF gates, fit the current position-filtered spectrum, append
+a reviewed species assignment, and reconstruct momentum projections. Live
+TPX3 can inspect the current preview and review start, stop, and reset in
+the same tab. Starting or resetting clears accumulated counts. A shared
+server administrator fixes the acquisition endpoint.
 
 For example, ask for a dark frame using the median of a named HDF5 folder.
 For ion work, ask for a TPX3 dump followed by an Ion TOF plot from that
@@ -2313,6 +2323,18 @@ changing it.
 \subsubsection{Build a common timewalk calibration across recordings}
 \label{sec:timewalk-accumulation}
 
+\paragraph{Use the Agent.}
+Ask the Agent to build a master timewalk calibration from your recordings in
+the stated order. Give it a destination HDF5 and specify the input format
+and any shared dump options. Review the input, seed, and output for each
+stage, then approve the workflow. It keeps the intermediate HDF5 files and
+reports the master when complete. For prefixed input, a detected restart
+stops a calibration stage. For Serval input, select uninterrupted
+recordings yourself.
+To correct a separate target in the same workflow, also give the Agent
+the target input and an uncorrected dump path. The Agent presents the
+corrected output path for review. The target's LUT includes its own statistics.
+
 LUNA can accumulate timewalk statistics across similar experiments.
 See ASI's \href{https://amsterdam-scientific-instruments.github.io/luna-docs/3_examples/ex15_accumulate_timewalk_statistics.html}{accumulation example}
 and \href{https://amsterdam-scientific-instruments.github.io/luna-docs/3_examples/ex14_apply_timewalk_correction.html}{correction example}.
@@ -2410,8 +2432,8 @@ reference. Save or load species assignments as JSON.
 
 Enter the detector center, detector scale, and species parameters before
 plotting momenta. Choose the reconstruction model that matches your
-calibration. The Agent can prepare the initial histograms. Set gates,
-assign species, and reconstruct in the panel.
+calibration. The Agent can prepare the initial histograms. Use \emph{Ask Agent}
+in the result view to review gates, fits, species assignments, or reconstruction.
 
 \subsection{Ion Pipeline}
 
@@ -2446,7 +2468,8 @@ GMD histogram limits and bin widths, then start the preview. The receiver
 accumulates the detector map, TOF histogram, and GMD histograms. The GMD
 time plot follows a rolling window. Frames with ambiguous trigger data
 remain visible in the receiver's diagnostic counts. The Agent can inspect
-the current tab's live snapshot after you start it.
+the current tab's live snapshot and propose starting, stopping, or resetting
+the preview. Approved start settings also appear in the Live TPX3 form.
 
 The \emph{Ion} $\rightarrow$ \emph{Fallback} group contains TPX3 Dump,
 Ion TOF, and Ion Pipeline variants for comparison with the standalone

@@ -237,10 +237,15 @@ def _run_luna(command, *, windows, original_paths=None, log=None):
             raise ValueError(f"LUNA exited with status {code}. See the console above.")
 
 
-def publish_result(command, pending, output, *, windows, staged_paths=None, log=None):
+def publish_result(command, pending, output, *, windows, staged_paths=None, log=None, require_calibration=False):
     originals = {staged.name: original for staged, original in (staged_paths or {}).items()}
     _run_luna(command, windows=windows, original_paths=originals, log=log)
     with h5py.File(pending, "r") as result:
+        if require_calibration:
+            for name in ("TimewalkMatrix", "TimewalkLookupTable"):
+                dataset = result.get(name)
+                if not isinstance(dataset, h5py.Dataset) or not dataset.size:
+                    raise ValueError(f"LUNA did not produce a nonempty /{name}.")
         for name in ("PixelHits", "Clusters", "TDCEvents", "TimewalkMatrix", "TimewalkLookupTable"):
             if name in result:
                 print(f"{name}: {len(result[name]):,}", file=log, flush=True)
@@ -263,13 +268,17 @@ def apply_timewalk(source, output, options, *, windows, log=None):
         publish_result(command, pending, output, windows=windows, log=log)
 
 
-def dump_acquisitions(paths, output, matrix, values, options, *, windows):
-    """Publish each independent LUNA stream and its source-frame metadata."""
+def acquisition_boundaries(paths):
     if not paths:
         raise ValueError("No TPX3 frames to process.")
     timing = [read_timing(path) for path in paths]
     wall = np.array([row[0] for row in timing], dtype=np.int64)
-    boundaries = [0, *acquisition_splits(wall, np.array([row[1] for row in timing])), len(paths)]
+    return [0, *acquisition_splits(wall, np.array([row[1] for row in timing])), len(paths)], wall
+
+
+def dump_acquisitions(paths, output, matrix, values, options, *, windows):
+    """Publish each independent LUNA stream and its source-frame metadata."""
+    boundaries, wall = acquisition_boundaries(paths)
     output.parent.mkdir(parents=True, exist_ok=True)
     collection = manifest_path(output)
     destination = output.parent / (output.stem + "_segments") / uuid4().hex
@@ -337,6 +346,8 @@ def main(argv=None):
     parser.add_argument("--timewalk-file", type=Path)
     parser.add_argument("--split-acquisitions", action="store_true",
                         help="Detect acquisition restarts and publish separate HDF5 segments and a .segments.json collection.")
+    parser.add_argument("--timewalk-calibration", action="store_true",
+                        help="Require a nonempty timewalk matrix and LUT. For prefixed input, require one acquisition.")
     parser.add_argument("--wsl-distribution", default="")
     parser.add_argument("--wsl-executable", default="")
     for option in PROCESS_OPTIONS:
@@ -376,6 +387,15 @@ def main(argv=None):
                 raise ValueError("The 32-byte acquisition format requires a single-chip layout.")
         paths = input_files(source)
         numbered_paths = frame_order(paths)
+        if options.timewalk_calibration:
+            if not options.calculate_timewalk_statistics or options.split_acquisitions:
+                raise ValueError("Timewalk calibration requires statistics calculation and a single HDF5 output.")
+            if metadata is not None:
+                if numbered_paths is None and len(paths) > 1:
+                    raise ValueError("Timewalk calibration requires frame numbers in prefixed input filenames.")
+                boundaries, _ = acquisition_boundaries(numbered_paths or paths)
+                if len(boundaries) > 2:
+                    raise ValueError("A calibration recording has an acquisition restart. Select an uninterrupted recording.")
         if options.split_acquisitions:
             if metadata is None or options.layout not in (None, "single"):
                 raise ValueError("Acquisition splitting requires single-chip data with a 32-byte acquisition prefix.")
@@ -398,14 +418,20 @@ def main(argv=None):
                 metadata_stage = Path(stack.enter_context(TemporaryDirectory(dir=metadata.parent, prefix=".luna-")))
                 pending_metadata = metadata_stage / metadata.name
                 framed_dir = staging / "framed"
+                combined = options.timewalk_calibration
                 staged_paths = preprocess_acquisition(numbered_paths or paths, framed_dir, pending_metadata,
-                                                      numbered=numbered_paths is not None)
-                print(f"Saved metadata for {len(paths)} file(s) and framed {len(staged_paths)} packet stream(s).", flush=True)
-                pending_metadata.replace(metadata)
-                print(f"Acquisition metadata ready: {metadata}", flush=True)
-                if not staged_paths:
-                    raise ValueError("The acquisition contains no Timepix3 packets.")
-                luna_input = framed_dir if source.is_dir() else next(iter(staged_paths))
+                                                      numbered=numbered_paths is not None, combined=combined)
+                if combined:
+                    luna_input = framed_dir / "acquisition.tpx3"
+                    if not luna_input.stat().st_size:
+                        raise ValueError("The acquisition contains no Timepix3 packets.")
+                else:
+                    print(f"Saved metadata for {len(paths)} file(s) and framed {len(staged_paths)} packet stream(s).", flush=True)
+                    pending_metadata.replace(metadata)
+                    print(f"Acquisition metadata ready: {metadata}", flush=True)
+                    if not staged_paths:
+                        raise ValueError("The acquisition contains no Timepix3 packets.")
+                    luna_input = framed_dir if source.is_dir() else next(iter(staged_paths))
             elif numbered_paths is not None and numbered_paths != paths:
                 luna_input = staging / "ordered"
                 luna_input.mkdir()
@@ -418,7 +444,11 @@ def main(argv=None):
                     staged_paths[target] = path
             command = luna_command(luna_input, pending, matrix, process_arguments(values),
                                    options.wsl_distribution, options.wsl_executable, windows=windows)
-            publish_result(command, pending, output, windows=windows, staged_paths=staged_paths)
+            publish_result(command, pending, output, windows=windows, staged_paths=staged_paths,
+                           require_calibration=options.timewalk_calibration)
+            if metadata is not None and options.timewalk_calibration:
+                pending_metadata.replace(metadata)
+                print(f"Acquisition metadata ready: {metadata}", flush=True)
     except FileNotFoundError as exc:
         raise SystemExit(f"[LUNA] Could not find {exc.filename}. Check LUNA, WSL and the selected paths.") from exc
     except (OSError, ValueError) as exc:

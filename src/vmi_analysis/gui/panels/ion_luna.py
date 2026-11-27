@@ -1,24 +1,27 @@
 """Workbench panel for Timepix3 conversion with ASI LUNA."""
 
 import json
+from functools import partial
 from pathlib import Path
 import sys
 
 from nicegui import ui
 
-from vmi_analysis.ion_luna import LUNA_COMMAND_PREFIX, PROCESS_OPTIONS, process_arguments
+from vmi_analysis.ion_luna import LUNA_COMMAND_PREFIX, PROCESS_OPTIONS, input_files, process_arguments
 from vmi_analysis.paths import validate_distinct_output
 from vmi_analysis.ion_acquisition import manifest_path, segment_files
 
 from ..shared import checked_path, workspace_root
 from .. import shared, theme
 from ..agent_panels import PanelOperation, boolean, resolve_path
-from ..jobs import Job, JobManager
+from ..jobs import Job, JobManager, Stage
+from ..resources import command_access, overlaps
 from .common import (REPO_ROOT, JobView, action_bar, adopt_agent_form, check_grid, field_grid, num_input,
                      open_folder_button, path_input, persist)
 from .hdf5_details import file_details
 
 JOB_NAME = "TPX3 Dump"
+TIMEWALK_WORKFLOW = "TPX3 Timewalk Calibration"
 DUMP = "Dump TPX3"
 CORRECT = "Apply timewalk correction"
 HDF5_TYPES = [".h5", ".hdf5"]
@@ -41,12 +44,57 @@ def _dump_artifacts(job):
 
 def planned_dump_input(job):
     output = Path(job.extra["output"])
-    return manifest_path(output) if "metadata" in job.extra else output
+    return manifest_path(output) if "--split-acquisitions" in job.cmd else output
 
 
 def completed_dump_input(job):
     extra = job.extra
     return extra.get("collection", extra["output"]), extra.get("collection", extra.get("metadata"))
+
+
+def correction_job(source, output=None, *, ctot_cut=500, wsl=(), pending_input=False):
+    cwd = workspace_root(REPO_ROOT)
+    selected = checked_path(source, cwd=cwd)
+    if not pending_input and not selected.is_file():
+        raise ValueError("Choose an existing HDF5 file or acquisition collection with timewalk statistics.")
+    if type(ctot_cut) is not int or ctot_cut < 0:
+        raise ValueError("CTOT cut must be a nonnegative whole number.")
+    target = output or selected.with_name(f"{selected.stem}_corrected.h5")
+    target = validate_distinct_output(target, [("timewalk input", selected)], cwd=cwd,
+                                      output_label="corrected HDF5 output")
+    target = checked_path(target, write=True, cwd=cwd)
+    if target.suffix.lower() not in HDF5_TYPES:
+        raise ValueError("Choose an .h5 or .hdf5 corrected output path.")
+    extra = {"output": str(target), "corrected": True,
+             "panel_form": {"correction_input": str(selected), "corrected_output": str(target),
+                            "ctot-cut": ctot_cut}}
+    if selected.suffix.lower() == ".json":
+        inputs = [("input collection", selected)]
+        if not pending_input:
+            inputs.extend((str(path), path) for pair in segment_files(selected) for path in pair)
+        collection = validate_distinct_output(manifest_path(target), inputs, cwd=cwd,
+                                              output_label="corrected collection")
+        extra["collection"] = str(collection)
+    cmd = [sys.executable, "-m", "vmi_analysis.ion_luna", "--apply-timewalk-correction",
+           "--input", str(selected), "--output", str(target), "--ctot-cut", str(ctot_cut), *wsl]
+    return Job(JOB_NAME, cmd=cmd, cwd=str(cwd), extra=extra, consume_output=capture_command)
+
+
+def _prepare_correction(_jobs, params):
+    source = resolve_path(params["input"])
+    output = resolve_path(params["output"], write=True) if params.get("output") else None
+    ctot_cut = params.get("ctot_cut", PANEL_DEFAULTS["ctot-cut"])
+    if type(ctot_cut) is float and ctot_cut.is_integer():
+        ctot_cut = int(ctot_cut)
+    wsl = wsl_settings()
+    job = correction_job(source, output, ctot_cut=ctot_cut, wsl=wsl_arguments(wsl))
+    summary = {"Timewalk input": str(source), "Corrected HDF5 output": job.extra["output"],
+               "CTOT cut": ctot_cut}
+    if "collection" in job.extra:
+        summary["Corrected collection"] = job.extra["collection"]
+    summary.update({WSL_FIELDS[key]: value.strip() for key, value in wsl.items()
+                    if isinstance(value, str) and value.strip()})
+    return job, summary
 
 
 def agent_operations():
@@ -67,7 +115,20 @@ def agent_operations():
         "outputs": ["collection", "output", "metadata"],
         "manual": JOB_NAME,
     }
-    return (PanelOperation("tpx3_dump", description, _prepare_dump, (JOB_NAME,), artifacts=_dump_artifacts),)
+    correction = {
+        "panel": JOB_NAME,
+        "summary": "Apply the panel's LUNA timewalk correction to an existing statistics HDF5 file or acquisition collection.",
+        "parameters": {
+            "input": {"type": "path", "description": "Existing HDF5 file or acquisition collection with timewalk statistics"},
+            "output": {"type": "path", "description": "Optional corrected workspace HDF5 file; defaults to _corrected.h5"},
+            "ctot_cut": {"type": "integer", "default": PANEL_DEFAULTS["ctot-cut"]},
+        },
+        "outputs": ["output"],
+        "manual": JOB_NAME,
+    }
+    return (PanelOperation("tpx3_dump", description, _prepare_dump, (JOB_NAME,), artifacts=_dump_artifacts),
+            PanelOperation("tpx3_timewalk", correction, _prepare_correction, (),
+                           proposal_job_names=(JOB_NAME,)))
 
 
 def _active_dump_options(value):
@@ -84,7 +145,7 @@ def _active_dump_options(value):
     return options
 
 
-def _prepare_dump(_jobs, params):
+def _prepare_dump(_jobs, params, *, calibration=False, pending_seed=False):
     source = resolve_path(params["input"])
     if not source.is_dir() and not (source.is_file() and source.suffix.lower() == ".tpx3"):
         raise ValueError("Choose an existing TPX3 file or directory.")
@@ -109,18 +170,22 @@ def _prepare_dump(_jobs, params):
         values[key] = value
     values = _active_dump_options(values.__getitem__)
     matrix = resolve_path(params["timewalk"]) if params.get("timewalk") else None
-    if matrix and (not values.get("calculate-timewalk-statistics") or not matrix.is_file()):
+    if calibration and not values.get("calculate-timewalk-statistics"):
+        raise ValueError("Timewalk calibration requires clustering and timewalk statistics.")
+    if matrix and (not values.get("calculate-timewalk-statistics") or (not pending_seed and not matrix.is_file())):
         raise ValueError("A timewalk seed requires statistics calculation and an existing HDF5 file.")
     wsl = wsl_settings()
     job = dump_job(source, target, prefixed=prefixed, options=values, timewalk=matrix,
-                   wsl=wsl_arguments(wsl))
+                   wsl=wsl_arguments(wsl), calibration=calibration)
     summary = {"TPX3 input": str(source), "Strip acquisition prefix": prefixed,
-               "Split detected acquisitions": prefixed, "Timewalk seed": str(matrix) if matrix else None}
-    if prefixed:
+               "Split detected acquisitions": prefixed and not calibration, "Timewalk seed": str(matrix) if matrix else None}
+    if prefixed and not calibration:
         summary["Collection output"] = str(manifest_path(target))
         summary["Segment folder"] = str(target.with_name(f"{target.stem}_segments"))
     else:
         summary["HDF5 output"] = str(target)
+        if prefixed:
+            summary["Acquisition metadata"] = job.extra["metadata"]
     summary.update({OPTIONS[key].label: value for key, value in values.items()})
     summary.update({WSL_FIELDS[key]: value.strip() for key, value in wsl.items()
                     if isinstance(value, str) and value.strip()})
@@ -130,6 +195,99 @@ def _prepare_dump(_jobs, params):
         **values, "timewalk_file": str(matrix) if matrix else "",
     }
     return job, summary
+
+
+def timewalk_workflow_operation(registry):
+    description = {
+        "panel": TIMEWALK_WORKFLOW,
+        "summary": "Build a master LUNA timewalk LUT from ordered uninterrupted TPX3 recordings, "
+                   "using each accumulated HDF5 file as the next seed. Optionally dump a separate target "
+                   "with the master seed and apply its updated LUT.",
+        "parameters": {
+            "recordings": {"type": "array", "description": "Ordered list of distinct TPX3 files or directories."},
+            "output": {"type": "path", "description": "Workspace path for the final master HDF5."},
+            "prefixed": {"type": "boolean", "default": True, "description": "Whether inputs have the 32-byte acquisition prefix."},
+            "options": {"type": "object", "description": "Common tpx3_dump options for all dumps. Keep clustering "
+                                                         "and timewalk statistics enabled."},
+            "target": {"type": "object", "description": "Optional separate recording. Provide input, dump_output "
+                                                        "(uncorrected .h5 path), and optionally output "
+                                                        "(corrected .h5 path, defaults to an _corrected name)."},
+        },
+    }
+    return PanelOperation("tpx3_timewalk_calibration", description, partial(_prepare_timewalk_workflow, registry),
+                          (TIMEWALK_WORKFLOW,), outputs=("master_calibration",), workflow_panels=(JOB_NAME,))
+
+
+def _prepare_timewalk_workflow(registry, jobs, params):
+    recordings = params.get("recordings")
+    if not isinstance(recordings, list) or not recordings:
+        raise ValueError("Provide an ordered list of one or more calibration recordings.")
+    target = params.get("target")
+    if "target" in params and (not isinstance(target, dict) or not {"input", "dump_output"} <= target.keys()
+                               or target.keys() - {"input", "dump_output", "output"}):
+        raise ValueError("Provide target input and dump_output, with an optional corrected output.")
+
+    # Reject the same raw frames even if a file is also specified via its parent directory.
+    selected_files = set()
+    for entry in [*recordings, *([target["input"]] if target else [])]:
+        source = resolve_path(entry)
+        files = {checked_path(path) for path in input_files(source)}
+        if files & selected_files:
+            raise ValueError("A TPX3 file is selected more than once. Use disjoint calibration and target inputs.")
+        selected_files.update(files)
+
+    master = resolve_path(params.get("output"), write=True)
+    common = {"prefixed": params.get("prefixed", True), "options": params.get("options", {})}
+    stages = []
+    reserved_outputs = set()
+    summary = {}
+
+    def add_stage(label, step):
+        access = command_access(step.cmd, step.cwd, prior_outputs=reserved_outputs)
+        if any(overlaps(path, earlier) for path in access.writes for earlier in reserved_outputs):
+            raise ValueError("Choose distinct output paths for all workflow stages, including generated sidecars.")
+        reserved_outputs.update(access.writes)
+        stages.append(Stage(label, step.cmd, step.cwd, result=step))
+
+    seed = None
+    for index, entry in enumerate(recordings, 1):
+        output = master if index == len(recordings) else master.with_name(f"{master.stem}_step_{index:03d}{master.suffix}")
+        step, settings = registry.prepare_stage(
+            jobs, "tpx3_dump", {**common, "input": entry, "output": str(output), "timewalk": seed},
+            calibration=True, pending_seed=seed is not None,
+        )
+        label = f"Calibration {index}"
+        add_stage(label, step)
+        seed = step.extra["output"]
+        summary[label] = {"input": settings["TPX3 input"], "seed": settings["Timewalk seed"],
+                          "output": seed}
+        if "metadata" in step.extra:
+            summary[label]["metadata"] = step.extra["metadata"]
+
+    summary["Common dump options"] = {label: settings[label] for label in settings
+                                      if label not in {"TPX3 input", "Timewalk seed", "HDF5 output",
+                                                       "Acquisition metadata", "Split detected acquisitions"}}
+    if target:
+        dump, dump_summary = registry.prepare_stage(
+            jobs, "tpx3_dump", {**common, "input": target["input"], "output": target["dump_output"],
+                              "timewalk": str(master)}, pending_seed=True,
+        )
+        add_stage("Target dump", dump)
+        target_input = planned_dump_input(dump)
+        dump_output = Path(dump.extra["output"])
+        corrected_output = (resolve_path(target["output"], write=True) if "output" in target
+                            else dump_output.with_name(f"{dump_output.stem}_corrected.h5"))
+        corrected = correction_job(target_input, corrected_output, ctot_cut=dump.extra["panel_form"]["ctot-cut"],
+                                   wsl=wsl_arguments(wsl_settings()), pending_input=True)
+        corrected.extra["agent_panel"] = True
+        add_stage("Target correction", corrected)
+        summary["Target dump"] = {"input": dump_summary["TPX3 input"], "seed": str(master),
+                                  "output": str(target_input), "split acquisitions": common["prefixed"]}
+        summary["Target correction"] = {"input": str(target_input),
+                                        "output": corrected.extra.get("collection", corrected.extra["output"]),
+                                        "LUT": "Includes the target recording's statistics."}
+
+    return Job(TIMEWALK_WORKFLOW, cwd=stages[0].cwd, stages=stages, extra={"master_calibration": str(master)}), summary
 
 
 def wsl_settings():
@@ -155,7 +313,7 @@ def capture_command(job, line):
     return False
 
 
-def dump_job(source, output, *, prefixed=True, options=None, timewalk=None, wsl=()):
+def dump_job(source, output, *, prefixed=True, options=None, timewalk=None, wsl=(), calibration=False):
     cwd = workspace_root(REPO_ROOT)
     selected = checked_path(source, cwd=cwd)
     matrix = checked_path(timewalk, cwd=cwd) if timewalk else None
@@ -170,8 +328,12 @@ def dump_job(source, output, *, prefixed=True, options=None, timewalk=None, wsl=
         if options.get("layout", "single") != "single":
             raise ValueError("The 32-byte acquisition format requires a single-chip layout.")
         metadata = target.with_name(f"{target.stem}_metadata.h5")
-        cmd += ["--metadata-output", str(metadata), "--split-acquisitions"]
+        cmd += ["--metadata-output", str(metadata)]
+        if not calibration:
+            cmd.append("--split-acquisitions")
         extra["metadata"] = str(metadata)
+    if calibration:
+        cmd.append("--timewalk-calibration")
     if matrix:
         cmd += ["--timewalk-file", str(matrix)]
     return Job(JOB_NAME, cmd=[*cmd, *wsl], cwd=str(cwd), extra=extra, consume_output=capture_command)
@@ -214,8 +376,7 @@ def build(jobs: JobManager):
         form = adopt_agent_form(job, "ion_luna")
         if not form:
             return
-        if not job.extra.get("corrected"):
-            stage.value = DUMP
+        stage.value = CORRECT if job.extra.get("corrected") else DUMP
         for key, widget in (("input_mode", file_mode), ("input", source), ("output", output),
                             ("acquisition_prefix", prefixed), ("timewalk_file", timewalk),
                             ("correction_input", correction_input),
@@ -271,7 +432,6 @@ def build(jobs: JobManager):
         return []
 
     def run():
-        command = [sys.executable, "-m", "vmi_analysis.ion_luna"]
         try:
             if stage.value == CORRECT:
                 input_value = correction_input.value.strip() or output.value.strip()
@@ -280,15 +440,9 @@ def build(jobs: JobManager):
                 selected = (workspace_root(REPO_ROOT) / Path(input_value).expanduser()).resolve()
                 if not correction_input.value.strip() and manifest_path(selected).is_file():
                     selected = manifest_path(selected)
-                target = corrected_output.value.strip() or selected.with_name(f"{selected.stem}_corrected.h5")
-                target = validate_distinct_output(target, [("timewalk input", selected)],
-                                                  cwd=workspace_root(REPO_ROOT), output_label="corrected HDF5 output")
-                cmd = [*command, "--apply-timewalk-correction", "--input", str(selected), "--output", str(target),
-                       "--ctot-cut", str(option_value("ctot-cut"))]
-                view.attach(jobs.submit(Job(JOB_NAME, cmd=[*cmd, *wsl_options()],
-                                            cwd=str(workspace_root(REPO_ROOT)),
-                                            extra={"output": str(target), "corrected": True},
-                                            consume_output=capture_command)))
+                job = correction_job(selected, corrected_output.value.strip() or None,
+                                     ctot_cut=option_value("ctot-cut"), wsl=wsl_options())
+                view.attach(jobs.submit(job))
                 return
             if not source.value.strip() or not output.value.strip():
                 raise ValueError("Choose a TPX3 input and an HDF5 output.")

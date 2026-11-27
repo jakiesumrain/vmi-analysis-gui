@@ -433,7 +433,7 @@ def index() -> None:
                                                          settings_dialog=settings_dialog,
                                                          connection_settings=connection_settings,
                                                          history_navigation=history_navigation)
-                            elif module in (ion_tof, ion_live):
+                            elif module in (ion_tof, ion_momenta, ion_live):
                                 module.build(MANAGER, ask_agent=handoff_to_agent)
                             else:
                                 module.build(MANAGER)

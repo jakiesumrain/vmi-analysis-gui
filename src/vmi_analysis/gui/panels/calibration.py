@@ -318,8 +318,8 @@ def agent_operations():
     }
     return (PanelOperation(FIT_OPERATION, {
         "panel": PANEL_TITLE, "manual": PANEL_TITLE, "parameters": parameters,
-        "summary": "Fit one selected ring from the loaded processed polar image. Start from Ask Agent "
-                   "in Trig Calibration and review the fit there before accepting the ring.",
+        "summary": "Fit one selected ring from the processed polar image. Start from Ask Agent in Trig Calibration. "
+                   "Inspect the result in the panel before using Accept ring.",
     }, None, ()),)
 
 
@@ -1080,6 +1080,7 @@ def build(jobs=None, *, use_calibration=None, ask_agent=None) -> None:
                     terms = num_input("Trig terms", draft["n_terms"], step=1, min=0)
                     beta = ui.checkbox("Fit beta", value=draft["use_beta"])
                     iterative = ui.checkbox("Iterative terms", value=draft["iterative"])
+                ui.label("Inspect the fitted ridge and residuals before choosing Accept ring.").classes("vmi-subtitle")
 
                 async def confirm():
                     edits = {"band": [field.value for field in limits], "n_terms": terms.value,

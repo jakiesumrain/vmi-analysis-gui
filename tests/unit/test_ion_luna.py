@@ -103,6 +103,50 @@ class LunaTests(unittest.TestCase):
             with h5py.File(output) as file:
                 self.assertEqual(list(file["Clusters"]), [2])
 
+    def test_prefixed_timewalk_calibration_requires_one_stream_and_valid_statistics(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "recording"
+            source.mkdir()
+            output, metadata = root / "master.h5", root / "master_metadata.h5"
+
+            def write_frame(index, seconds, coarse):
+                trigger = (0x6F << 56) | (coarse << 12) | (1 << 5)
+                (source / f"frame_{index}.tpx3").write_bytes(struct.pack("<qqddQ", seconds, 0, 1, 2, trigger))
+
+            args = ["--input", str(source), "--output", str(output), "--metadata-output", str(metadata),
+                    "--calculate-timewalk-statistics", "--timewalk-calibration"]
+            write_frame(1, 1, 100)
+            write_frame(2, 2, 50)
+            with patch("vmi_analysis.ion_luna._run_luna") as run:
+                with self.assertRaisesRegex(SystemExit, "acquisition restart"):
+                    main(args)
+                run.assert_not_called()
+            self.assertFalse(output.exists())
+            self.assertFalse(metadata.exists())
+
+            write_frame(2, 2, 200)
+            with patch("vmi_analysis.ion_luna.sys.platform", "linux"), \
+                    patch("vmi_analysis.ion_luna._run_luna") as run:
+                def write_result(command, **_kwargs):
+                    framed = Path(command[command.index("-i") + 1])
+                    self.assertEqual(framed.name, "acquisition.tpx3")
+                    self.assertEqual(framed.read_bytes().count(b"TPX3"), 2)
+                    with h5py.File(command[command.index("-o") + 1], "w") as h5:
+                        h5.create_dataset("TimewalkMatrix", data=[1])
+                        if run.call_count == 2:
+                            h5.create_dataset("TimewalkLookupTable", data=[2])
+
+                run.side_effect = write_result
+                with self.assertRaisesRegex(SystemExit, "nonempty /TimewalkLookupTable"):
+                    main(args)
+                self.assertFalse(output.exists())
+                self.assertFalse(metadata.exists())
+                main(args)
+            self.assertTrue(metadata.is_file())
+            with h5py.File(output) as h5:
+                self.assertEqual(h5["TimewalkLookupTable"][0], 2)
+
     def test_validation_and_failed_conversion_preserve_existing_output(self):
         with TemporaryDirectory() as folder:
             root = Path(folder)

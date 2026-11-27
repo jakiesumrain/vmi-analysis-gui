@@ -65,6 +65,7 @@ def build_registry():
     for panel in (dark, gmd_map, accumulate, centroid, binning, circularize, calibration, pes, movie, ion_luna, ion_tof, ion_momenta, ion_pipeline, ion_live):
         for operation in panel.agent_operations():
             registry.register(operation)
+    registry.register(ion_luna.timewalk_workflow_operation(registry))
     workflow = {
         "panel": DUMP_TO_TOF,
         "summary": "Unpack TPX3 with LUNA and plot TOF from that exact dump. An optional GMD2 gate "
