@@ -955,6 +955,19 @@ class AgentManager:
                 with self._lock:
                     self._sessions.pop(owner, None)
 
+    def delete_archived_chat(self, owner, history, chat_id):
+        with self._owner_lock(owner):
+            session = self.current(owner)
+            is_current = session is not None and session.chat is not None and session.chat.id == chat_id
+            if is_current:
+                if session.active:
+                    raise RuntimeError("Stop this chat before deleting it.")
+                session.stop()
+            history.delete_archived_chat(chat_id)
+            if is_current:
+                with self._lock:
+                    self._sessions.pop(owner, None)
+
     def stop(self, owner: str) -> None:
         """Disconnect the account's provider and stop its active chat."""
         with self._owner_lock(owner):

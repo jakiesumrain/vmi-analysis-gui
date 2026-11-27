@@ -3,6 +3,7 @@
 from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
+from shutil import rmtree
 from tempfile import NamedTemporaryFile
 from uuid import UUID, uuid4
 
@@ -117,6 +118,25 @@ class AgentHistory:
         else:
             project = self.project(project_id)
             self._save_project(replace(project, archived=archived))
+
+    def delete_archived_chat(self, chat_id):
+        record = _record_path(self.root / "chats", chat_id)
+        transcript = _record_path(self.root / "transcripts", chat_id)
+        session = self.root / "sessions" / chat_id
+        for path in (self.root, record.parent, record, transcript.parent, session.parent, session):
+            if path.is_symlink() or path.is_junction():
+                raise ValueError("Cannot delete chat history through a linked path.")
+        chat = self.chat(chat_id)
+        if chat.id != chat_id or not chat.archived:
+            raise ValueError("Only archived chats can be deleted.")
+        # Keep the archive entry available for retry until its history is gone.
+        try:
+            rmtree(session)
+        except FileNotFoundError:
+            if session.exists():
+                raise
+        transcript.unlink(missing_ok=True)
+        record.unlink()
 
     def create_project(self, name, folder):
         name = name.strip()

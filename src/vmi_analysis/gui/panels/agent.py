@@ -748,12 +748,36 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
             on_success()
 
     def open_archive():
+        async def confirm_delete(chat, label):
+            nonlocal archiving
+            if connecting or sending or uploading or archiving:
+                ui.notify("Wait for the current action before changing the archive.", type="warning")
+                return
+            with ui.dialog() as dialog, ui.card().classes("w-[28rem] max-w-[92vw]"):
+                ui.label("Delete archived chat?").classes("vmi-title-sm")
+                ui.label(label).classes("w-full break-words")
+                ui.label("This permanently deletes the Agent conversation. Analysis results and workspace files are kept.")
+                with ui.row().classes("w-full justify-end"):
+                    ui.button("Cancel", on_click=lambda: dialog.submit(False)).props("flat no-caps autofocus")
+                    ui.button("Delete chat", on_click=lambda: dialog.submit(True)) \
+                        .props("color=negative unelevated no-caps")
+            archiving = True
+            try:
+                if not await dialog:
+                    return
+                await asyncio.to_thread(AGENTS.delete_archived_chat, owner, history, chat.id)
+            except (OSError, RuntimeError, ValueError) as exc:
+                ui.notify(str(exc), type="warning")
+            finally:
+                archiving = False
+                dialog.delete()
+            refresh_history()
+            render_archive()
+
         def render_archive():
             projects = {project.id: project for project in history.projects()}
             archived_projects = [project for project in projects.values() if project.archived]
-            archived_ids = {project.id for project in archived_projects}
-            archived_chats = [chat for chat in history.chats() if chat.archived
-                              and chat.project_id not in archived_ids]
+            archived_chats = [chat for chat in history.chats() if chat.archived]
             archive_records.clear()
             with archive_records:
                 if not (archived_projects or archived_chats):
@@ -768,8 +792,11 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
                     label = f"{project.name} / {chat.title}" if project is not None else chat.title
                     with ui.row().classes("w-full no-wrap items-center justify-between"):
                         ui.label(label).classes("min-w-0 break-words")
-                        ui.button("Restore chat", on_click=lambda item=chat: change_archive(
-                            chat=item, archived=False, on_success=render_archive)).props("flat no-caps shrink-0")
+                        with ui.row().classes("no-wrap items-center gap-0 shrink-0"):
+                            ui.button("Restore chat", on_click=lambda item=chat: change_archive(
+                                chat=item, archived=False, on_success=render_archive)).props("flat no-caps")
+                            ui.button(icon="delete_outline", on_click=lambda item=chat, name=label: confirm_delete(item, name)) \
+                                .props('flat dense round color=negative aria-label="Delete chat"').tooltip("Delete chat")
 
         render_archive()
         archive_dialog.open()
@@ -778,6 +805,10 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
         nonlocal navigation_state
         projects = history.projects()
         chats = history.chats()
+        if (selected_chat is not None and not any(chat.id == selected_chat.id for chat in chats)
+                and not (connecting or sending or uploading or archiving or approval is not None)):
+            select_conversation()
+            return
         current = visible_session()
         selected = current.chat if current is not None else selected_chat
         active_id = selected.id if selected is not None else None

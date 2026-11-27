@@ -121,3 +121,43 @@ class AgentHistoryTests(TestCase):
                 manager.prompt_chat("alice", "Continue", chat_id=other.id)
             manager.set_archived("alice", self.history, chat_id=other.id, archived=False)
             self.assertEqual(self.history.resumable_chat(other.id).project_id, self.project.id)
+
+    def test_deleting_an_archived_chat_only_removes_its_history(self):
+        chat = self.history.create_chat(self.project.id)
+        other = self.history.create_chat(self.project.id)
+        for item in (chat, other):
+            self.history.save_entries(item, [{"kind": "user", "text": "Keep or delete this"}])
+            directory = self.history.session_dir(item)
+            directory.mkdir(parents=True)
+            (directory / "session.jsonl").write_text("session data", encoding="utf-8")
+        result = self.folder / "spectrum.csv"
+        result.write_text("energy,counts", encoding="utf-8")
+        run_record = self.workspace.parent / "analysis" / "run.json"
+        run_record.parent.mkdir()
+        run_record.write_text("{}", encoding="utf-8")
+
+        manager = AgentManager()
+        with self.assertRaisesRegex(ValueError, "Only archived chats"):
+            manager.delete_archived_chat("alice", self.history, chat.id)
+        manager.set_archived("alice", self.history, chat_id=chat.id, archived=True)
+        manager.set_archived("alice", self.history, project_id=self.project.id, archived=True)
+        manager.delete_archived_chat("alice", self.history, chat.id)
+
+        self.assertEqual([other.id], [item.id for item in self.history.chats()])
+        self.assertEqual(self.history.entries(chat), [])
+        self.assertFalse(self.history.session_dir(chat).exists())
+        self.assertTrue((self.history.session_dir(other) / "session.jsonl").is_file())
+        self.assertTrue(self.history.entries(other))
+        self.assertTrue(self.history.project(self.project.id).archived)
+        self.assertEqual(result.read_text(encoding="utf-8"), "energy,counts")
+        self.assertEqual(run_record.read_text(encoding="utf-8"), "{}")
+
+    def test_failed_deletion_can_be_retried_from_archive(self):
+        chat = self.history.create_chat(None)
+        self.history.set_archived(chat_id=chat.id, archived=True)
+        with patch("vmi_analysis.agent_history.rmtree", side_effect=PermissionError("locked")):
+            with self.assertRaises(PermissionError):
+                self.history.delete_archived_chat(chat.id)
+        self.assertTrue(self.history.chat(chat.id).archived)
+        self.history.delete_archived_chat(chat.id)
+        self.assertEqual(self.history.chats(), [])
