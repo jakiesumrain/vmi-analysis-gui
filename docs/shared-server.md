@@ -220,6 +220,10 @@ restart.
 Use the actions menu on a chat or project to archive it. Open **Archive** in
 the sidebar to restore it. Archiving a project hides all of its chats and
 preserves its workspace folder and conversation history.
+Use **Delete chat** in **Archive** to permanently remove an archived chat and
+its saved Agent session. **Delete project** permanently removes an archived
+project and all its chats and saved Agent sessions. Both actions keep analysis
+results, run records, and workspace files.
 
 Chat history can contain prompts, attachments, file excerpts, and tool results.
 The service stores it beside the account's workspace in `.agent-history`.
