@@ -110,11 +110,22 @@ class EventWarp:
         return corrected_x, corrected_y, status
 
 
+def _bin_events(histogram, x, y, resolution, include):
+    ny, nx = histogram.shape
+    px, py = x * resolution, y * resolution
+    inside = include & (px >= 0) & (px <= nx) & (py >= 0) & (py <= ny)
+    # Match the legacy histogram's inclusive rightmost edge.
+    cols = np.minimum(px[inside].astype(np.intp), nx - 1)
+    rows = np.minimum(py[inside].astype(np.intp), ny - 1)
+    np.add.at(histogram, (rows, cols), 1)
+    return inside
+
+
 def correct_checkpoint(checkpoint, corrected, counts, *, shape, center, resolution, warp,
-                       metadata, chunksize=250_000):
+                       metadata, polar_preview=None, chunksize=250_000):
     """Stream rows into a new HDF5 checkpoint and publish the integer image."""
-    ny, nx = shape
     histogram = np.zeros(shape, dtype=np.int64)
+    raw_histogram = np.zeros_like(histogram) if polar_preview is not None else None
     totals = np.zeros(len(STATUS), dtype=np.int64)
     for path in (corrected, counts):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -130,16 +141,14 @@ def correct_checkpoint(checkpoint, corrected, counts, *, shape, center, resoluti
             if not {"x", "y", "frame"}.issubset(columns):
                 raise ValueError("The localizations table needs x, y, and frame columns.")
             for chunk in source.select("localizations", chunksize=chunksize):
-                x, y, status = warp.correct(chunk["x"].to_numpy(dtype=float),
-                                            chunk["y"].to_numpy(dtype=float), center, resolution)
-                px, py = x * resolution, y * resolution
+                raw_x = chunk["x"].to_numpy(dtype=float)
+                raw_y = chunk["y"].to_numpy(dtype=float)
+                x, y, status = warp.correct(raw_x, raw_y, center, resolution)
+                if raw_histogram is not None:
+                    _bin_events(raw_histogram, raw_x, raw_y, resolution, True)
                 valid = status == STATUS["counted"]
-                inside = valid & (px >= 0) & (px <= nx) & (py >= 0) & (py <= ny)
+                inside = _bin_events(histogram, x, y, resolution, valid)
                 status[valid & ~inside] = STATUS["outside_histogram"]
-                # Match the legacy histogram's inclusive rightmost edge.
-                cols = np.minimum(px[inside].astype(np.intp), nx - 1)
-                rows = np.minimum(py[inside].astype(np.intp), ny - 1)
-                np.add.at(histogram, (rows, cols), 1)
                 totals += np.bincount(status, minlength=len(STATUS))
                 destination.append("localizations", chunk.assign(
                     x_corrected=x, y_corrected=y, correction_status=status), index=False)
@@ -174,4 +183,11 @@ def correct_checkpoint(checkpoint, corrected, counts, *, shape, center, resoluti
             else:
                 counts.unlink()
             raise
+    if raw_histogram is not None:
+        from .polar_fit import save_polar_comparison
+
+        try:
+            save_polar_comparison(polar_preview, raw_histogram, histogram, center)
+        except (OSError, ValueError) as exc:
+            print(f"Warning: could not save polar previews: {exc}")
     return summary

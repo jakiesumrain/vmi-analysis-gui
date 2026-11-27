@@ -31,6 +31,7 @@ CIRC_DIR = REPO_ROOT / "circularization"
 JOB_NAME = "Circularize"
 CHECKPOINT_OPERATION = "circularize_checkpoint"
 CHECKPOINT_OUTPUTS = ("corrected_checkpoint", "counts_output")
+IMAGE_OUTPUTS = ("output", "polar_preview")
 CHECKPOINT_GEOMETRY = ("shape_y", "shape_x", "center_x", "center_y")
 DEFAULTS = {
     "shape_y": 1023, "shape_x": 1023, "center_x": 511.0, "center_y": 511.0,
@@ -81,6 +82,8 @@ def circularize_job(extracted, *, inp="", out="", reassign="", plot_dir=None,
     cmd += ["--radial-model", model]
     if model == "poly":
         cmd += ["--poly-order", str(_whole(options["poly_order"], 1, "Polynomial order"))]
+    preview = generated_dir(GENERATED) / f"circ_{job.id}_polar.npz"
+    checked_path(preview, write=True)
     if Path(inp).suffix.lower() in CHECKPOINT_SUFFIXES:
         source = checked_path(inp, cwd=cwd)
         if not source.is_file():
@@ -103,7 +106,8 @@ def circularize_job(extracted, *, inp="", out="", reassign="", plot_dir=None,
                 "--center", str(xc), str(yc), "--polar-dr", str(dr), "--resolution-factor", str(factor)]
         if reassign:
             cmd += ["--reassign-file", str(reassign)]
-        job.extra.update(corrected_checkpoint=str(corrected), counts_output=str(counts),
+        cmd += ["--polar-preview", str(preview)]
+        job.extra.update(corrected_checkpoint=str(corrected), counts_output=str(counts), polar_preview=str(preview),
                          panel_form=dict(options, inp=str(source), extracted=str(extracted),
                                          reassign=str(reassign), corrected_checkpoint=str(corrected),
                                          counts_output=str(counts), max_trig_n=order))
@@ -113,8 +117,6 @@ def circularize_job(extracted, *, inp="", out="", reassign="", plot_dir=None,
     if not out or not str(out).strip():
         raise ValueError("Choose an output image file.")
     target = validate_distinct_output(checked_path(out, write=True, cwd=cwd), inputs, cwd=cwd)
-    preview = generated_dir(GENERATED) / f"circ_{job.id}_polar.npz"
-    checked_path(preview, write=True)
     cmd += ["--input", str(inp), "--output", str(target),
             "--interp-order", str(_whole(options["interp_order"], 0, "Interpolation order", 5)),
             "--polar-preview", str(preview)]
@@ -296,7 +298,8 @@ def agent_operations():
     }
     return (
         PanelOperation("circularize", description, _prepare_agent, (JOB_NAME,),
-                       outputs=("output", "polar_preview", *CHECKPOINT_OUTPUTS)),
+                       artifacts=lambda job: CHECKPOINT_OUTPUTS if "counts_output" in job.extra else IMAGE_OUTPUTS,
+                       outputs=(*IMAGE_OUTPUTS, *CHECKPOINT_OUTPUTS)),
         PanelOperation(CHECKPOINT_OPERATION, checkpoint, partial(_prepare_agent, checkpoint_only=True), (),
                        outputs=CHECKPOINT_OUTPUTS, proposal_job_names=(JOB_NAME,)),
     )
@@ -432,17 +435,27 @@ def build(jobs: JobManager):
             except (OSError, ValueError, OverflowError) as exc:
                 ui.notify(str(exc), type="warning")
 
+        def cleared():
+            view.clear_results()
+            polar_data.clear()
+            polar_card.set_visibility(False)
+
         def clear():
             if checkpoint_input():
                 try:
-                    targets = checkpoint_targets(inp.value, extracted.value, reassign.value,
-                                                 corrected_checkpoint.value, counts_output.value,
-                                                 cwd=circularization_dir(CIRC_DIR))
+                    checkpoint, counts = checkpoint_targets(inp.value, extracted.value, reassign.value,
+                                                            corrected_checkpoint.value, counts_output.value,
+                                                            cwd=circularization_dir(CIRC_DIR))
                 except (OSError, ValueError) as exc:
                     ui.notify(str(exc), type="warning")
                     return
+                targets = [checkpoint, counts]
+                targets.extend(job.extra["polar_preview"] for job in jobs.jobs()
+                               if job.name == JOB_NAME and job.extra.get("polar_preview")
+                               and any(job.extra.get(key) and canonical_path(job.extra[key], job.cwd) == target
+                                       for key, target in zip(CHECKPOINT_OUTPUTS, (checkpoint, counts))))
                 confirm_clear_outputs(targets, "Delete the corrected checkpoint and integer histogram?",
-                                      on_cleared=view.clear_results)
+                                      on_cleared=cleared)
                 return
             if not out.value:
                 ui.notify("Set an output image path first.", type="warning")
@@ -460,14 +473,9 @@ def build(jobs: JobManager):
                 return
             targets = [target, *diagnostics]
             for job in jobs.jobs():
-                if (job.name == JOB_NAME and job.extra.get("polar_preview")
+                if (job.name == JOB_NAME and job.extra.get("polar_preview") and job.extra.get("output")
                         and canonical_path(job.extra["output"], job.cwd) == canonical_path(target)):
                     targets.append(job.extra["polar_preview"])
-
-            def cleared():
-                view.clear_results()
-                polar_data.clear()
-                polar_card.set_visibility(False)
 
             confirm_clear_outputs(targets, "Delete Circularize outputs and diagnostic plots?", on_cleared=cleared)
 

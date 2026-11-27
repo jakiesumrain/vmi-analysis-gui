@@ -158,6 +158,7 @@ def command_access(cmd, cwd=None, *, prior_outputs=()):
             read(value("--reassign-file"))
             write(value("--corrected-checkpoint"))
             write(value("--counts-output"))
+            write(value("--polar-preview"))
         elif "--summary-only" not in args:
             read(value("--input", "image.txt"))
             reassignment = value("--reassign-file")

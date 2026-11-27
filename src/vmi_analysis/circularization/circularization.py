@@ -951,7 +951,7 @@ def parse_args():
     )
     args = parser.parse_args()
     if args.checkpoint is not None:
-        if args.summary_only or args.polar_preview is not None:
+        if args.summary_only:
             parser.error("--checkpoint produces a corrected checkpoint and count image.")
         if any(value is None for value in (args.corrected_checkpoint, args.counts_output, args.shape, args.center)):
             parser.error("--checkpoint requires --corrected-checkpoint, --counts-output, --shape and --center.")
@@ -977,6 +977,12 @@ def circularize_events(args):
 
     corrected, counts = checkpoint_targets(args.checkpoint, args.extracted, args.reassign_file,
                                            args.corrected_checkpoint, args.counts_output)
+    preview = args.polar_preview
+    if preview is not None:
+        preview = validate_distinct_output(
+            preview, (("source checkpoint", args.checkpoint), ("trig-fit calibration", args.extracted),
+                      ("radial reassignment file", args.reassign_file), ("corrected checkpoint", corrected),
+                      ("count histogram", counts)), output_label="polar preview")
     calibration_text = args.extracted.read_text(encoding="utf-8")
     blocks = parse_extracted_text(calibration_text, source=str(args.extracted))
     for block in blocks:
@@ -998,7 +1004,7 @@ def circularize_events(args):
     print(f"Correcting centroids through radius {warp.radius:g} calibration-grid pixels.", flush=True)
     summary = correct_checkpoint(
         args.checkpoint, corrected, counts, shape=args.shape, center=args.center,
-        resolution=args.resolution_factor, warp=warp, metadata={
+        resolution=args.resolution_factor, warp=warp, polar_preview=preview, metadata={
             "calibration_file": str(args.extracted.resolve()), "calibration_text": calibration_text,
             "reassignment_file": str(args.reassign_file.resolve()) if args.reassign_file else None,
             "reassignment_pairs": pairs, "radial_model": args.radial_model,

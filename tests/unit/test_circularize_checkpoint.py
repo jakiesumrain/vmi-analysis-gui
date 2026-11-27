@@ -11,6 +11,7 @@ import pandas as pd
 
 from vmi_analysis.circularization import circularization
 from vmi_analysis.circularization.checkpoint import STATUS
+from vmi_analysis.circularization.polar_fit import save_polar_comparison
 from vmi_analysis.gui.panels import circularize
 from vmi_analysis.gui.resources import command_access
 
@@ -55,6 +56,8 @@ class CircularizeCheckpointTests(unittest.TestCase):
             circularization.main()
 
     def test_inverts_combined_map_and_preserves_events_and_frame_table(self):
+        preview = self.root / "polar.npz"
+        self.args += ["--polar-preview", str(preview)]
         with patch("builtins.print"):
             self.run_cli()
         actual = pd.read_hdf(self.corrected, "localizations")
@@ -71,6 +74,13 @@ class CircularizeCheckpointTests(unittest.TestCase):
         histogram = np.load(self.counts)
         self.assertEqual(histogram.dtype, np.int64)
         np.testing.assert_array_equal(histogram, expected)
+        raw = np.zeros_like(expected)
+        raw[9, 5] = raw[5, 8] = raw[5, 5] = 1
+        reference = self.root / "reference.npz"
+        save_polar_comparison(reference, raw, expected, (5, 5))
+        with np.load(preview) as actual_preview, np.load(reference) as expected_preview:
+            for key in ("raw", "circularized", "dr"):
+                np.testing.assert_array_equal(actual_preview[key], expected_preview[key])
         with h5py.File(self.corrected, "r") as store:
             self.assertEqual(store.attrs["frame_limit"], 4)
             metadata = json.loads(store.attrs["circularization"])
@@ -100,8 +110,9 @@ class CircularizeCheckpointTests(unittest.TestCase):
         agent_job, summary = circularize._prepare_agent(None, dict(
             input=str(self.source), extracted=str(self.calibration), reassign_file=str(self.reassign),
             corrected_checkpoint=str(self.corrected), counts_output=str(self.counts), **settings))
-        self.assertEqual(job.cmd, agent_job.cmd)
+        self.assertEqual(job.cmd[:-2], agent_job.cmd[:-2])
+        self.assertEqual(agent_job.cmd[-2:], ["--polar-preview", agent_job.extra["polar_preview"]])
         self.assertEqual(summary["Integer histogram"], str(self.counts))
         access = command_access(job.cmd, job.cwd)
         self.assertEqual(access.reads, {self.calibration, self.reassign, self.source})
-        self.assertEqual(access.writes, {self.corrected, self.counts})
+        self.assertEqual(access.writes, {self.corrected, self.counts, Path(job.extra["polar_preview"])})

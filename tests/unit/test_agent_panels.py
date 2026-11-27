@@ -570,12 +570,14 @@ class AgentPanelTests(unittest.TestCase):
         self.assertIsNone(self.jobs.get(job.id))
         self.assertEqual(summary["Center (X, Y)"], [2, 2])
         self.assertEqual(job_access(job).reads, {checkpoint, calibration_file})
-        self.assertEqual(job_access(job).writes, {self.workspace / "corrected.h5", self.workspace / "counts.npy"})
+        preview = Path(job.extra["polar_preview"])
+        self.assertEqual(job_access(job).writes,
+                         {self.workspace / "corrected.h5", self.workspace / "counts.npy", preview})
         explicit, _ = self.registry.prepare(self.jobs, operation, {
             **{key: value for key, value in params.items() if key != "source_job_id"},
             "input": "/datasets/localizations.h5",
         })
-        self.assertEqual(explicit.cmd, job.cmd)
+        self.assertEqual(explicit.cmd[:-2], job.cmd[:-2])
         with patch.object(shared, "current_account", return_value=SimpleNamespace(name="other")):
             with self.assertRaisesRegex(ValueError, "your workspace"):
                 self.registry.prepare(self.jobs, operation, params)
@@ -595,6 +597,18 @@ class AgentPanelTests(unittest.TestCase):
         self.assertEqual(counts.dtype, np.int64)
         self.assertEqual(counts[2, 1], 2)
         self.assertEqual(counts.sum(), 2)
+        with np.load(preview) as polar:
+            np.testing.assert_array_equal(polar["raw"], polar["circularized"])
+
+        client = Client(ui.page("/_test_circularize_checkpoint_polar"))
+        self.addCleanup(client.delete)
+        with (client, patch.object(shared, "workspace_timer"),
+              patch.object(circularize, "set_polar_view", wraps=circularize.set_polar_view) as displayed,
+              patch.object(circularize, "set_polar_source", wraps=circularize.set_polar_source) as rendered):
+            circularize.build(self.jobs)
+            displayed.assert_called_once()
+            self.assertTrue(displayed.call_args.args[0].visible)
+            self.assertEqual(rendered.call_count, 2)
 
     def test_pes_agent_generation_and_contextual_fit_use_resolved_spectra(self):
         first = self.workspace / "vmi.npy"
