@@ -12,21 +12,15 @@ does it:
       -> processed_img  --> circularization.py  --> IMcirc
       -> abel.tools.center.center_image         (511, 511)
       -> apply_soft_mcp_mask                    (edge apodization, 470 / 90)
-      -> image_cleaned  --> MATLAB CPBASEX or PyAbel --> E, IE, betas
+      -> image_cleaned  --> PyAbel --> E, IE, betas
 
 Data source: the four GMD-binned histograms produced by
 centroiding/vmi_histogram_gmd_bins.py (dataset R0102, "Xe_j_100_sig").
 
-!! IMPORTANT !!
-The MATLAB step writes to a SHARED directory (CPBASEX/examples/image.txt) and
-new_10.m hardcodes 'image.txt' as its input. The bins therefore MUST run
-sequentially, and each bin's MATLAB outputs are copied out immediately after
-its run. Do not parallelise this script.
 """
 
 import argparse
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -49,7 +43,7 @@ plt.rc('axes', labelsize=SMALL_SIZE)
 plt.rc('xtick', labelsize=SMALL_SIZE)
 plt.rc('ytick', labelsize=SMALL_SIZE)
 
-from vmi_analysis.paths import CIRCULARIZATION_DIR, CPBASEX_DIR
+from vmi_analysis.paths import CIRCULARIZATION_DIR
 
 HERE = CIRCULARIZATION_DIR
 
@@ -70,11 +64,9 @@ def parse_args():
                    help="Directory holding the vmi_2d_gmd_bin*.npy images.")
     p.add_argument("--output-dir", type=Path, default=None,
                    help="Output directory (default: gmd_bins_results<suffix>"
-                        "[_pyabel_<method>] next to this script).")
-    p.add_argument("--inversion-backend", default="pyabel",
-                   choices=["matlab", "pyabel"])
+                        "_pyabel_<method> under circularization/).")
     p.add_argument("--pyabel-method", default="daun",
-                   help="PyAbel inversion method (pyabel backend only).")
+                   help="PyAbel inversion method.")
     p.add_argument("--use-cache", action="store_true", default=False,
                    help="Reuse existing per-bin inversion outputs if present.")
     p.add_argument("--no-show", action="store_true", default=False,
@@ -85,7 +77,6 @@ def parse_args():
 CLI = parse_args()
 
 # --- Abel inversion ---
-INVERSION_BACKEND = CLI.inversion_backend
 PYABEL_METHOD = CLI.pyabel_method
 if not PYABEL_METHOD.isidentifier():
     raise ValueError("PYABEL_METHOD must be a PyAbel method name")
@@ -97,13 +88,9 @@ WEIGHT_SUFFIX = CLI.weight_suffix
 # --- Output ---
 # Weighted runs go to their own directory so their cached inversion outputs can
 # never collide with (and silently be reused in place of) the unweighted ones.
-if CLI.output_dir is not None:
-    OUTPUT_DIR = CLI.output_dir
-else:
-    OUTPUT_DIR = HERE / (f"gmd_bins_results{WEIGHT_SUFFIX}" if WEIGHT_SUFFIX
-                         else "gmd_bins_results")
-    if INVERSION_BACKEND == "pyabel":
-        OUTPUT_DIR = OUTPUT_DIR.with_name(OUTPUT_DIR.name + f"_pyabel_{PYABEL_METHOD}")
+OUTPUT_DIR = CLI.output_dir if CLI.output_dir is not None else HERE / (
+    f"gmd_bins_results{WEIGHT_SUFFIX}_pyabel_{PYABEL_METHOD}"
+)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 USE_CACHE = CLI.use_cache
@@ -112,20 +99,6 @@ NO_SHOW = CLI.no_show
 # --- Circularization calibration (confirmed for this dataset) ---
 EXTRACTED_FILE = CIRCULARIZATION_DIR / "extracted-FOC100eV-20260710.txt"
 REASSIGN_FILE = CIRCULARIZATION_DIR / "reassignment-FOC100eV-20260710.txt"
-
-# --- MATLAB / CPBASEX ---
-# Bundled with this repository at pbasex-matlab/ (third-party, MIT,
-# Elio Gilbert Champenois — see pbasex-matlab/LICENSE.txt). Only used by
-# the "matlab" inversion backend (the default "pyabel" backend is pure
-# Python). Set the CPBASEX_DIR environment variable to use a different
-# CPBASEX checkout with the same layout (examples/ + pbasex-MATLAB/).
-# NOTE: the backend needs the basis file examples/G_r512_k512_l10.h5,
-# generated once in MATLAB with examples/save_gData.m (time-consuming).
-MATLAB_CPBASEX = CPBASEX_DIR
-MATLAB_EXAMPLES_DIR = MATLAB_CPBASEX / "examples"
-MATLAB_SCRIPT = MATLAB_EXAMPLES_DIR / "new_10.m"
-MATLAB_PBASE_PATH = MATLAB_CPBASEX / "pbasex-MATLAB"
-MATLAB_GDATA = MATLAB_EXAMPLES_DIR / "G_r512_k512_l10.h5"
 
 # --- Image / geometry parameters (80 eV notebook, this dataset) ---
 CENTER_OLD = np.array([473.47577550518895, 499.38892648532163])  # bright spot (row, col)
@@ -162,7 +135,7 @@ NO_BKG = True
 ALPHA = 1.0
 
 # --- Beta-plot presentation ---
-# The CPBASEX beta fit is ill-conditioned as intensity -> 0, producing
+# The beta fit is ill-conditioned as intensity -> 0, producing
 # unphysical spikes at the extreme ends of the energy axis. Restrict the
 # plotted window and clip the y-axis so the physical region is readable.
 BETA_ENERGY_FRACTION = 0.5      # plot E in [0, fraction * Emax]
@@ -281,29 +254,6 @@ def run_circularization(input_path: Path, output_path: Path) -> None:
         raise RuntimeError(f"circularization.py failed (rc={result.returncode})")
 
 
-def run_matlab_cpbasex() -> None:
-    """Run the CPBASEX inversion in MATLAB (reads examples/image.txt)."""
-    if not MATLAB_GDATA.exists():
-        raise RuntimeError(
-            f"CPBASEX basis data missing: {MATLAB_GDATA}\n"
-            "Generate it once before using the MATLAB backend: in MATLAB, "
-            f"cd to {MATLAB_EXAMPLES_DIR} and run save_gData.m "
-            "(time-consuming — tens of minutes).")
-    matlab_cmd = (
-        f"matlab -batch \"addpath('{MATLAB_PBASE_PATH.as_posix()}'); "
-        f"cd('{MATLAB_EXAMPLES_DIR.as_posix()}'); run('new_10.m');\""
-    )
-    subprocess.run(matlab_cmd, shell=True, check=True)
-
-
-def load_matlab_results():
-    """Read the CPBASEX outputs (raw channel units)."""
-    Ek = np.loadtxt(MATLAB_EXAMPLES_DIR / "energy_l10.txt", delimiter=",")
-    IEk = np.loadtxt(MATLAB_EXAMPLES_DIR / "energy_spec_l10.txt", delimiter=",")
-    betas = np.loadtxt(MATLAB_EXAMPLES_DIR / "betas10.txt", delimiter=",")
-    return Ek, IEk, betas
-
-
 def run_pyabel(image):
     """Invert the centered image; return r², PES, beta2..beta10 and the slice."""
     inverted = abel.Transform(
@@ -314,7 +264,7 @@ def run_pyabel(image):
         inverted, origin="cc", rmax=image.shape[1] // 2, order=10,
     )
     # Ibeta gives dN/dr; toPES applies dN/d(r²) = (dN/dr)/(2r).
-    # Keep factor=1: saved axes remain r², as in the MATLAB pipeline.
+    # Keep factor=1 so the saved axis remains in squared pixels.
     # toPES modifies its intensity argument, so pass a copy.
     Ek, IEk = abel.tools.vmi.toPES(
         radial, intensity.copy(), energy_cal_factor=1.0,
@@ -407,23 +357,11 @@ def process_bin(bin_path: Path, label: str, use_cache: bool = False):
     np.savetxt(OUTPUT_DIR / f"image_cleaned_GMD_{label}.txt", image_cleaned)
 
     # --- Abel inversion ---------------------------------------------------
-    if INVERSION_BACKEND == "matlab":
-        np.savetxt(MATLAB_EXAMPLES_DIR / "image.txt", image_cleaned)
-        print(f"  [cPbasex] running MATLAB new_10.m for GMD={label} ...")
-        run_matlab_cpbasex()
-
-        # Copy shared MATLAB outputs before processing the next bin.
-        for stem in ("energy_l10", "energy_spec_l10", "betas10", "px-py_l10"):
-            src = MATLAB_EXAMPLES_DIR / f"{stem}.txt"
-            if src.exists():
-                shutil.copy2(src, OUTPUT_DIR / f"{stem}_GMD_{label}.txt")
-        Ek, IEk, betas = load_matlab_results()
-    else:
-        print(f"  [PyAbel] {PYABEL_METHOD} inversion for GMD={label} ...")
-        Ek, IEk, betas, inverted = run_pyabel(image_cleaned)
-        for stem, values in (("energy_l10", Ek), ("energy_spec_l10", IEk),
-                             ("betas10", betas), ("px-py_l10", inverted)):
-            np.savetxt(OUTPUT_DIR / f"{stem}_GMD_{label}.txt", values, delimiter=",")
+    print(f"  [PyAbel] {PYABEL_METHOD} inversion for GMD={label} ...")
+    Ek, IEk, betas, inverted = run_pyabel(image_cleaned)
+    for stem, values in (("energy_l10", Ek), ("energy_spec_l10", IEk),
+                         ("betas10", betas), ("px-py_l10", inverted)):
+        np.savetxt(OUTPUT_DIR / f"{stem}_GMD_{label}.txt", values, delimiter=",")
     print(f"         Ek={Ek.shape} IEk={IEk.shape} betas={betas.shape}")
 
     return {
@@ -468,12 +406,11 @@ def main():
     labels = [b.stem.replace("vmi_2d_gmd_", "") for b in bins]
 
     print("=" * 78)
-    print(f"GMD-BINNED VMI PROCESSING -> {INVERSION_BACKEND.upper()}")
+    print("GMD-BINNED VMI PROCESSING -> PYABEL")
     print("=" * 78)
     print(f"Bin dir     : {BIN_DIR}")
     print(f"Output dir  : {OUTPUT_DIR}")
-    if INVERSION_BACKEND == "pyabel":
-        print(f"Abel method : {PYABEL_METHOD}")
+    print(f"Abel method : {PYABEL_METHOD}")
     print(f"Extracted   : {EXTRACTED_FILE.name}")
     print(f"Reassign    : {REASSIGN_FILE.name}")
     print(f"center_old  : {CENTER_OLD}")
@@ -540,7 +477,7 @@ def main():
     print(f"[plot] {f2}")
 
     # Beta parameters.
-    # The CPBASEX beta fit is ill-conditioned where the intensity -> 0 (the
+    # The beta fit is ill-conditioned where the intensity -> 0 (the
     # extreme ends of the energy axis), where it produces values in the
     # hundreds/thousands. Those points are physical noise, not signal, so the
     # plot is restricted to a sensible energy window with a clipped y-axis.
@@ -585,8 +522,8 @@ def main():
         npz_path,
         labels=list(ok.keys()),
         alpha=ALPHA,
-        inversion_backend=INVERSION_BACKEND,
-        pyabel_method=PYABEL_METHOD if INVERSION_BACKEND == "pyabel" else "",
+        inversion_backend="pyabel",
+        pyabel_method=PYABEL_METHOD,
         energy=[np.asarray(ok[k]["energy"]).ravel() for k in ok],
         intensity=[np.asarray(ok[k]["intensity"]).ravel() for k in ok],
         beta=[np.asarray(ok[k]["beta"]) for k in ok],

@@ -12,8 +12,7 @@ to `vmi-analysis-cache\server.log` in the installation directory.
 
 The default experiment workspace is `%USERPROFILE%\VMI Analysis`.
 Set `VMI_WORKSPACE_DIR` before starting the app to use another workspace.
-Supply the experiment data and calibration files separately. The optional
-MATLAB backend requires a MATLAB installation and CPBASEX basis data.
+Supply the experiment data and calibration files separately.
 MP4 export uses FFmpeg from the system PATH or the executable specified by
 `VMI_FFMPEG_EXE`. When FFmpeg is unavailable, the Movie panel saves an animated GIF.
 

@@ -5,8 +5,6 @@
 !LICENSE
 !NOTICE
 !vendor/
-!vendor/pbasex-matlab/
-!vendor/pbasex-matlab/LICENSE.txt
 !src/
 !src/**
 !packaging/

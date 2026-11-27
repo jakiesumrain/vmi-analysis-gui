@@ -8,7 +8,7 @@ import unittest
 from vmi_analysis.centroiding.options import centroid_cli_args, load_settings
 from vmi_analysis.gui.jobs import Job, Stage
 from vmi_analysis.gui.resources import Access, canonical_path, command_access, job_access
-from vmi_analysis.paths import CENTROID_DIR, CIRCULARIZATION_DIR, CPBASEX_DIR
+from vmi_analysis.paths import CENTROID_DIR, CIRCULARIZATION_DIR
 
 
 def access(module, args=(), cwd=None):
@@ -91,7 +91,7 @@ class JobResourcesTests(unittest.TestCase):
                                                           '--gmd-map-path', 'map.txt', '--output-dir', 'bins'])
         self.assertIsNotNone(centroid.conflict(bins))
 
-    def test_circularization_and_pes_inputs_outputs_and_matlab_lock(self):
+    def test_circularization_and_gmd_bin_inversion_reserve_inputs_and_outputs(self):
         single = access('circularization.circularization', ['--input', 'image.txt', '--output', 'circ.txt',
                          '--extracted', 'fit.txt', '--reassign-file', 'radial.txt', '--plot-dir', 'plots'])
         self.assertIn(canonical_path('fit.txt'), single.reads)
@@ -100,12 +100,12 @@ class JobResourcesTests(unittest.TestCase):
         quiet = access('circularization.circularization', ['--no-plots'])
         self.assertNotIn(canonical_path('trig_fit_plots'), quiet.writes)
         pyabel = access('circularization.process_gmd_bins', ['--bin-dir', 'bins', '--output-dir', 'pes'])
-        matlab = access('circularization.process_gmd_bins', ['--bin-dir', 'bins', '--output-dir', 'other',
-                                                           '--inversion-backend', 'matlab'])
-        self.assertIsNone(pyabel.conflict(matlab))
-        self.assertIn('MATLAB/CPBASEX', matlab.exclusive)
-        self.assertIn(canonical_path(CPBASEX_DIR / 'examples'), matlab.writes)
+        self.assertIn(canonical_path('bins'), pyabel.reads)
+        self.assertEqual(pyabel.writes, {canonical_path('pes')})
         self.assertIn(canonical_path(CIRCULARIZATION_DIR / 'extracted-FOC100eV-20260710.txt'), pyabel.reads)
+        default_output = access('circularization.process_gmd_bins', ['--weight-suffix=', '--pyabel-method', 'hansenlaw'])
+        self.assertEqual(default_output.writes,
+                         {canonical_path(CIRCULARIZATION_DIR / 'gmd_bins_results_pyabel_hansenlaw')})
 
     def test_pipeline_reserves_outputs_of_all_stages_before_it_starts(self):
         pipeline = Job(name='Pipeline', stages=[

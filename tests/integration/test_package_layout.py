@@ -203,11 +203,10 @@ class PackageLayoutTests(unittest.TestCase):
 
     def test_assets_and_legacy_data_locations(self):
         from importlib.resources import files
-        from vmi_analysis.paths import CENTROID_DIR, CIRCULARIZATION_DIR, CPBASEX_DIR, GENERATED_DIR
+        from vmi_analysis.paths import CENTROID_DIR, CIRCULARIZATION_DIR, GENERATED_DIR
         self.assertEqual(CENTROID_DIR, ROOT / "centroiding")
         self.assertEqual(CIRCULARIZATION_DIR, ROOT / "circularization")
         self.assertEqual(GENERATED_DIR, ROOT / ".cache/vmi-analysis")
-        self.assertTrue((CPBASEX_DIR / "examples/new_10.m").is_file())
         assets = files("vmi_analysis.gui.assets")
         self.assertIn("vmiZoomOpen", (assets / "image_zoom.js").read_text(encoding="utf-8"))
         self.assertIn("--", (assets / "theme.css").read_text(encoding="utf-8"))
