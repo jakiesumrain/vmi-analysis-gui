@@ -986,10 +986,9 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
             diagnostics_cursor += 1
 
     async def toggle_session():
-        nonlocal selected_chat, follow_current, connecting
+        nonlocal connecting
         clear_error()
         connection_error.visible = False
-        session = AGENTS.current(owner)
         if AGENTS.connection(owner) is not None:
             connecting = True
             session_button.set_enabled(False)
@@ -1021,18 +1020,12 @@ def _build_page(jobs, *, registry, navigate, settings_dialog, connection_setting
         connecting = True
         session_button.set_enabled(False)
         try:
-            resume = selected_chat or (session.chat if session is not None and follow_current else None)
-            started = await asyncio.to_thread(
-                AGENTS.start, request, shared_mode=shared.SERVER is not None, history=history,
-                chat_id=resume.id if resume is not None else None,
-                project_id=selected_project.id if selected_project is not None else None)
-            selected_chat = started.chat
-            follow_current = False
+            await asyncio.to_thread(AGENTS.connect_provider, request, shared_mode=shared.SERVER is not None, history=history)
             api_key.value = ""
             clear_error()
         except (OSError, RuntimeError, ValueError) as exc:
             api_key.value = ""
-            connection_error.text = f"Could not start the session: {exc}"
+            connection_error.text = f"Could not connect the provider: {exc}"
             connection_error.visible = True
         finally:
             connecting = False

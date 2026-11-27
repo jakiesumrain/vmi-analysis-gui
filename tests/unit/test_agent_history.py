@@ -68,9 +68,12 @@ class AgentHistoryTests(TestCase):
 
         with patch.object(AgentSession, "start", autospec=True, side_effect=launch), patch.object(
                 AgentSession, "prompt", autospec=True):
-            initial = manager.start(self.request, shared_mode=True, history=self.history)
+            manager.connect_provider(self.request, shared_mode=True, history=self.history)
+            self.assertIsNone(manager.current("alice"))
+            self.assertEqual(self.history.chats(), [])
             self.assertEqual(manager.connection("alice").api_key, "")
             self.assertIsNone(manager.connection("bob"))
+            initial = manager.prompt_chat("alice", "First chat")
             project_chat = manager.prompt_chat("alice", "Check the fit", project_id=self.project.id)
             self.assertFalse(initial.active)
             self.assertEqual(initial.request.api_key, "")

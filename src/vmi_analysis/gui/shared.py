@@ -322,14 +322,14 @@ class AccountMiddleware:
 
 
 def install(config_path):
-    from .agent_api import start_session
+    from .agent_api import connect_provider
 
     global SERVER
     if sys.platform != 'linux':
         raise RuntimeError('Shared-server mode requires a Linux host.')
     SERVER = SharedServer(json.loads(Path(config_path).read_text(encoding='utf-8')))
     app.add_middleware(AccountMiddleware)
-    app.post('/api/agent/session')(start_session)
+    app.post('/api/agent/session')(connect_provider)
     assets = files('vmi_analysis.gui.assets')
     login_page = (assets / 'login.html').read_text(encoding='utf-8')
 

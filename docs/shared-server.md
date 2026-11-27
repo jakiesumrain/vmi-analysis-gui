@@ -145,9 +145,10 @@ same web UI in your browser. Enter your SSH connection details, then choose
 
 To sign in automatically, enter your VMI username and password under
 **VMI account and Agent** and choose **Save profile**. Add model settings and
-an API key to start or reopen the Agent when you connect. The client uses the
-OS keychain for the password and key. The server uses the key for the Agent
-session. In manual-only mode, the client signs you in and opens the Workbench.
+an API key to connect the Agent provider automatically. Your first message
+starts or resumes the selected chat. The client uses the OS keychain for the
+password and key. In manual-only mode, the client signs you in and opens the
+Workbench.
 
 ## Use your workspace
 

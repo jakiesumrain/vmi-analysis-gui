@@ -874,6 +874,15 @@ class AgentManager:
         with self._lock:
             return self._owners.setdefault(owner, threading.Lock())
 
+    def connect_provider(self, request: AgentRequest, *, shared_mode: bool, history=None) -> None:
+        validate_request(request)
+        if history is not None and history.workspace != request.workspace.resolve():
+            raise ValueError("Agent history belongs to a different workspace.")
+        with self._owner_lock(request.owner), self._lock:
+            if self._stopping:
+                raise RuntimeError("The server is shutting down.")
+            self._connections.setdefault(request.owner, (request, shared_mode, history))
+
     def connection(self, owner) -> AgentRequest | None:
         with self._lock:
             connection = self._connections.get(owner)
