@@ -955,15 +955,21 @@ class AgentManager:
                 with self._lock:
                     self._sessions.pop(owner, None)
 
-    def delete_archived_chat(self, owner, history, chat_id):
+    def delete_archived(self, owner, history, *, chat_id=None, project_id=None):
+        if (chat_id is None) == (project_id is None):
+            raise ValueError("Choose one archived chat or project to delete.")
         with self._owner_lock(owner):
             session = self.current(owner)
-            is_current = session is not None and session.chat is not None and session.chat.id == chat_id
+            chat = session.chat if session is not None else None
+            is_current = chat is not None and (chat.id == chat_id if chat_id is not None else chat.project_id == project_id)
             if is_current:
                 if session.active:
                     raise RuntimeError("Stop this chat before deleting it.")
                 session.stop()
-            history.delete_archived_chat(chat_id)
+            if chat_id is not None:
+                history.delete_archived_chat(chat_id)
+            else:
+                history.delete_archived_project(project_id)
             if is_current:
                 with self._lock:
                     self._sessions.pop(owner, None)

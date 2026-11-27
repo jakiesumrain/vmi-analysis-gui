@@ -120,6 +120,22 @@ class AgentHistory:
             self._save_project(replace(project, archived=archived))
 
     def delete_archived_chat(self, chat_id):
+        self._delete_chat(chat_id)
+
+    def delete_archived_project(self, project_id):
+        record = _record_path(self.root / "projects", project_id)
+        for path in (self.root, record.parent, record):
+            if path.is_symlink() or path.is_junction():
+                raise ValueError("Cannot delete project history through a linked path.")
+        project = self.project(project_id)
+        if project.id != project_id or not project.archived:
+            raise ValueError("Only archived projects can be deleted.")
+        for chat in self.chats():
+            if chat.project_id == project_id:
+                self._delete_chat(chat.id, project_id=project_id)
+        record.unlink()
+
+    def _delete_chat(self, chat_id, *, project_id=None):
         record = _record_path(self.root / "chats", chat_id)
         transcript = _record_path(self.root / "transcripts", chat_id)
         session = self.root / "sessions" / chat_id
@@ -127,8 +143,10 @@ class AgentHistory:
             if path.is_symlink() or path.is_junction():
                 raise ValueError("Cannot delete chat history through a linked path.")
         chat = self.chat(chat_id)
-        if chat.id != chat_id or not chat.archived:
+        if chat.id != chat_id or (project_id is None and not chat.archived):
             raise ValueError("Only archived chats can be deleted.")
+        if project_id is not None and chat.project_id != project_id:
+            raise ValueError("This chat does not belong to the archived project.")
         # Keep the archive entry available for retry until its history is gone.
         try:
             rmtree(session)
