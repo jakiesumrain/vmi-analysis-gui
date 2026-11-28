@@ -438,7 +438,7 @@ class JobView:
 
     def __init__(self, jobs: JobManager, results_builder=None, live_builder=None,
                  interval: float = 0.7, job_name: str | None = None, command_key: str | None = None,
-                 attach_builder=None):
+                 attach_builder=None, job_filter=None):
         self.jobs = jobs
         self.job_name = job_name
         self._command_key = command_key
@@ -451,6 +451,7 @@ class JobView:
         self._results_builder = results_builder
         self._live_builder = live_builder
         self._attach_builder = attach_builder
+        self._job_filter = job_filter
         # Status controls are created inline in the panel header by
         # place_status() (theme.panel_header passes the view there).
         self.badge = None
@@ -589,7 +590,7 @@ class JobView:
         """
         self._reset_results()
 
-    def attach(self, job: Job) -> None:
+    def attach(self, job: Job | None) -> None:
         self.job = job
         self._log_cursor = 0
         self._results_shown = False
@@ -597,7 +598,7 @@ class JobView:
         if self.log is not None:
             self.log.clear()
         self._reset_results()
-        if self._attach_builder is not None:
+        if job is not None and self._attach_builder is not None:
             try:
                 self._attach_builder(job)
             except Exception:
@@ -612,7 +613,8 @@ class JobView:
     def refresh(self) -> None:
         # Reconnect the new page's controls to a job still owned by the server.
         if self.job_name and (self.job is None or self.job.status in ("done", "failed", "cancelled")):
-            owned = [j for j in self.jobs.jobs() if j.name == self.job_name]
+            owned = [j for j in self.jobs.jobs() if j.name == self.job_name
+                     and (self._job_filter is None or self._job_filter(j))]
             active = [j for j in owned if j.status in ("running", "queued")]
             if active:
                 self.attach(next((j for j in active if j.status == "running"), active[-1]))

@@ -1144,7 +1144,8 @@ html:has(.vmi-agent-page) { overflow-anchor: none; }
   .vmi-workspace { padding: var(--vmi-space-3); }
   .vmi-sidebar { padding-inline: var(--vmi-space-3); }
   .vmi-panel-head { gap: var(--vmi-space-2); }
-  .vmi-agent-connection .vmi-field-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .vmi-agent-connection .vmi-field-grid,
+  .vmi-pes-julia .vmi-field-grid { grid-template-columns: minmax(0, 1fr) !important; }
   .vmi-agent-user { max-width: 92%; }
   .vmi-agent-review-details { grid-template-columns: minmax(0, 1fr); }
   .vmi-agent-review-details .vmi-agent-review-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }

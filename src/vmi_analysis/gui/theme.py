@@ -39,9 +39,9 @@ def apply_theme() -> None:
 # Component helpers (DESIGN.md component vocabulary)
 # --------------------------------------------------------------------------
 
-def panel_header(title: str, subtitle: str | None = None, view=None, actions=None) -> None:
+def panel_header(title: str, subtitle: str | None = None, view=None, actions=None) -> ui.row:
     """Panel heading with inline status and optional actions at the trailing edge."""
-    with ui.row().classes("vmi-panel-head w-full items-center gap-3 no-wrap"):
+    with ui.row().classes("vmi-panel-head w-full items-center gap-3 no-wrap") as heading:
         ui.label(title).classes("vmi-title vmi-title-sm")
         if view is not None:
             view.place_status()
@@ -50,6 +50,7 @@ def panel_header(title: str, subtitle: str | None = None, view=None, actions=Non
                 actions()
     if subtitle:
         ui.label(subtitle).classes("vmi-subtitle vmi-panel-subtitle")
+    return heading
 
 
 def form_section(caption: str) -> None:

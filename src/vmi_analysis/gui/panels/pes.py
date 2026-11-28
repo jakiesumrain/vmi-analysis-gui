@@ -32,6 +32,7 @@ from .common import (GENERATED, REPO_ROOT, JobView, action_bar, adopt_agent_form
 from .picker import LocalFilePicker
 
 JOB_NAME = "PES"
+PANEL_SUBTITLE = "Generate photoelectron spectra from VMI images and fit selected peaks."
 FIT_OPERATION = "pes_fit"
 PROFILES = ("Gaussian", "Voigt")
 PES_SAMPLE_MARKER = {"size": 4}
@@ -362,7 +363,7 @@ def _fit_settings(params, spectra):
                 auto_profile=params["auto_profile"], peaks=guesses)
 
 
-def build(jobs: JobManager, *, ask_agent=None) -> None:
+def build(jobs: JobManager, *, ask_agent=None, status_slot=None) -> None:
     state = {"spectra": {}, "angular": {}, "beta_orders": (), "plot": None, "units": "pixel²",
              "revision": 0, "selecting": False, "fit_busy": False}
 
@@ -373,7 +374,11 @@ def build(jobs: JobManager, *, ask_agent=None) -> None:
                 fields[key].value = value
 
     view = JobView(jobs, job_name=JOB_NAME, results_builder=lambda job: show_job(job), attach_builder=restore_form)
-    theme.panel_header(JOB_NAME, "Generate photoelectron spectra from VMI images and fit selected peaks.", view=view)
+    if status_slot is None:
+        theme.panel_header(JOB_NAME, PANEL_SUBTITLE, view=view)
+    else:
+        with status_slot:
+            view.place_status()
 
     def number(label, key, value=None):
         return persist(num_input(label, value, step="any"), f"pes.{key}")

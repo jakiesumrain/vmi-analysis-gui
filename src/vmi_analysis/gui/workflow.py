@@ -12,6 +12,7 @@ from typing import Callable
 from nicegui import ui
 
 from vmi_analysis.pes import BETA_ORDERS
+from vmi_analysis.pes_julia import legacy_energy_grid
 
 from .centroid_plots import COLORMAPS, RESULT_COLORMAP_DEFAULTS
 from .settings import storage_key
@@ -63,6 +64,10 @@ def result_fields(store):
         key = storage_key("spectrum_plot", bound)
         fields[key] = Field(lambda key=key: store.get(key, -1.0),
                             lambda value: value is None or _accepts_number(value))
+    for unit in ("ev", "pixel2"):
+        key = f"pes_julia.uniform_{unit}_bin_width"
+        fields[key] = Field(lambda key=key: store.get(key),
+                            lambda value: value is None or (_accepts_number(value) and value > 0))
     return fields
 
 
@@ -129,6 +134,11 @@ def save_workflow(path, fields):
 
 def load_workflow(path, fields):
     saved = _read(Path(path))
+    grid = legacy_energy_grid(saved.get("pes_julia.windows"))
+    width = saved.get("pes_julia.delta_e", grid.get("delta_e"))
+    if _accepts_number(width) and width > 0:
+        unit = "ev" if saved.get("pes_julia.alpha") is not None else "pixel2"
+        saved.setdefault(f"pes_julia.uniform_{unit}_bin_width", width)
     for bound in ("min", "max"):
         legacy_key = f"calibration.color_{bound}_pct"
         if legacy_key in saved:

@@ -7,10 +7,25 @@ from unittest.mock import AsyncMock, patch
 from nicegui import Client, app, ui
 
 from vmi_analysis.gui import app as gui, shared, workflow
-from vmi_analysis.gui.jobs import JobManager
+from vmi_analysis.gui.jobs import Job, JobManager
 
 
 class WorkflowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_active_jobs_labels_both_pes_backends(self):
+        manager = JobManager()
+        self.addCleanup(manager.shutdown)
+        running = [Job(name, status="running") for name in
+                   (gui.pes.JOB_NAME, gui.pes_julia.JOB_NAME, "Circularize")]
+        client = Client(ui.page("/_test_active_pes_jobs"))
+        try:
+            with (client, patch.object(gui, "MANAGER", manager),
+                  patch.object(manager, "running", return_value=running)):
+                gui.index()
+            labels = [element.text for element in client.elements.values() if isinstance(element, ui.label)]
+            self.assertIn("PES (PyAbel) · PES (PBASEX) · Circularize", labels)
+        finally:
+            client.delete()
+
     async def test_manual_only_page_omits_agent_and_handoff_buttons(self):
         with TemporaryDirectory() as folder:
             root = Path(folder)
@@ -58,6 +73,11 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
             "pes.uniform_ev_intensity_y_max": 200,
             "pes.uniform_ev_beta_4_y_min": -2,
             "pes.uniform_pixel2_bin_width": 5,
+            "pes_julia.mode": "shots",
+            "pes_julia.shots": "corrected.h5",
+            "pes_julia.windows": "1, 2\n2, 3",
+            "pes_julia.window_batch": 16,
+            "pes_julia.pbasex_repo": "checkout",
             gui.KEEP_ALIVE_KEY: True,
         }
         callbacks = {}
@@ -84,7 +104,7 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(saved["schema"], workflow.SCHEMA)
                     self.assertEqual({key.split(".", 1)[0] for key in values},
                                      {"gmd_map", "movie", "dark", "accumulate", "centroid", "binning",
-                                      "calibration", "circularize", "pes", "ion_luna",
+                                      "calibration", "circularize", "pes", "pes_julia", "ion_luna",
                                       "ion_tof", "ion_momenta", "ion_pipeline", "ion_live", "ion_unpack", "ion_tof_fallback",
                                       "ion_pipeline_fallback"})
                     self.assertEqual(values["accumulate.max_workers"], 6)
@@ -99,12 +119,19 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                     for key in store:
                         if key.startswith(("ion_live.", "pes.")):
                             self.assertEqual(values[key], store[key])
+                    self.assertEqual(values["pes_julia.mode"], "shots")
+                    self.assertEqual(values["pes_julia.shots"], "corrected.h5")
+                    self.assertEqual(values["pes_julia.window_batch"], 16)
+                    self.assertEqual(values["pes_julia.pbasex_repo"], "checkout")
+                    self.assertIsNone(values["pes_julia.uniform_pixel2_bin_width"])
                     self.assertEqual(values["ion_live.endpoint"], "tcp://acquisition-host:5556")
                     self.assertNotIn(gui.KEEP_ALIVE_KEY, values)
 
                     store.update({"movie.h5_dir": "dataset-b", "calibration.abel": True,
                                   "calibration.placement": "post_abel", "ion_live.tof_bin_width": 5,
-                                  "pes.uniform_ev_bin_width": 0.2, gui.KEEP_ALIVE_KEY: False})
+                                  "pes.uniform_ev_bin_width": 0.2, "pes_julia.mode": "counts",
+                                  "pes_julia.uniform_pixel2_bin_width": 7, "pes_julia.window_batch": 2,
+                                  gui.KEEP_ALIVE_KEY: False})
                     values["accumulate.max_workers"] = "invalid"
                     path.write_text(json.dumps(saved), encoding="utf-8")
                     await callbacks["Load workflow"]()
@@ -119,6 +146,8 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                     values["calibration.color_min_pct"] = 10
                     del values["calibration.raw_color_min_pct"]
                     values["calibration.processed_color_min_pct"] = 25
+                    del values["pes_julia.uniform_pixel2_bin_width"]
+                    values["pes_julia.windows"] = "1, 2\n2, 3"
                     path.write_text(json.dumps(saved), encoding="utf-8")
                     await callbacks["Load workflow"]()
                     reload.assert_called_once_with()
@@ -131,6 +160,10 @@ class WorkflowTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(store["calibration.processed_color_min_pct"], 25)
                     self.assertEqual(store["ion_live.tof_bin_width"], 2.5)
                     self.assertEqual(store["pes.uniform_ev_bin_width"], 0.1)
+                    self.assertEqual(store["pes_julia.mode"], "shots")
+                    self.assertEqual(store["pes_julia.window_batch"], 16)
+                    self.assertEqual(store["pes_julia.pbasex_repo"], "checkout")
+                    self.assertEqual(store["pes_julia.uniform_pixel2_bin_width"], 1)
                     self.assertFalse(store[gui.KEEP_ALIVE_KEY])
                     self.assertEqual(manager.jobs(), [])
                 reloaded = Client(page)

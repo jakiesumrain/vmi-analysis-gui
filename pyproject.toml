@@ -43,6 +43,7 @@ include = ["vmi_analysis*"]
 namespaces = false
 
 [tool.setuptools.package-data]
+"vmi_analysis" = ["pes_julia_bridge.jl"]
 "vmi_analysis.gui.assets" = ["*.css", "*.html", "*.js", "*.svg"]
 
 [[tool.uv.index]]

@@ -2134,6 +2134,10 @@ keep measured coordinates. The default \code{circularize} mode uses
 \subsection{PES}
 \label{sec:pes}
 
+Open \emph{PyAbel} or \emph{PBASEX} within \emph{PES}.
+
+\subsubsection{PyAbel}
+
 \textbf{Purpose.} Generate and compare photoelectron spectra from 2D VMI
 images. Fit one or more peaks in a selected interval.
 
@@ -2238,6 +2242,41 @@ The server keeps a spectrum bundle for each run in its generated cache.
 \emph{View latest spectra} reopens the latest successful bundle in the
 current server session. \emph{Clear outputs} deletes the PES bundles from
 that session. Export the peak table before closing the page.
+
+\subsubsection{Julia pBASEX}
+
+This local workflow uses Julia 1.10 or newer on the server's PATH.
+Select the folder that contains the local \emph{PBASEX-Julia checkout}.
+The first run prepares the Julia environment in the GUI cache and can
+download missing dependencies. Choose an existing HDF5 basis with the
+radial grid and Legendre orders for the inversion.
+
+\begin{enumerate}
+  \item Select \code{image\_circularized\_counts.npy}. Enter the histogram
+        resolution in bins per detector pixel. To override the image midpoint,
+        enter the one-based center column and row before rotation. Use a
+        counterclockwise rotation in multiples of 90 degrees. Enter $\alpha$
+        in eV per squared detector pixel for an energy axis in eV.
+  \item Click \emph{Generate pBASEX spectrum}. The native plots show the
+        spectrum and $\beta$. Open \emph{Uniform-grid spectra} to change the
+        display bin width. The plots reuse the calculated spectrum and angular
+        moments, with no additional inversion.
+  \item Select a fit range on the native spectrum or enter its limits.
+        Leave the peak estimates blank for automatic detection, or enter
+        estimates manually. Click \emph{Fit peaks}. The panel
+        saves a JSON record with each fitted center, FWHM, and integration window
+        from the center minus half the FWHM to the center plus half the FWHM.
+  \item Choose the uncertainty input and click \emph{Calculate peak uncertainties}.
+        Use the count image for Poisson errors. For shot-bootstrap errors,
+        select the matching \code{localizations\_circularized.h5} checkpoint.
+        The panel uses the saved inversion settings and FWHM windows.
+\end{enumerate}
+
+The uncertainty table reports integrated yield and $\beta$ with standard
+errors for each window. The shot-bootstrap table also reports percentile
+intervals. A block length above one resamples groups of consecutive shots.
+\emph{Windows per batch} defaults to 8. Larger batches reuse reads and use
+more RAM. Overlapping FWHM windows include shared signal.
 
 \subsection{TPX3 Dump}
 \label{sec:tpx3dump}

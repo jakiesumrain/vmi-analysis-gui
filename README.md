@@ -24,6 +24,14 @@ and enter your model endpoint, model ID, API format, and key.
 
 **Settings → Save workflow** exports form values. A Trig Calibration session separately preserves ring selections, masks, and fits. Supply your own experiment files. Use the optional `live` dependency for Timepix3 preview.
 
+### Set up Julia pBASEX
+
+The **PES → PBASEX** tab runs on a local server with Julia 1.10 or newer on its PATH.
+Select the local **PBASEX-Julia checkout** folder in the tab. The first run prepares its Julia environment in the GUI cache and can download missing dependencies.
+Select an existing pBASEX basis file and a Circularize export.
+Generate a spectrum from the integer count image. Open **Uniform-grid spectra** to resample the displayed spectrum and β.
+Fit peaks on the native spectrum. Use their saved FWHM windows for Poisson errors from the same count image or bootstrap errors from its matching shot checkpoint.
+
 ## Choose a deployment
 
 | Mode | Use it when | Setup |

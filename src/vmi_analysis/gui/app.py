@@ -20,7 +20,7 @@ from .panel_operations import build_registry
 from .startup import startup_port
 from .panels import (accumulate, agent, binning, calibration, centroid, circularize,
                      dark, gmd_map, ion_live, ion_luna, ion_momenta, ion_pipeline, ion_tof,
-                     ion_tof_fallback, ion_unpack, movie, pes)
+                     ion_tof_fallback, ion_unpack, movie, pes, pes_julia)
 from .panels.common import file_url, init_zoom_overlay
 from .panels.picker import LocalFilePicker
 
@@ -102,6 +102,10 @@ def _schedule_shutdown_after_last_client(client) -> None:
         name="auto-shutdown-check")
 
 PANEL_OPERATIONS = build_registry()
+ACTIVE_JOB_LABELS = {
+    pes.JOB_NAME: "PES (PyAbel)",
+    **dict.fromkeys(pes_julia.JOB_NAMES, "PES (PBASEX)"),
+}
 
 TABS = [
     ("GMD Map", gmd_map),
@@ -307,7 +311,7 @@ def index() -> None:
         running = MANAGER.running()
         n_queued = sum(1 for job in MANAGER.jobs() if job.status == "queued")
         running_value.text = str(len(running))
-        running_note.text = (" · ".join(job.name for job in running)
+        running_note.text = (" · ".join(ACTIVE_JOB_LABELS.get(job.name, job.name) for job in running)
                              if running else "idle")
         queued_value.text = str(n_queued)
         queued_note.text = "waiting for a slot" if n_queued else "none waiting"
@@ -405,8 +409,14 @@ def index() -> None:
         with ui.column().classes("vmi-workspace"):
             with ui.tab_panels(value="Agent" if agent_enabled else TABS[0][0], on_change=reveal_active_group).props(
                     "transition-prev=fade transition-next=fade").classes("vmi-tab-panels w-full bg-transparent") as panels:
+                pes_workflows = None
+
                 def navigate(name):
-                    panels.value = name
+                    if name == pes.JOB_NAME or name in pes_julia.JOB_NAMES:
+                        pes_workflows.value = "pyabel" if name == pes.JOB_NAME else "julia"
+                        panels.value = pes.JOB_NAME
+                    else:
+                        panels.value = name
 
                 def export_calibration(extracted_path, image_path, manual_center, **settings):
                     return use_calibration(extracted_path, image_path, manual_center, **settings)
@@ -424,7 +434,20 @@ def index() -> None:
                                 module.build(MANAGER, use_calibration=export_calibration,
                                              ask_agent=handoff_to_agent)
                             elif module is pes:
-                                module.build(MANAGER, ask_agent=handoff_to_agent)
+                                with theme.panel_header(pes.JOB_NAME, pes.PANEL_SUBTITLE):
+                                    pyabel_status = ui.row().classes("grow items-center gap-3 no-wrap")
+                                    julia_status = ui.row().classes("grow items-center gap-3 no-wrap")
+                                with ui.tabs().props('align="left" aria-label="PES workflows"').classes("w-full") as tabs:
+                                    ui.tab("pyabel", label="PyAbel")
+                                    ui.tab("julia", label="PBASEX")
+                                with ui.tab_panels(tabs, value="pyabel", animated=False) \
+                                        .classes("w-full bg-transparent") as pes_workflows:
+                                    with ui.tab_panel("pyabel").classes("q-pa-none"):
+                                        module.build(MANAGER, ask_agent=handoff_to_agent, status_slot=pyabel_status)
+                                    with ui.tab_panel("julia").classes("q-pa-none"):
+                                        pes_julia.build(MANAGER, status_slot=julia_status)
+                                pyabel_status.bind_visibility_from(pes_workflows, "value", lambda value: value == "pyabel")
+                                julia_status.bind_visibility_from(pes_workflows, "value", lambda value: value == "julia")
                             elif name == ion_pipeline.FALLBACK_JOB_NAME:
                                 module.build(MANAGER, fallback=True)
                             elif module is agent:
@@ -485,6 +508,7 @@ def main(*, host: str = "0.0.0.0", launch_command: str = "uv run vmi-analysis") 
         MANAGER.set_max_concurrent(2)
     init_zoom_overlay()
     pes.init_axes()
+    pes_julia.init_plots()
     ion_momenta.init_area_selection()
     ui.run(title=APP_TITLE,
            favicon=str(files("vmi_analysis.gui.assets") / "electron-spectrum-icon.svg"),

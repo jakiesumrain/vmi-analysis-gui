@@ -26,6 +26,7 @@ The table describes the registered actions in the current application. The Agent
 | Trig Calibration | `trig_calibration_fit` | Review and fit a selected ring from the panel's **Ask Agent** control. |
 | Circularize | `circularize`, `circularize_checkpoint` | Correct an image, or export measured or circularized centroids with a shot roster and an integer histogram. |
 | PES | `pes`, `pes_fit` | Prepare spectra and anisotropy. Measure yield, bin-average intensity, and β in a uniform-grid bin of a completed run. Review a peak fit from the panel's **Ask Agent** control. |
+| PES → PBASEX | `pes_julia`, `pes_julia_fit`, `pes_julia_uncertainties` | Generate a native spectrum, fit selected peaks, and estimate yield and β errors over their fitted FWHM windows. Requires a local Julia environment. |
 | TPX3 Dump | `tpx3_dump` | Prepare the LUNA dump. Apply timewalk correction manually in the panel. |
 | Ion TOF | `ion_tof`, `ion_tof_gate`, `ion_tof_fit` | Prepare spectra, GMD2 gating with optional per-shot weighting, and Gaussian fits. Inspect linked completed spectra and saved fits through registered measurements. |
 | Ion momenta | `ion_momenta` | Prepare the initial linked detector-position and TOF histograms. Set gates, assign species, and reconstruct in the panel. |

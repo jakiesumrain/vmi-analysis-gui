@@ -15,7 +15,7 @@ async page => {
     await page.getByRole('tab', {name, exact: true}).click();
     await page.waitForFunction(title => {
       const panels = document.querySelectorAll('[role="tabpanel"]');
-      return panels.length === 1 && panels[0].querySelector('.vmi-title')?.textContent.trim() === title &&
+      return panels[0]?.querySelector('.vmi-title')?.textContent.trim() === title &&
         !document.querySelector('[class*="enter-active"], [class*="leave-active"]');
     }, titles[name] || name);
   };
@@ -29,12 +29,28 @@ async page => {
     throw new Error('Incorrect workspace navigation');
   for (const name of names) {
     await show(name);
-    const panel = page.getByRole('tabpanel');
+    const panel = page.getByRole('tabpanel').first();
     await panel.waitFor({state: 'visible'});
     if (!await panel.getByRole('button', {name: runLabels[name] || 'Run', exact: true}).isVisible()) {
       throw new Error(`${name}: missing Run control`);
     }
     if (await panel.getByText('Internal Server Error', {exact: true}).count()) throw new Error(`${name}: failed to render`);
+    if (name === 'PES') {
+      const heading = panel.locator('.vmi-panel-head');
+      const tabs = panel.getByRole('tablist', {name: 'PES workflows'});
+      if ((await heading.count()) !== 1 || (await heading.boundingBox()).y >= (await tabs.boundingBox()).y)
+        throw new Error('PES: expected a single header above the workflow tabs');
+      await panel.getByRole('tab', {name: 'PyAbel', exact: true, selected: true}).waitFor();
+      await panel.getByRole('tab', {name: 'PBASEX', exact: true}).click();
+      await panel.getByRole('button', {name: 'Generate pBASEX spectrum', exact: true}).waitFor();
+      await panel.getByLabel('PBASEX-Julia checkout', {exact: true}).waitFor();
+      await panel.getByRole('button', {name: 'Fit peaks', exact: true}).waitFor({state: 'hidden'});
+      await panel.getByRole('button', {name: 'Generate spectra', exact: true}).waitFor({state: 'hidden'});
+      await heading.getByText('PES', {exact: true}).waitFor();
+      await heading.getByText('idle', {exact: true}).waitFor();
+      await panel.getByRole('tab', {name: 'PyAbel', exact: true}).click();
+      await panel.getByRole('button', {name: 'Generate spectra', exact: true}).waitFor();
+    }
   }
   await show('GMD Map');
   const mapPanel = page.getByRole('tabpanel');
