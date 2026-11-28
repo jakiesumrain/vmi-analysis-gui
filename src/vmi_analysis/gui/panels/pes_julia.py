@@ -262,7 +262,12 @@ def _chart():
     return chart
 
 
-def _fit_figure(record, energy, intensity, axis_title):
+def _density_axis_title(unit):
+    quantity = "dN/dE" if unit == "eV" else "dN/d(r²)"
+    return f"{quantity} (electrons/{unit})"
+
+
+def _fit_figure(record, energy, intensity, axis_title, unit):
     x = np.asarray(record["fit_x"])
     grid, total, baseline, components = evaluate_fit_for_plot(x, np.asarray(record["background"]), record["peaks"])
     # The saved fit coordinates are native samples and are also included in the model grid.
@@ -286,8 +291,8 @@ def _fit_figure(record, energy, intensity, axis_title):
     fig.update_xaxes(automargin=True)
     fig.update_yaxes(automargin=True)
     fig.update_xaxes(title_text=axis_title, row=2, col=1)
-    fig.update_yaxes(title_text="Intensity", row=1, col=1)
-    fig.update_yaxes(title_text="Residual", row=2, col=1)
+    fig.update_yaxes(title_text=_density_axis_title(unit), row=1, col=1)
+    fig.update_yaxes(title_text=f"Residual (electrons/{unit})", row=2, col=1)
     return fig
 
 
@@ -385,7 +390,7 @@ def _show_uniform(energy, intensity, beta, unit, x_label, name):
         fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.04)
         fig.add_scatter(**_spectrum_trace(x, y, name), row=1, col=1)
         _style_comparison_plot(fig, 610 if beta else 347, beta_orders=beta)
-        fig.update_yaxes(title_text="Bin-average intensity", row=1, col=1, **y_axis)
+        fig.update_yaxes(title_text=f"Bin-averaged {_density_axis_title(unit)}", row=1, col=1, **y_axis)
         if beta:
             _add_beta_axes(fig, x, resampled_beta, beta_limits, subplot=2)
         fig.update_xaxes(**x_axis)
@@ -409,18 +414,21 @@ def _display(value):
     return f"{value:.6g}" if np.isfinite(value) else "—"
 
 
-def _uncertainty_figure(points, title, x_title, y_title, *, orders=None):
-    x, values, errors = zip(*points) if points else ((), (), ())
-    fig = go.Figure(go.Scatter(
-        x=x, y=values, mode="markers", marker={"size": 8},
-        error_y={"type": "data", "array": errors},
-        hovertemplate="%{x:.6g}, %{y:.6g}<extra></extra>" if orders is None else "β%{x}: %{y:.6g}<extra></extra>",
-    ))
+def _uncertainty_figure(series, title, x_title, y_title, *, orders=None):
+    fig = go.Figure()
+    hover = ("%{x:.6g}, %{y:.6g}<extra></extra>" if orders is None
+             else "β%{x}: %{y:.6g}<extra>%{fullData.name}</extra>")
+    for name, points in series.items():
+        x, values, errors = zip(*points)
+        fig.add_scatter(name=name, x=x, y=values, mode="markers", marker={"size": 8},
+                        error_y={"type": "data", "array": errors}, hovertemplate=hover)
     _style(fig, title)
-    fig.update_layout(height=340, margin={"l": 80, "r": 30, "t": 60, "b": 60})
+    fig.update_layout(height=680, margin={"l": 80, "r": 30, "t": 60, "b": 60})
     fig.update_xaxes(title_text=x_title, automargin=True)
     fig.update_yaxes(title_text=y_title, automargin=True)
     if orders is not None:
+        fig.update_layout(scattermode="group", scattergap=0.55, showlegend=True,
+                          legend={"orientation": "h", "x": 1, "xanchor": "right", "y": 1, "yanchor": "bottom"})
         fig.update_xaxes(type="category", categoryorder="array", categoryarray=orders,
                          tickmode="array", tickvals=orders, ticktext=[f"β{order}" for order in orders])
     return fig
@@ -469,19 +477,12 @@ def _show_uncertainties(jobs, job):
     if yields:
         ui.label("Error bars show ±1 standard error.").classes("vmi-caption")
         _chart().update_figure(_plot_data(_uncertainty_figure(
-            yields, "Peak yield", f"Fitted peak center ({unit})", "Integrated yield (electrons)")))
+            {"Yield": yields}, "Peak yield", f"Fitted peak center ({unit})", "Integrated yield (electrons)")))
     if beta_by_peak:
-        selector = ui.select(peak_labels, value=next(iter(peak_labels)), label="Peak for β plot").props("outlined dense")
-        chart = _chart()
-
-        def show_beta():
-            points = sorted(beta_by_peak[selector.value], key=lambda point: point[0])
-            fig = _uncertainty_figure(points, "Peak angular anisotropy", "Legendre order (L)", "β (dimensionless)",
-                                      orders=[order for order, _, _ in points])
-            chart.update_figure(_plot_data(fig))
-
-        selector.on_value_change(lambda _: show_beta())
-        show_beta()
+        series = {peak_labels[peak]: points for peak, points in beta_by_peak.items()}
+        orders = sorted({order for points in series.values() for order, _, _ in points})
+        _chart().update_figure(_plot_data(_uncertainty_figure(
+            series, "Peak angular anisotropy", "Legendre order (L)", "β (dimensionless)", orders=orders)))
     _table(headers, rows)
     ui.button("Download uncertainty CSV", icon="download",
               on_click=lambda: ui.download.content(content, path.name, "text/csv")).props("flat")
@@ -580,7 +581,7 @@ def build(jobs, *, status_slot):
         fig.update_layout(uirevision=revision, selectdirection="h", selections=[], selectionrevision=f"{low}:{high}",
                           dragmode="select" if selecting else "zoom")
         fig.update_xaxes(title_text=axis_title, **x_axis)
-        fig.update_yaxes(title_text=f"Electrons / {state['unit']}", **y_axis)
+        fig.update_yaxes(title_text=_density_axis_title(state["unit"]), **y_axis)
         return fig
 
     def refresh_spectrum():
@@ -625,7 +626,8 @@ def build(jobs, *, status_slot):
                   on_click=lambda: ui.download.content(content, path.name, "application/json")).props("flat")
         name = state["spectrum_name"]
         ui.select([name], value=name, label="Inspect fit").props("outlined dense")
-        _chart().update_figure(_plot_data(_fit_figure(record, state["energy"], state["intensity"], state["axis_title"])))
+        _chart().update_figure(_plot_data(
+            _fit_figure(record, state["energy"], state["intensity"], state["axis_title"], unit)))
         uncertainty_card.set_visibility(True)
         latest(uncertainty_view, lambda candidate: belongs_to(candidate, "fit_job_id", "fit"))
 
